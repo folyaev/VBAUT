@@ -47,8 +47,42 @@ const FORMAT_HINTS = ["2:1", "1:1", "Заголовок/Цитата", "Доку
 const PRIORITIES = ["обязательно", "рекомендуется", "при наличии"];
 const SEARCH_LIMITS = { maxKeywords: 8, maxQueries: 6 };
 const SEARCH_ENGINES = [
-  { id: "google", label: "Google", url: "https://www.google.com/search?q=" },
-  { id: "yandex", label: "Яндекс", url: "https://yandex.ru/search/?text=" }
+  { id: "youtube", label: "YouTube", url: "https://www.youtube.com/results?search_query=" },
+  {
+    id: "youtube_7d_hd",
+    label: "YouTube 7 days HD",
+    url: "https://www.youtube.com/results?search_query=",
+    suffix: "&sp=EgYIAxABIAE%253D"
+  },
+  {
+    id: "yandex_hq",
+    label: "Яндекс HQ",
+    url: "https://yandex.ru/images/search?text=",
+    suffix: "&isize=large"
+  },
+  {
+    id: "yandex_hq_square",
+    label: "1:1 Яндекс HQ",
+    url: "https://yandex.ru/images/search?text=",
+    suffix: "&iorient=square&isize=large"
+  },
+  {
+    id: "google_hq",
+    label: "Google HQ",
+    url: "https://www.google.com/search?q=",
+    suffix: "&tbm=isch&tbs=isz:l"
+  },
+  { id: "vk_video", label: "VK Видео", url: "https://vk.com/search/video?q=" },
+  { id: "vk", label: "VK", url: "https://vk.com/search?q=" },
+  {
+    id: "x_live",
+    label: "X",
+    url: "https://x.com/search?q=",
+    suffix: "&src=typed_query&f=live"
+  },
+  { id: "dzen_news", label: "Дзен.Новости", url: "https://dzen.ru/news/search?query=" },
+  { id: "reddit", label: "Reddit", url: "https://www.reddit.com/search/?q=" },
+  { id: "perplexity", label: "Copy and Perplexity", url: "https://www.perplexity.ai/", action: "copy_open" }
 ];
 const OUTPUT_TOKEN_LIMIT = Number.isFinite(Number(process.env.LLAMA_MAX_TOKENS))
   ? Number(process.env.LLAMA_MAX_TOKENS)
@@ -236,6 +270,166 @@ export async function generateDecisionsForSegments(segments, text) {
   }));
 }
 
+export async function generateVisualDecisionsForSegments(segments) {
+  const model = await resolveModel();
+  const system = `Ты — ассистент по визуальному брифу.\n\nПравила:\n- Ты получишь готовые сегменты. Не меняй segment_id, block_type или text_quote.\n- Для каждого сегмента дай только visual_decision.\n- visual_decision:\n  - type только из: ${VISUAL_TYPES.join(", ")}.\n  - description на русском, 1 короткое предложение, без английского.\n  - format_hint: ${FORMAT_HINTS.join(", ")} или null.\n  - priority: ${PRIORITIES.join(", ")} или null.\n  - duration_hint_sec: число или null.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, visual_decision { type, description, format_hint, duration_hint_sec, priority }.\n`;
+
+  const promptSegments = segments.map(({ segment_id, block_type, text_quote }) => ({
+    segment_id,
+    block_type,
+    text_quote
+  }));
+
+  const batchSize = DECISION_BATCH_SIZE;
+  const decisions = [];
+
+  for (let i = 0; i < promptSegments.length; i += batchSize) {
+    const batch = promptSegments.slice(i, i + batchSize);
+    const user = `SEGMENTS:\n${JSON.stringify(batch, null, 2)}`;
+    const body = {
+      model,
+      temperature: 0.2,
+      max_tokens: OUTPUT_TOKEN_LIMIT,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ]
+    };
+
+    try {
+      const response = await fetchWithRetry(`${DEFAULT_BASE_URL}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`LLM error ${response.status}: ${responseText}`);
+      }
+
+      const json = await response.json();
+      const content = json?.choices?.[0]?.message?.content ?? "";
+      const parsed = safeParseJson(content);
+      decisions.push(...normalizeVisualDecisions(parsed, batch));
+    } catch (error) {
+      console.warn("LLM visual decisions failed:", error?.message ?? error);
+      decisions.push(
+        ...batch.map((segment) => ({
+          segment_id: segment.segment_id,
+          visual_decision: emptyVisualDecision()
+        }))
+      );
+    }
+  }
+
+  const decisionMap = new Map(decisions.map((item) => [item.segment_id, item.visual_decision]));
+  return segments.map((segment) => ({
+    segment_id: segment.segment_id,
+    visual_decision: withDuration(decisionMap.get(segment.segment_id) ?? emptyVisualDecision(), segment.text_quote)
+  }));
+}
+
+export async function generateSearchDecisionsForSegments(segments) {
+  const model = await resolveModel();
+  const system = `Ты — ассистент по поисковым запросам.\n\nПравила:\n- Ты получишь сегменты и требования к визуалу.\n- Для каждого сегмента дай только search_decision.\n- search_decision:\n  - keywords: 5–7 коротких слов/фраз, без повторов; включи все имена, организации и места из сегмента.\n  - queries: 4–6 реальных поисковых запросов на русском с уточнениями (имена, место, время), без английского.\n  - каждый keyword должен встретиться хотя бы в одном запросе.\n- Учитывай описание визуала и тип визуала из visual_decision.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, search_decision { keywords, queries }.\n`;
+
+  const promptSegments = segments.map(({ segment_id, block_type, text_quote, visual_decision }) => ({
+    segment_id,
+    block_type,
+    text_quote,
+    visual_decision: visual_decision ?? emptyVisualDecision()
+  }));
+
+  const body = {
+    model,
+    temperature: 0.2,
+    max_tokens: OUTPUT_TOKEN_LIMIT,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: `SEGMENTS:\n${JSON.stringify(promptSegments, null, 2)}` }
+    ]
+  };
+
+  try {
+    const response = await fetchWithRetry(`${DEFAULT_BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new Error(`LLM error ${response.status}: ${responseText}`);
+    }
+
+    const json = await response.json();
+    const content = json?.choices?.[0]?.message?.content ?? "";
+    const parsed = safeParseJson(content);
+    const normalized = normalizeSearchDecisions(parsed, segments);
+    return normalized.map((item) => {
+      const source = segments.find((segment) => segment.segment_id === item.segment_id);
+      return applyVisualSearchHints(item, source?.visual_decision ?? emptyVisualDecision());
+    });
+  } catch (error) {
+    console.warn("LLM search decisions failed:", error?.message ?? error);
+    return segments.map((segment) => ({
+      segment_id: segment.segment_id,
+      search_decision: emptySearchDecision()
+    }));
+  }
+}
+
+export async function generateEnglishSearchDecisionsForSegments(segments) {
+  const model = await resolveModel();
+  const system = `You are a search query assistant.\n\nRules:\n- You will receive segments and visual requirements.\n- For each segment return only search_decision in English.\n- search_decision:\n  - keywords: 5–7 short phrases, no duplicates; include all names, organizations, and places from the segment.\n  - queries: 4–6 realistic English search queries with clarifying details (names, place, time).\n  - each keyword must appear in at least one query.\n- Consider visual_decision (type and description).\n- Output JSON only, no markdown.\n\nOutput: array of objects with fields: segment_id, search_decision { keywords, queries }.\n`;
+
+  const promptSegments = segments.map(({ segment_id, block_type, text_quote, visual_decision }) => ({
+    segment_id,
+    block_type,
+    text_quote,
+    visual_decision: visual_decision ?? emptyVisualDecision()
+  }));
+
+  const body = {
+    model,
+    temperature: 0.2,
+    max_tokens: OUTPUT_TOKEN_LIMIT,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: `SEGMENTS:\n${JSON.stringify(promptSegments, null, 2)}` }
+    ]
+  };
+
+  try {
+    const response = await fetchWithRetry(`${DEFAULT_BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw new Error(`LLM error ${response.status}: ${responseText}`);
+    }
+
+    const json = await response.json();
+    const content = json?.choices?.[0]?.message?.content ?? "";
+    const parsed = safeParseJson(content);
+    const normalized = normalizeSearchDecisions(parsed, segments);
+    return normalized.map((item) => {
+      const source = segments.find((segment) => segment.segment_id === item.segment_id);
+      return applyVisualSearchHintsEnglish(item, source?.visual_decision ?? emptyVisualDecision());
+    });
+  } catch (error) {
+    console.warn("LLM English search decisions failed:", error?.message ?? error);
+    return segments.map((segment) => ({
+      segment_id: segment.segment_id,
+      search_decision: emptySearchDecision()
+    }));
+  }
+}
+
 function normalizeSegments(parsed) {
   const list = coerceList(parsed, ["segments", "data", "items"]);
 
@@ -287,6 +481,258 @@ function normalizeDecisions(parsed, segments) {
     visual_decision: decisionMap.get(segment.segment_id)?.visual ?? emptyVisualDecision(),
     search_decision: decisionMap.get(segment.segment_id)?.search ?? emptySearchDecision()
   }));
+}
+
+function normalizeVisualDecisions(parsed, segments) {
+  const list = coerceList(parsed, ["decisions", "items", "data"]);
+  const decisionMap = new Map(
+    list.map((item) => {
+      const segmentId = String(item?.segment_id ?? "");
+      const visual = normalizeVisualDecision(item?.visual_decision ?? item);
+      return [segmentId, visual];
+    })
+  );
+  return segments.map((segment) => ({
+    segment_id: segment.segment_id,
+    visual_decision: decisionMap.get(segment.segment_id) ?? emptyVisualDecision()
+  }));
+}
+
+function normalizeSearchDecisions(parsed, segments) {
+  const list = coerceList(parsed, ["decisions", "items", "data"]);
+  const decisionMap = new Map(
+    list.map((item) => {
+      const segmentId = String(item?.segment_id ?? "");
+      const search = normalizeSearchDecision(item?.search_decision ?? item);
+      return [segmentId, search];
+    })
+  );
+  return segments.map((segment) => ({
+    segment_id: segment.segment_id,
+    search_decision: decisionMap.get(segment.segment_id) ?? emptySearchDecision()
+  }));
+}
+
+function applyVisualSearchHints(item, visualDecision) {
+  const visualTerms = extractVisualKeywords(visualDecision);
+  if (!visualTerms.length) return item;
+
+  const mergedKeywords = mergeKeywords(visualTerms, item.search_decision.keywords, SEARCH_LIMITS.maxKeywords);
+  const mergedQueries = ensureVisualTermsInQueries(
+    item.search_decision.queries,
+    mergedKeywords,
+    visualTerms,
+    SEARCH_LIMITS.maxQueries
+  );
+  const coveredQueries = ensureSearchCoverage(mergedKeywords, mergedQueries, SEARCH_LIMITS.maxQueries);
+
+  return {
+    ...item,
+    search_decision: {
+      keywords: mergedKeywords,
+      queries: coveredQueries
+    }
+  };
+}
+
+function applyVisualSearchHintsEnglish(item, visualDecision) {
+  const visualTerms = extractVisualKeywordsEnglish(visualDecision);
+  if (!visualTerms.length) return item;
+
+  const mergedKeywords = mergeKeywords(visualTerms, item.search_decision.keywords, SEARCH_LIMITS.maxKeywords);
+  const mergedQueries = ensureVisualTermsInQueries(
+    item.search_decision.queries,
+    mergedKeywords,
+    visualTerms,
+    SEARCH_LIMITS.maxQueries
+  );
+  const coveredQueries = ensureSearchCoverage(mergedKeywords, mergedQueries, SEARCH_LIMITS.maxQueries);
+
+  return {
+    ...item,
+    search_decision: {
+      keywords: mergedKeywords,
+      queries: coveredQueries
+    }
+  };
+}
+
+function mergeKeywords(required, existing, limit) {
+  const result = [];
+  const seen = new Set();
+  for (const term of required) {
+    const value = String(term ?? "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+    if (limit && result.length >= limit) return result;
+  }
+  for (const term of existing ?? []) {
+    const value = String(term ?? "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+    if (limit && result.length >= limit) break;
+  }
+  return result;
+}
+
+function ensureVisualTermsInQueries(queries, keywords, visualTerms, limit) {
+  const normalized = Array.isArray(queries) ? [...queries] : [];
+  const lowerQueries = normalized.map((query) => query.toLowerCase());
+  const base = (keywords ?? [])
+    .filter((term) => term && !visualTerms.includes(term))
+    .slice(0, 3)
+    .join(" ");
+
+  for (const term of visualTerms) {
+    const value = String(term ?? "").trim();
+    if (!value) continue;
+    const lower = value.toLowerCase();
+    if (lowerQueries.some((query) => query.includes(lower))) continue;
+    const composed = base ? `${base} ${value}` : value;
+    normalized.push(composed);
+    lowerQueries.push(composed.toLowerCase());
+    if (limit && normalized.length >= limit) break;
+  }
+  return normalized.slice(0, limit);
+}
+
+function extractVisualKeywords(visualDecision) {
+  if (!visualDecision || typeof visualDecision !== "object") return [];
+  const hints = [];
+  const type = String(visualDecision.type ?? "").toLowerCase();
+  const typeMap = {
+    event_footage: ["съемка", "кадр"],
+    portrait: ["портрет"],
+    location: ["локация"],
+    explainer_graphic: ["инфографика"],
+    map: ["карта"],
+    interface_ui: ["интерфейс", "скриншот"],
+    archive: ["архив"],
+    comparison: ["сравнение", "коллаж"],
+    generated_art: ["иллюстрация"]
+  };
+  if (typeMap[type]) hints.push(...typeMap[type]);
+
+  const description = String(visualDecision.description ?? "").toLowerCase();
+  if (description) {
+    const keywords = [
+      "коллаж",
+      "фото",
+      "фотография",
+      "кадр",
+      "инфографика",
+      "карта",
+      "скриншот",
+      "интерфейс",
+      "архив",
+      "сравнение",
+      "портрет",
+      "иллюстрация",
+      "рендер",
+      "схема",
+      "диаграмма",
+      "таблица",
+      "документ",
+      "заголовок",
+      "цитата"
+    ];
+    keywords.forEach((keyword) => {
+      if (description.includes(keyword)) hints.push(keyword);
+    });
+  }
+
+  const seen = new Set();
+  return hints.filter((term) => {
+    const key = String(term ?? "").toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function extractVisualKeywordsEnglish(visualDecision) {
+  if (!visualDecision || typeof visualDecision !== "object") return [];
+  const hints = [];
+  const type = String(visualDecision.type ?? "").toLowerCase();
+  const typeMap = {
+    event_footage: ["footage", "video"],
+    portrait: ["portrait"],
+    location: ["location"],
+    explainer_graphic: ["infographic"],
+    map: ["map"],
+    interface_ui: ["interface", "screenshot"],
+    archive: ["archive"],
+    comparison: ["comparison", "collage"],
+    generated_art: ["illustration"]
+  };
+  if (typeMap[type]) hints.push(...typeMap[type]);
+
+  const description = String(visualDecision.description ?? "").toLowerCase();
+  if (description) {
+    const keywords = [
+      "collage",
+      "photo",
+      "photograph",
+      "footage",
+      "frame",
+      "infographic",
+      "map",
+      "screenshot",
+      "interface",
+      "archive",
+      "comparison",
+      "portrait",
+      "illustration",
+      "render",
+      "diagram",
+      "chart",
+      "table",
+      "document",
+      "headline",
+      "quote"
+    ];
+    keywords.forEach((keyword) => {
+      if (description.includes(keyword)) hints.push(keyword);
+    });
+    const ruMap = {
+      "коллаж": "collage",
+      "фото": "photo",
+      "фотография": "photo",
+      "кадр": "footage",
+      "инфографика": "infographic",
+      "карта": "map",
+      "скриншот": "screenshot",
+      "интерфейс": "interface",
+      "архив": "archive",
+      "сравнение": "comparison",
+      "портрет": "portrait",
+      "иллюстрация": "illustration",
+      "рендер": "render",
+      "схема": "diagram",
+      "диаграмма": "chart",
+      "таблица": "table",
+      "документ": "document",
+      "заголовок": "headline",
+      "цитата": "quote"
+    };
+    Object.entries(ruMap).forEach(([ru, en]) => {
+      if (description.includes(ru)) hints.push(en);
+    });
+  }
+
+  const seen = new Set();
+  return hints.filter((term) => {
+    const key = String(term ?? "").toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeBlockType(blockType) {

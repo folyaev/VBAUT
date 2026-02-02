@@ -18,8 +18,42 @@ const defaultConfig = {
   priorities: ["обязательно", "рекомендуется", "при наличии"],
   searchLimits: { maxKeywords: 8, maxQueries: 6 },
   searchEngines: [
-    { id: "google", label: "Google", url: "https://www.google.com/search?q=" },
-    { id: "yandex", label: "Яндекс", url: "https://yandex.ru/search/?text=" }
+    { id: "youtube", label: "YouTube", url: "https://www.youtube.com/results?search_query=" },
+    {
+      id: "youtube_7d_hd",
+      label: "YouTube 7 days HD",
+      url: "https://www.youtube.com/results?search_query=",
+      suffix: "&sp=EgYIAxABIAE%253D"
+    },
+    {
+      id: "yandex_hq",
+      label: "Яндекс HQ",
+      url: "https://yandex.ru/images/search?text=",
+      suffix: "&isize=large"
+    },
+    {
+      id: "yandex_hq_square",
+      label: "1:1 Яндекс HQ",
+      url: "https://yandex.ru/images/search?text=",
+      suffix: "&iorient=square&isize=large"
+    },
+    {
+      id: "google_hq",
+      label: "Google HQ",
+      url: "https://www.google.com/search?q=",
+      suffix: "&tbm=isch&tbs=isz:l"
+    },
+    { id: "vk_video", label: "VK Видео", url: "https://vk.com/search/video?q=" },
+    { id: "vk", label: "VK", url: "https://vk.com/search?q=" },
+    {
+      id: "x_live",
+      label: "X",
+      url: "https://x.com/search?q=",
+      suffix: "&src=typed_query&f=live"
+    },
+    { id: "dzen_news", label: "Дзен.Новости", url: "https://dzen.ru/news/search?query=" },
+    { id: "reddit", label: "Reddit", url: "https://www.reddit.com/search/?q=" },
+    { id: "perplexity", label: "Copy and Perplexity", url: "https://www.perplexity.ai/", action: "copy_open" }
   ]
 };
 
@@ -259,7 +293,9 @@ const emptySegment = (index, section = {}) => ({
   section_index: section.section_index ?? null,
   visual_decision: emptyVisualDecision(),
   search_decision: emptySearchDecision(),
-  search_open: false
+  search_decision_en: emptySearchDecision(),
+  search_open: false,
+  search_en_open: false
 });
 
 const GROUP_RENDER_CHUNK = 20;
@@ -332,12 +368,21 @@ const SegmentCard = React.memo(function SegmentCard({
   onInsertAfter,
   onRemove,
   onClearSearch,
+  onSearchGenerate,
+  onSearchGenerateEn,
+  onSearchEnUpdate,
+  onSearchEnToggle,
+  searchLoading,
+  searchEnLoading,
   onSearchToggle,
   onSearch,
   onCopy
 }) {
   const keywordsValue = (segment.search_decision?.keywords ?? []).join(", ");
   const queriesValue = (segment.search_decision?.queries ?? []).join("\n");
+  const enKeywordsValue = (segment.search_decision_en?.keywords ?? []).join(", ");
+  const enQueriesValue = (segment.search_decision_en?.queries ?? []).join("\n");
+  const hasEn = (segment.search_decision_en?.keywords ?? []).length > 0 || (segment.search_decision_en?.queries ?? []).length > 0;
 
   return (
     <article
@@ -455,9 +500,36 @@ const SegmentCard = React.memo(function SegmentCard({
           <button
             className="btn ghost small"
             type="button"
+            onClick={() => onSearchGenerate(index)}
+            disabled={searchLoading}
+          >
+            {searchLoading ? "Генерация..." : "Сгенерировать поиск"}
+          </button>
+          <button
+            className="btn ghost small"
+            type="button"
+            onClick={() => onSearchGenerateEn(index)}
+            disabled={searchEnLoading}
+          >
+            {searchEnLoading ? "EN..." : "Добавить EN"}
+          </button>
+          {hasEn || segment.search_en_open ? (
+            <button
+              className="btn ghost small"
+              type="button"
+              onClick={() => onSearchEnToggle(index)}
+            >
+              {segment.search_en_open ? "Скрыть EN" : "Показать EN"}
+            </button>
+          ) : null}
+          <button
+            className="btn ghost small"
+            type="button"
             onClick={() => onSearchToggle(index)}
           >
-            {segment.search_open ? "Скрыть поисковые запросы" : `Показать поисковые запросы (${segment.search_decision?.queries?.length ?? 0})`}
+            {segment.search_open
+              ? "Скрыть поисковые запросы"
+              : `Показать поисковые запросы (${segment.search_decision?.queries?.length ?? 0})`}
           </button>
         </div>
 
@@ -519,6 +591,32 @@ const SegmentCard = React.memo(function SegmentCard({
                 Очистить поисковые
               </button>
             </div>
+
+            {segment.search_en_open ? (
+              <>
+                <label>EN keywords</label>
+                <input
+                  value={enKeywordsValue}
+                  onChange={(event) =>
+                    onSearchEnUpdate(index, {
+                      keywords: normalizeKeywordList(event.target.value, config.searchLimits?.maxKeywords)
+                    })
+                  }
+                  placeholder="Comma-separated"
+                />
+
+                <label>EN queries</label>
+                <textarea
+                  value={enQueriesValue}
+                  onChange={(event) =>
+                    onSearchEnUpdate(index, {
+                      queries: normalizeQueryList(event.target.value, config.searchLimits?.maxQueries)
+                    })
+                  }
+                  placeholder="Each query on new line"
+                />
+              </>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -535,6 +633,8 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState({});
+  const [searchLoading, setSearchLoading] = useState({});
+  const [searchEnLoading, setSearchEnLoading] = useState({});
   const [expandedGroups, setExpandedGroups] = useState({});
   const [groupRenderLimits, setGroupRenderLimits] = useState({});
 
@@ -865,10 +965,28 @@ export default function App() {
     );
   }, []);
 
+  const updateSearchEn = React.useCallback((index, updates) => {
+    setSegments((prev) =>
+      prev.map((segment, idx) =>
+        idx === index
+          ? { ...segment, search_decision_en: { ...segment.search_decision_en, ...updates } }
+          : segment
+      )
+    );
+  }, []);
+
   const handleSearchToggle = React.useCallback((index) => {
     setSegments((prev) =>
       prev.map((segment, idx) =>
         idx === index ? { ...segment, search_open: !segment.search_open } : segment
+      )
+    );
+  }, []);
+
+  const handleSearchEnToggle = React.useCallback((index) => {
+    setSegments((prev) =>
+      prev.map((segment, idx) =>
+        idx === index ? { ...segment, search_en_open: !segment.search_en_open } : segment
       )
     );
   }, []);
@@ -902,11 +1020,49 @@ export default function App() {
     );
   }, []);
 
-  const handleSearch = React.useCallback((engine, query) => {
-    if (!engine?.url || !query) return;
-    const url = `${engine.url}${encodeURIComponent(query)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+  const copyToClipboard = React.useCallback((value, successMessage = "Запрос скопирован.") => {
+    if (!value) return;
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(value).then(
+        () => setStatus(successMessage),
+        () => setStatus("Не удалось скопировать запрос.")
+      );
+      return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      document.execCommand("copy");
+      setStatus(successMessage);
+    } catch {
+      setStatus("Не удалось скопировать запрос.");
+    } finally {
+      document.body.removeChild(textarea);
+    }
   }, []);
+
+  const handleSearch = React.useCallback(
+    (engine, query) => {
+      if (!engine || !query) return;
+      if (engine.action === "copy_open") {
+        copyToClipboard(query, "Запрос скопирован и открыт Perplexity.");
+        if (engine.url) {
+          window.open(engine.url, "_blank", "noopener,noreferrer");
+        }
+        return;
+      }
+      if (!engine.url) return;
+      const suffix = engine.suffix ?? "";
+      const url = `${engine.url}${encodeURIComponent(query)}${suffix}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [copyToClipboard]
+  );
 
   const handleAiHelp = React.useCallback(
     async (groupId) => {
@@ -978,31 +1134,122 @@ export default function App() {
     [aiLoading, config, docId, groupedSegments]
   );
 
+  const handleGenerateSearch = React.useCallback(
+    async (index) => {
+      const segment = segments[index];
+      if (!segment) return;
+      if (!docId) {
+        setStatus("Сначала создайте или загрузите документ.");
+        return;
+      }
+      const segmentId = segment.segment_id;
+      if (searchLoading[segmentId]) return;
+
+      setSearchLoading((prev) => ({ ...prev, [segmentId]: true }));
+      setStatus(`Поиск: ${segmentId}...`);
+      try {
+        const response = await fetch(`/api/documents/${docId}/search:generate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            segment: {
+              segment_id: segment.segment_id,
+              block_type: segment.block_type,
+              text_quote: segment.text_quote,
+              visual_decision: segment.visual_decision
+            }
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error ?? "Ошибка генерации поиска");
+        const decision = data?.decisions?.[0];
+        if (!decision) throw new Error("Поиск: решение не пришло");
+
+        setSegments((prev) =>
+          prev.map((item, idx) =>
+            idx === index
+              ? {
+                  ...item,
+                  visual_decision: normalizeVisualDecision(decision.visual_decision, config),
+                  search_decision: normalizeSearchDecision(decision.search_decision, config),
+                  search_open: true
+                }
+              : item
+          )
+        );
+        setStatus(`Поиск: ${decision.segment_id} готов.`);
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        setSearchLoading((prev) => {
+          const next = { ...prev };
+          delete next[segmentId];
+          return next;
+        });
+      }
+    },
+    [config, docId, searchLoading, segments]
+  );
+
+  const handleGenerateSearchEn = React.useCallback(
+    async (index) => {
+      const segment = segments[index];
+      if (!segment) return;
+      if (!docId) {
+        setStatus("Сначала создайте или загрузите документ.");
+        return;
+      }
+      const segmentId = segment.segment_id;
+      if (searchEnLoading[segmentId]) return;
+
+      setSearchEnLoading((prev) => ({ ...prev, [segmentId]: true }));
+      setStatus(`Search EN: ${segmentId}...`);
+      try {
+        const response = await fetch(`/api/documents/${docId}/search-en:generate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            segment: {
+              segment_id: segment.segment_id,
+              block_type: segment.block_type,
+              text_quote: segment.text_quote,
+              visual_decision: segment.visual_decision
+            }
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error ?? "Ошибка генерации EN-поиска");
+        const decision = data?.decisions?.[0];
+        if (!decision) throw new Error("EN поиск: решение не пришло");
+
+        setSegments((prev) =>
+          prev.map((item, idx) =>
+            idx === index
+              ? {
+                  ...item,
+                  search_decision_en: normalizeSearchDecision(decision.search_decision_en, config),
+                  search_en_open: true
+                }
+              : item
+          )
+        );
+        setStatus(`Search EN: ${decision.segment_id} готов.`);
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        setSearchEnLoading((prev) => {
+          const next = { ...prev };
+          delete next[segmentId];
+          return next;
+        });
+      }
+    },
+    [config, docId, searchEnLoading, segments]
+  );
+
   const handleCopy = React.useCallback((query) => {
-    if (!query) return;
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(query).then(
-        () => setStatus("Запрос скопирован."),
-        () => setStatus("Не удалось скопировать запрос.")
-      );
-      return;
-    }
-    const textarea = document.createElement("textarea");
-    textarea.value = query;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    try {
-      document.execCommand("copy");
-      setStatus("Запрос скопирован.");
-    } catch {
-      setStatus("Не удалось скопировать запрос.");
-    } finally {
-      document.body.removeChild(textarea);
-    }
-  }, []);
+    copyToClipboard(query);
+  }, [copyToClipboard]);
 
   return (
     <div className="app">
@@ -1151,11 +1398,17 @@ export default function App() {
                             onUpdate={updateSegment}
                             onVisualUpdate={updateVisual}
                             onSearchUpdate={updateSearch}
+                            onSearchEnUpdate={updateSearchEn}
                             onQuoteChange={handleQuoteChange}
                             onInsertAfter={handleInsertAfter}
                             onRemove={handleRemoveSegment}
                             onClearSearch={handleClearSearch}
+                            onSearchGenerate={handleGenerateSearch}
+                            onSearchGenerateEn={handleGenerateSearchEn}
+                            searchLoading={Boolean(searchLoading[segment.segment_id])}
+                            searchEnLoading={Boolean(searchEnLoading[segment.segment_id])}
                             onSearchToggle={handleSearchToggle}
+                            onSearchEnToggle={handleSearchEnToggle}
                             onSearch={handleSearch}
                             onCopy={handleCopy}
                           />
@@ -1193,7 +1446,8 @@ function mergeSegmentsAndDecisions(segments = [], decisions = [], config = defau
       item.segment_id,
       {
         visual: item.visual_decision ?? item.visual,
-        search: item.search_decision ?? item.search
+        search: item.search_decision ?? item.search,
+        searchEn: item.search_decision_en ?? item.search_en ?? item.searchEn
       }
     ])
   );
@@ -1213,7 +1467,12 @@ function mergeSegmentsAndDecisions(segments = [], decisions = [], config = defau
       decisionMap.get(segment.segment_id)?.search ?? segment.search_decision,
       config
     ),
-    search_open: Boolean(segment.search_open)
+    search_decision_en: normalizeSearchDecision(
+      decisionMap.get(segment.segment_id)?.searchEn ?? segment.search_decision_en,
+      config
+    ),
+    search_open: Boolean(segment.search_open),
+    search_en_open: Boolean(segment.search_en_open)
   }));
 }
 
@@ -1232,6 +1491,7 @@ function splitSegmentsAndDecisions(segments = []) {
     segment_id: segment.segment_id,
     visual_decision: normalizeVisualDecision(segment.visual_decision, defaultConfig),
     search_decision: normalizeSearchDecision(segment.search_decision, defaultConfig),
+    search_decision_en: normalizeSearchDecision(segment.search_decision_en, defaultConfig),
     version: segment.version ?? 1
   }));
 

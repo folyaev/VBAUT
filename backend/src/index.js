@@ -13,7 +13,13 @@ import {
   saveVersioned,
   writeJson
 } from "./storage.js";
-import { config, generateDecisionsForSegments, generateSegmentsOnly } from "./llm.js";
+import {
+  config,
+  generateEnglishSearchDecisionsForSegments,
+  generateSearchDecisionsForSegments,
+  generateSegmentsOnly,
+  generateVisualDecisionsForSegments
+} from "./llm.js";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8787);
@@ -164,15 +170,17 @@ app.post("/api/documents/:id/decisions:generate", async (req, res) => {
       return res.status(400).json({ error: "segment_id/segment_ids or segment data is required" });
     }
 
-    const generated = await generateDecisionsForSegments(targetSegments, document.raw_text ?? "");
+    const generated = await generateVisualDecisionsForSegments(targetSegments);
     const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
     const decisionMap = new Map(decisions.map((item) => [item.segment_id, item]));
 
     generated.forEach((decision) => {
+      const existing = decisionMap.get(decision.segment_id);
       decisionMap.set(decision.segment_id, {
         segment_id: decision.segment_id,
         visual_decision: normalizeVisualDecisionInput(decision.visual_decision),
-        search_decision: normalizeSearchDecisionInput(decision.search_decision),
+        search_decision: normalizeSearchDecisionInput(existing?.search_decision),
+        search_decision_en: normalizeSearchDecisionInput(existing?.search_decision_en),
         version: 1
       });
     });
@@ -190,9 +198,176 @@ app.post("/api/documents/:id/decisions:generate", async (req, res) => {
       decisions: generated.map((decision) => ({
         segment_id: decision.segment_id,
         visual_decision: normalizeVisualDecisionInput(decision.visual_decision),
-        search_decision: normalizeSearchDecisionInput(decision.search_decision),
+        search_decision: normalizeSearchDecisionInput(decisionMap.get(decision.segment_id)?.search_decision),
+        search_decision_en: normalizeSearchDecisionInput(decisionMap.get(decision.segment_id)?.search_decision_en),
         version: 1
       })),
+      version
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/documents/:id/search:generate", async (req, res) => {
+  try {
+    const docId = req.params.id;
+    const dir = getDocDir(docId);
+    const document = await readOptionalJson(path.join(dir, "document.json"));
+    if (!document) return res.status(404).json({ error: "Document not found" });
+
+    const segments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
+    if (!segments.length) return res.status(400).json({ error: "Segments not found" });
+
+    const inputSegments = Array.isArray(req.body?.segments)
+      ? req.body.segments
+      : req.body?.segment
+        ? [req.body.segment]
+        : null;
+    const inputIds = Array.isArray(req.body?.segment_ids)
+      ? req.body.segment_ids.map((id) => String(id))
+      : req.body?.segment_id
+        ? [String(req.body.segment_id)]
+        : [];
+
+    let targetSegments = [];
+    if (inputSegments?.length) {
+      targetSegments = inputSegments.map(normalizeSegmentWithVisual).filter((segment) => segment.segment_id);
+    } else if (inputIds.length) {
+      const decisionList = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const decisionMap = new Map(decisionList.map((item) => [item.segment_id, item]));
+      targetSegments = segments
+        .filter((segment) => inputIds.includes(segment.segment_id))
+        .map((segment) => ({
+          ...normalizeSegmentForDecision(segment),
+          visual_decision: normalizeVisualDecisionInput(decisionMap.get(segment.segment_id)?.visual_decision)
+        }));
+    }
+
+    if (!targetSegments.length) {
+      return res.status(400).json({ error: "segment/segments or segment_id/segment_ids is required" });
+    }
+
+    const generated = await generateSearchDecisionsForSegments(targetSegments);
+    const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+    const decisionMap = new Map(decisions.map((item) => [item.segment_id, item]));
+
+    generated.forEach((decision) => {
+      const source = targetSegments.find((segment) => segment.segment_id === decision.segment_id);
+      const existing = decisionMap.get(decision.segment_id);
+      decisionMap.set(decision.segment_id, {
+        segment_id: decision.segment_id,
+        visual_decision: normalizeVisualDecisionInput(source?.visual_decision),
+        search_decision: normalizeSearchDecisionInput(decision.search_decision),
+        search_decision_en: normalizeSearchDecisionInput(existing?.search_decision_en),
+        version: 1
+      });
+    });
+
+    const mergedDecisions = Array.from(decisionMap.values());
+    const version = await saveVersioned(docId, "decisions", mergedDecisions);
+
+    await appendEvent(docId, {
+      timestamp: new Date().toISOString(),
+      event: "search_generated",
+      payload: { version, segment_ids: targetSegments.map((segment) => segment.segment_id) }
+    });
+
+    res.json({
+      decisions: generated.map((decision) => {
+        const source = targetSegments.find((segment) => segment.segment_id === decision.segment_id);
+        const existing = decisionMap.get(decision.segment_id);
+        return {
+          segment_id: decision.segment_id,
+          visual_decision: normalizeVisualDecisionInput(source?.visual_decision),
+          search_decision: normalizeSearchDecisionInput(decision.search_decision),
+          search_decision_en: normalizeSearchDecisionInput(existing?.search_decision_en),
+          version: 1
+        };
+      }),
+      version
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/documents/:id/search-en:generate", async (req, res) => {
+  try {
+    const docId = req.params.id;
+    const dir = getDocDir(docId);
+    const document = await readOptionalJson(path.join(dir, "document.json"));
+    if (!document) return res.status(404).json({ error: "Document not found" });
+
+    const segments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
+    if (!segments.length) return res.status(400).json({ error: "Segments not found" });
+
+    const inputSegments = Array.isArray(req.body?.segments)
+      ? req.body.segments
+      : req.body?.segment
+        ? [req.body.segment]
+        : null;
+    const inputIds = Array.isArray(req.body?.segment_ids)
+      ? req.body.segment_ids.map((id) => String(id))
+      : req.body?.segment_id
+        ? [String(req.body.segment_id)]
+        : [];
+
+    let targetSegments = [];
+    if (inputSegments?.length) {
+      targetSegments = inputSegments.map(normalizeSegmentWithVisual).filter((segment) => segment.segment_id);
+    } else if (inputIds.length) {
+      const decisionList = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const decisionMap = new Map(decisionList.map((item) => [item.segment_id, item]));
+      targetSegments = segments
+        .filter((segment) => inputIds.includes(segment.segment_id))
+        .map((segment) => ({
+          ...normalizeSegmentForDecision(segment),
+          visual_decision: normalizeVisualDecisionInput(decisionMap.get(segment.segment_id)?.visual_decision)
+        }));
+    }
+
+    if (!targetSegments.length) {
+      return res.status(400).json({ error: "segment/segments or segment_id/segment_ids is required" });
+    }
+
+    const generated = await generateEnglishSearchDecisionsForSegments(targetSegments);
+    const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+    const decisionMap = new Map(decisions.map((item) => [item.segment_id, item]));
+
+    generated.forEach((decision) => {
+      const source = targetSegments.find((segment) => segment.segment_id === decision.segment_id);
+      const existing = decisionMap.get(decision.segment_id);
+      decisionMap.set(decision.segment_id, {
+        segment_id: decision.segment_id,
+        visual_decision: normalizeVisualDecisionInput(source?.visual_decision ?? existing?.visual_decision),
+        search_decision: normalizeSearchDecisionInput(existing?.search_decision),
+        search_decision_en: normalizeSearchDecisionInput(decision.search_decision),
+        version: 1
+      });
+    });
+
+    const mergedDecisions = Array.from(decisionMap.values());
+    const version = await saveVersioned(docId, "decisions", mergedDecisions);
+
+    await appendEvent(docId, {
+      timestamp: new Date().toISOString(),
+      event: "search_en_generated",
+      payload: { version, segment_ids: targetSegments.map((segment) => segment.segment_id) }
+    });
+
+    res.json({
+      decisions: generated.map((decision) => {
+        const source = targetSegments.find((segment) => segment.segment_id === decision.segment_id);
+        const existing = decisionMap.get(decision.segment_id);
+        return {
+          segment_id: decision.segment_id,
+          visual_decision: normalizeVisualDecisionInput(source?.visual_decision ?? existing?.visual_decision),
+          search_decision: normalizeSearchDecisionInput(existing?.search_decision),
+          search_decision_en: normalizeSearchDecisionInput(decision.search_decision),
+          version: 1
+        };
+      }),
       version
     });
   } catch (error) {
@@ -267,7 +442,8 @@ app.get("/api/documents/:id/dataset", async (req, res) => {
         item.segment_id,
         {
           visual: normalizeVisualDecisionInput(item.visual_decision),
-          search: normalizeSearchDecisionInput(item.search_decision)
+          search: normalizeSearchDecisionInput(item.search_decision),
+          searchEn: normalizeSearchDecisionInput(item.search_decision_en)
         }
       ])
     );
@@ -279,8 +455,11 @@ app.get("/api/documents/:id/dataset", async (req, res) => {
         segment: segment.text_quote,
         visual_decision: decision.visual,
         search_decision: decision.search,
+        search_decision_en: decision.searchEn,
         keywords: decision.search?.keywords ?? [],
-        queries: decision.search?.queries ?? []
+        queries: decision.search?.queries ?? [],
+        keywords_en: decision.searchEn?.keywords ?? [],
+        queries_en: decision.searchEn?.queries ?? []
       };
     });
 
@@ -310,7 +489,8 @@ app.get("/api/documents/:id/export", async (req, res) => {
         item.segment_id,
         {
           visual: normalizeVisualDecisionInput(item.visual_decision),
-          search: normalizeSearchDecisionInput(item.search_decision)
+          search: normalizeSearchDecisionInput(item.search_decision),
+          searchEn: normalizeSearchDecisionInput(item.search_decision_en)
         }
       ])
     );
@@ -346,7 +526,8 @@ app.get("/api/documents/:id/export", async (req, res) => {
               content: JSON.stringify(
                 {
                   visual_decision: decision.visual,
-                  search_decision: decision.search
+                  search_decision: decision.search,
+                  search_decision_en: decision.searchEn
                 },
                 null,
                 2
@@ -411,6 +592,19 @@ app.get("/api/documents/:id/export", async (req, res) => {
       } else {
         mdLines.push("  - —");
       }
+      if (decision.searchEn?.keywords?.length || decision.searchEn?.queries?.length) {
+        mdLines.push(
+          "",
+          "**Search (EN)**",
+          `- keywords: ${(decision.searchEn.keywords ?? []).join(", ") || "—"}`,
+          "- queries:"
+        );
+        if (decision.searchEn.queries?.length) {
+          decision.searchEn.queries.forEach((query) => mdLines.push(`  - ${query}`));
+        } else {
+          mdLines.push("  - —");
+        }
+      }
       mdLines.push("");
     });
 
@@ -442,6 +636,7 @@ function splitSegmentsAndDecisions(segments, decisionsOverride = null) {
     segment_id: segment.segment_id,
     visual_decision: normalizeVisualDecisionInput(segment.visual_decision),
     search_decision: normalizeSearchDecisionInput(segment.search_decision),
+    search_decision_en: normalizeSearchDecisionInput(segment.search_decision_en),
     version: 1
   }));
   return { segmentsData, decisionsData };
@@ -452,6 +647,13 @@ function normalizeSegmentForDecision(segment) {
     segment_id: String(segment?.segment_id ?? ""),
     block_type: String(segment?.block_type ?? "news"),
     text_quote: String(segment?.text_quote ?? "")
+  };
+}
+
+function normalizeSegmentWithVisual(segment) {
+  return {
+    ...normalizeSegmentForDecision(segment),
+    visual_decision: normalizeVisualDecisionInput(segment?.visual_decision)
   };
 }
 
@@ -472,6 +674,7 @@ function normalizeDecisionsInput(decisions) {
     segment_id: String(decision.segment_id ?? ""),
     visual_decision: normalizeVisualDecisionInput(decision.visual_decision ?? decision),
     search_decision: normalizeSearchDecisionInput(decision.search_decision ?? decision.visual_decision),
+    search_decision_en: normalizeSearchDecisionInput(decision.search_decision_en),
     version: Number(decision.version ?? 1)
   }));
 }

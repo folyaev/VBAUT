@@ -32,3 +32,9 @@
   "keywords": ["..."] ,
   "queries": ["..."]
 }
+
+## search_decision_en
+{
+  "keywords": ["..."] ,
+  "queries": ["..."]
+}
