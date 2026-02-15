@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, "..", "..");
 const DATA_DIR = process.env.DATA_DIR ?? path.join(ROOT_DIR, "data");
+const EVENTS_JSONL_FILE = "events.jsonl";
+const EVENTS_LEGACY_FILE = "events.log";
 
 export function getDataDir() {
   return DATA_DIR;
@@ -50,16 +52,22 @@ export async function readOptionalJson(filePath) {
 
 export async function appendEvent(docId, event) {
   const dir = getDocDir(docId);
-  const logPath = path.join(dir, "events.log");
+  const logPath = path.join(dir, EVENTS_LEGACY_FILE);
+  const jsonlPath = path.join(dir, EVENTS_JSONL_FILE);
   const line = JSON.stringify(event);
-  await fs.appendFile(logPath, `${line}\n`, "utf8");
+  await Promise.all([
+    fs.appendFile(logPath, `${line}\n`, "utf8"),
+    fs.appendFile(jsonlPath, `${line}\n`, "utf8")
+  ]);
 }
 
 export async function readEvents(docId) {
   const dir = getDocDir(docId);
-  const logPath = path.join(dir, "events.log");
-  if (!(await fileExists(logPath))) return [];
-  const raw = await fs.readFile(logPath, "utf8");
+  const jsonlPath = path.join(dir, EVENTS_JSONL_FILE);
+  const logPath = path.join(dir, EVENTS_LEGACY_FILE);
+  const targetPath = (await fileExists(jsonlPath)) ? jsonlPath : logPath;
+  if (!(await fileExists(targetPath))) return [];
+  const raw = await fs.readFile(targetPath, "utf8");
   return raw
     .split(/\r?\n/)
     .filter(Boolean)

@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\""
+    "dev": "concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "guard:encoding": "node scripts/guard-encoding.mjs",
+    "guard:encoding:staged": "node scripts/guard-encoding.mjs --staged",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
+    "prepare": "npm run hooks:install"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

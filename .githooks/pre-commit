@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+
+npm run --silent guard:encoding:staged
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo "pre-commit: blocked by encoding guard"
+fi
+exit "$status"
