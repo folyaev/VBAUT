@@ -175,8 +175,8 @@ const normalizeKeywordList = (value, limit) => {
 };
 const normalizeQueryList = (value, limit) => {
   if (!value) return [];
-  const items = Array.isArray(value) ? value : String(value).split(/\n+/);
-  const normalized = items.map((item) => String(item ?? "").trim()).filter(Boolean);
+  const items = Array.isArray(value) ? value : String(value).split("\n");
+  const normalized = items.map((item) => String(item ?? "").replace(/\r/g, ""));
   if (!limit) return normalized;
   return normalized.slice(0, limit);
 };
@@ -410,6 +410,95 @@ const computeDurationHint = (text) => {
   if (!syllables) return null;
   return Math.ceil(syllables / 4.5);
 };
+const LEADING_NUMBERED_LINE_RE = /^\s*\d{1,3}[.)]\s+\S/;
+const splitLeadingCommentList = (text) => {
+  const lines = normalizeLineBreaks(text).split("\n");
+  const commentLines = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      if (commentLines.length === 0) {
+        index += 1;
+        continue;
+      }
+      const next = lines[index + 1];
+      if (next && LEADING_NUMBERED_LINE_RE.test(next)) {
+        commentLines.push(line);
+        index += 1;
+        continue;
+      }
+      break;
+    }
+    if (!LEADING_NUMBERED_LINE_RE.test(line)) break;
+    commentLines.push(line);
+    index += 1;
+  }
+  if (commentLines.length < 2) return null;
+  const commentsText = commentLines.join("\n").trim();
+  const mainText = lines.slice(index).join("\n").trimStart();
+  if (!commentsText || !mainText) return null;
+  return { commentsText, mainText };
+};
+const buildCommentsSegmentId = (sourceId, usedIds) => {
+  const rawBase = String(sourceId ?? "news")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const base = rawBase || "news";
+  let candidate = `comments_${base}`;
+  let counter = 1;
+  while (usedIds.has(candidate)) {
+    candidate = `comments_${base}_${String(counter).padStart(2, "0")}`;
+    counter += 1;
+  }
+  usedIds.add(candidate);
+  return candidate;
+};
+const splitOutLeadingCommentSegments = (segments = []) => {
+  if (!segments.length) return segments;
+  const usedIds = new Set(segments.map((segment) => String(segment.segment_id ?? "")));
+  const result = [];
+  segments.forEach((segment) => {
+    if (normalizeSegmentBlockType(segment.block_type) === "links") {
+      result.push(segment);
+      return;
+    }
+    const split = splitLeadingCommentList(segment.text_quote ?? "");
+    if (!split) {
+      result.push(segment);
+      return;
+    }
+
+    const currentVisual = normalizeVisualDecision(segment.visual_decision, defaultConfig);
+    const prevDuration = currentVisual.duration_hint_sec;
+    const prevAutoDuration = computeDurationHint(segment.text_quote ?? "");
+    const shouldAutoUpdateMainDuration =
+      prevDuration === null || prevDuration === undefined || prevDuration === prevAutoDuration;
+
+    result.push({
+      ...segment,
+      segment_id: buildCommentsSegmentId(segment.segment_id, usedIds),
+      text_quote: split.commentsText,
+      segment_status: "new",
+      visual_decision: {
+        ...emptyVisualDecision(),
+        duration_hint_sec: computeDurationHint(split.commentsText)
+      },
+      search_decision: emptySearchDecision(),
+      search_open: false
+    });
+    result.push({
+      ...segment,
+      text_quote: split.mainText,
+      visual_decision: {
+        ...currentVisual,
+        duration_hint_sec: shouldAutoUpdateMainDuration ? computeDurationHint(split.mainText) : prevDuration
+      }
+    });
+  });
+  return result;
+};
 const normalizeLineBreaks = (text) => String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 const normalizeTopicTitleForDisplay = (title) => {
   const value = normalizeLineBreaks(title)
@@ -419,6 +508,12 @@ const normalizeTopicTitleForDisplay = (title) => {
     .trim();
   return value;
 };
+const normalizeHeadingForFigma = (title) =>
+  normalizeLineBreaks(title)
+    .replace(/^#{1,}\s*/g, "")
+    .replace(/\(\s*\d+\s*\)\s*$/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 const normalizeSectionTitleForId = (title) =>
   normalizeLineBreaks(title)
     .toLowerCase()
@@ -510,21 +605,7 @@ const canonicalizeLinkUrl = (value) => {
 const getReadableLinkLabel = (value, maxLength = 240) => {
   const normalized = normalizeLinkUrl(value);
   if (!normalized) return "";
-  let displayUrl = normalized;
-  try {
-    const url = new URL(normalized);
-    if (url.hash.includes(":~:text=")) {
-      const markerIndex = url.hash.indexOf("#:~:text=");
-      if (markerIndex === 0) {
-        url.hash = "";
-      } else if (markerIndex > 0) {
-        url.hash = url.hash.slice(0, markerIndex);
-      }
-      displayUrl = url.toString();
-    }
-  } catch {
-    displayUrl = normalized;
-  }
+  const displayUrl = normalized;
   let decoded = displayUrl;
   try {
     decoded = decodeURI(displayUrl);
@@ -533,6 +614,11 @@ const getReadableLinkLabel = (value, maxLength = 240) => {
   }
   if (decoded.length <= maxLength) return decoded;
   return `${decoded.slice(0, maxLength).trimEnd()}...`;
+};
+const getPreviewImageSrc = (value) => {
+  const normalized = normalizeLinkUrl(value);
+  if (!normalized) return "";
+  return `/api/link/image?url=${encodeURIComponent(normalized)}`;
 };
 const getUrlHost = (value) => {
   try {
@@ -935,20 +1021,14 @@ const LinksCard = React.memo(function LinksCard({
   onLinkAdd,
   onLinkUpdate,
   onLinkRemove,
-  onRemoveBlock,
   onDownload,
   isDownloadBusy,
   isDownloadSupported,
   isDownloaded
 }) {
-  const [open, setOpen] = useState((segment.links ?? []).length > 0);
+  const [open, setOpen] = useState(false);
   const [previews, setPreviews] = useState({});
   const [editing, setEditing] = useState({});
-  useEffect(() => {
-    if ((segment.links ?? []).length > 0 && !open) {
-      setOpen(true);
-    }
-  }, [segment.links, open]);
   useEffect(() => {
     if (!open) return;
     const links = segment.links ?? [];
@@ -956,7 +1036,7 @@ const LinksCard = React.memo(function LinksCard({
       const url = normalizeLinkUrl(link?.url ?? "");
       if (!url) return;
       const key = canonicalizeLinkUrl(url) || url;
-      if (previews[key]?.loading || previews[key]?.title || previews[key]?.error) return;
+      if (previews[key]?.loading || previews[key]?.loaded || previews[key]?.error) return;
       setPreviews((prev) => ({ ...prev, [key]: { loading: true } }));
       fetchJsonSafe(`/api/link/preview?url=${encodeURIComponent(url)}`)
         .then(({ response, data }) => {
@@ -965,6 +1045,7 @@ const LinksCard = React.memo(function LinksCard({
             ...prev,
             [key]: {
               loading: false,
+              loaded: true,
               title: data?.title ?? "",
               description: data?.description ?? "",
               image: data?.image ?? "",
@@ -973,7 +1054,7 @@ const LinksCard = React.memo(function LinksCard({
           }));
         })
         .catch(() => {
-          setPreviews((prev) => ({ ...prev, [key]: { loading: false, error: true } }));
+          setPreviews((prev) => ({ ...prev, [key]: { loading: false, loaded: true, error: true } }));
         });
     });
   }, [open, segment.links, previews]);
@@ -990,7 +1071,7 @@ const LinksCard = React.memo(function LinksCard({
         </div>
         <div className="segment-head-actions">
           <button
-            className="btn small ghost"
+            className="btn ghost icon-round"
             type="button"
             onClick={() => onLinkAdd(index)}
             title={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443"}
@@ -999,7 +1080,7 @@ const LinksCard = React.memo(function LinksCard({
             +
           </button>
           <button
-            className="btn small ghost"
+            className="btn ghost icon-round"
             type="button"
             onClick={() => setOpen((prev) => !prev)}
             title={open ? "\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c" : "\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c"}
@@ -1028,24 +1109,6 @@ const LinksCard = React.memo(function LinksCard({
                 />
               </svg>
             )}
-          </button>
-          <button
-            className="btn small ghost"
-            type="button"
-            onClick={() => onRemoveBlock(index)}
-            title={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0431\u043b\u043e\u043a"}
-            aria-label={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0431\u043b\u043e\u043a"}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M3 6h18M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6M10 6V4h4v2"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
           </button>
         </div>
       </div>
@@ -1184,7 +1247,16 @@ const LinksCard = React.memo(function LinksCard({
                         </div>
                         {preview?.image ? (
                           <div className="link-preview-image">
-                            <img src={preview.image} alt={preview.title || "preview"} />
+                            <img
+                              src={getPreviewImageSrc(preview.image)}
+                              alt={preview.title || "preview"}
+                              onError={(event) => {
+                                const img = event.currentTarget;
+                                if (img.dataset.fallbackApplied === "1") return;
+                                img.dataset.fallbackApplied = "1";
+                                img.src = preview.image;
+                              }}
+                            />
                           </div>
                         ) : null}
                       </>
@@ -1222,8 +1294,10 @@ const SegmentCard = React.memo(function SegmentCard({
   onSearch,
   onCopy
 }) {
-  const keywordsValue = (segment.search_decision?.keywords ?? []).join(", ");
   const queriesValue = (segment.search_decision?.queries ?? []).join("\n");
+  const queryItems = (segment.search_decision?.queries ?? []).filter(
+    (query) => String(query ?? "").trim().length > 0
+  );
   const statusBadge =
     segment.segment_status === "new"
       ? { text: "NEW", className: "badge badge-new" }
@@ -1348,7 +1422,7 @@ const SegmentCard = React.memo(function SegmentCard({
             onClick={() => onSearchGenerate(index)}
             disabled={searchLoading}
           >
-            {searchLoading ? "Генерация..." : "Сгенерировать поиск"}
+            {searchLoading ? "..." : "\u2728"}
           </button>
           <button
             className="btn ghost small"
@@ -1357,21 +1431,11 @@ const SegmentCard = React.memo(function SegmentCard({
           >
             {segment.search_open
               ? "Скрыть поисковые запросы"
-              : `Показать поисковые запросы (${segment.search_decision?.queries?.length ?? 0})`}
+              : `Показать поисковые запросы (${queryItems.length})`}
           </button>
         </div>
         {segment.search_open ? (
           <>
-            <label>Ключевые слова</label>
-            <input
-              value={keywordsValue}
-              onChange={(event) =>
-                onSearchUpdate(index, {
-                  keywords: normalizeKeywordList(event.target.value, config.searchLimits?.maxKeywords)
-                })
-              }
-              placeholder="Через запятую"
-            />
             <label>Поисковые запросы</label>
             <textarea
               value={queriesValue}
@@ -1382,9 +1446,9 @@ const SegmentCard = React.memo(function SegmentCard({
               }
               placeholder="Каждый запрос с новой строки"
             />
-            {segment.search_decision?.queries?.length ? (
+            {queryItems.length ? (
               <div className="query-list">
-                {segment.search_decision.queries.map((query, queryIndex) => (
+                {queryItems.map((query, queryIndex) => (
                   <div key={`${segment.segment_id}-query-${queryIndex}`} className="query-row">
                     <span className="query-text">{query}</span>
                     <div className="query-actions">
@@ -1417,6 +1481,26 @@ const SegmentCard = React.memo(function SegmentCard({
             </div>
           </>
         ) : null}
+        <div className="segment-tail-actions">
+          <button
+            className="btn ghost icon-round"
+            type="button"
+            onClick={() => onInsertAfter(index)}
+            title="Добавить подблок"
+            aria-label="Добавить подблок"
+          >
+            +
+          </button>
+          <button
+            className="btn ghost icon-round"
+            type="button"
+            onClick={() => onRemove(index)}
+            title="Удалить"
+            aria-label="Удалить"
+          >
+            -
+          </button>
+        </div>
       </div>
     </article>
   );
@@ -1426,7 +1510,6 @@ export default function App() {
   const [config, setConfig] = useState(defaultConfig);
   const [scriptText, setScriptText] = useState("");
   const [docId, setDocId] = useState("");
-  const [docIdInput, setDocIdInput] = useState("");
   const [notionUrl, setNotionUrl] = useState("");
   const [notionHasUpdates, setNotionHasUpdates] = useState(false);
   const [segments, setSegments] = useState([]);
@@ -1511,9 +1594,6 @@ export default function App() {
   useEffect(() => {
     fetchRecentDocuments();
   }, [fetchRecentDocuments]);
-  useEffect(() => {
-    setDocIdInput(docId);
-  }, [docId]);
   useEffect(() => {
     if (typeof window === "undefined" || !docId) return;
     window.localStorage?.setItem(LAST_USED_DOC_STORAGE_KEY, docId);
@@ -1722,9 +1802,8 @@ export default function App() {
       return changed ? next : prev;
     });
   }, [groupedSegments]);
-  const canGenerate = Boolean(docId) && !loading;
+  const canGenerate = Boolean(String(scriptText).trim()) && !loading;
   const canSave = Boolean(docId) && segmentsCount > 0 && !loading;
-  const canLoad = Boolean(docIdInput.trim()) && !loading;
   const canLoadNotion = Boolean(notionUrl.trim()) && !loading;
   const canRefreshNotion = canLoadNotion;
   const buildSessionPayload = React.useCallback(
@@ -1792,45 +1871,65 @@ export default function App() {
     },
     [docId, rememberSessionSnapshot]
   );
-  const handleCreateDocument = async () => {
-    if (!scriptText.trim()) {
-      setStatus("Добавьте текст сценария.");
-      return;
-    }
-    setLoading(true);
-    setStatus("Создание документа...");
-    try {
+  const upsertDocumentForText = React.useCallback(
+    async (rawTextValue, notionUrlValue = "") => {
+      const rawText = String(rawTextValue ?? "").trim();
+      if (!rawText) {
+        throw new Error("\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0442\u0435\u043a\u0441\u0442 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u044f.");
+      }
+      const payload = {
+        raw_text: rawText,
+        notion_url: String(notionUrlValue ?? "").trim() || null
+      };
       const { response, data } = await fetchJsonSafe("/api/documents", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ raw_text: scriptText, notion_url: notionUrl.trim() || null })
+        body: JSON.stringify(payload)
       });
-      if (!response.ok) throw new Error(data?.error ?? "Ошибка создания документа");
-      setDocId(data.id);
-      setDocIdInput(data.id);
-      setRecentDocId(data.id);
-      setSegments([]);
+      if (!response.ok) {
+        throw new Error(data?.error ?? "\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u044f \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430");
+      }
+      const targetId = String(data?.id ?? "").trim();
+      if (!targetId) {
+        throw new Error("Server returned empty document id");
+      }
+      setDocId(targetId);
+      setRecentDocId(targetId);
       setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
-      rememberSessionSnapshot(
-        buildSessionPayloadFromState({
-          scriptText: data?.document?.raw_text ?? scriptText,
-          notionUrl: data?.document?.notion_url ?? notionUrl,
-          segments: []
-        }),
-        0
-      );
-      fetchRecentDocuments();
-      setStatus(`Документ создан: ${data.id}`);
-    } catch (error) {
-      setStatus(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (targetId !== docId) {
+        fetchRecentDocuments();
+      }
+      try {
+        const loaded = await fetchJsonSafe(`/api/documents/${targetId}`);
+        if (loaded.response.ok && loaded.data) {
+          applyLoadedSnapshot(targetId, loaded.data);
+        } else {
+          rememberSessionSnapshot(
+            buildSessionPayloadFromState({
+              scriptText: rawText,
+              notionUrl: payload.notion_url ?? "",
+              segments: []
+            }),
+            0
+          );
+        }
+      } catch {
+        rememberSessionSnapshot(
+          buildSessionPayloadFromState({
+            scriptText: rawText,
+            notionUrl: payload.notion_url ?? "",
+            segments: []
+          }),
+          0
+        );
+      }
+      return { id: targetId, reused: Boolean(data?.reused), document: data?.document ?? null };
+    },
+    [applyLoadedSnapshot, docId, fetchRecentDocuments, rememberSessionSnapshot]
+  );
   const handleStartNewScenario = React.useCallback(() => {
     initialDocRestoreDoneRef.current = true;
     setDocId("");
-    setDocIdInput("");
     setRecentDocId("");
     setScriptText("");
     setNotionUrl("");
@@ -1840,7 +1939,7 @@ export default function App() {
     setMediaPanelOpen(false);
     setHeadingSearchOpen({});
     setHeadingEnglishQueries({});
-    setStatus("Новый сценарий: вставьте текст и нажмите «Создать документ».");
+    setStatus("\u041d\u043e\u0432\u044b\u0439 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439: \u0432\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u0442\u0435\u043a\u0441\u0442, \u043f\u0440\u0438 \u043d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u043e\u0441\u0442\u0438 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u0435 Notion \u0438 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u0421\u0435\u0433\u043c\u0435\u043d\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c.");
     rememberSessionSnapshot(
       buildSessionPayloadFromState({
         scriptText: "",
@@ -1853,22 +1952,10 @@ export default function App() {
       window.localStorage?.removeItem(LAST_USED_DOC_STORAGE_KEY);
     }
   }, [rememberSessionSnapshot]);
-  const updateDocumentMeta = async (payload) => {
-    if (!docId) return;
-    const { response, data } = await fetchJsonSafe(`/api/documents/${docId}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!response.ok) {
-      throw new Error(data?.error ?? "Ошибка обновления документа");
-    }
-    return data?.document;
-  };
   const fetchNotionContent = async (statusLabel) => {
     const url = notionUrl.trim();
     if (!url) {
-      setStatus("Укажите ссылку на Notion.");
+      setStatus("\u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u0441\u0441\u044b\u043b\u043a\u0443 \u043d\u0430 Notion.");
       return;
     }
     setLoading(true);
@@ -1901,7 +1988,7 @@ export default function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ url, progress_id: progressId })
       });
-      if (!response.ok) throw new Error(data?.error ?? "Ошибка загрузки Notion");
+      if (!response.ok) throw new Error(data?.error ?? "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438 Notion");
       const normalizedUrl = data?.url ?? url;
       if (normalizedUrl) {
         setNotionUrl(normalizedUrl);
@@ -1909,17 +1996,22 @@ export default function App() {
       const content = typeof data?.content === "string" ? data.content : "";
       const hasChanges = content !== previousText;
       setScriptText(content);
-      if (hasChanges) {
+
+      if (content.trim()) {
+        const upserted = await upsertDocumentForText(content, normalizedUrl);
+        if (upserted?.document) {
+          setNotionHasUpdates(getNeedsSegmentationFromDocument(upserted.document));
+        } else if (hasChanges) {
+          setNotionHasUpdates(true);
+        }
+      } else if (hasChanges) {
         setNotionHasUpdates(true);
       }
-      if (docId) {
-        const updatedDocument = await updateDocumentMeta({ raw_text: content, notion_url: normalizedUrl });
-        setNotionHasUpdates(getNeedsSegmentationFromDocument(updatedDocument));
-      }
+
       if (hasChanges) {
-        setStatus(content.trim() ? "Notion обновлен. Проверьте сегменты." : "Notion вернул пустой текст.");
+        setStatus(content.trim() ? "Notion \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u044b." : "Notion \u0432\u0435\u0440\u043d\u0443\u043b \u043f\u0443\u0441\u0442\u043e\u0439 \u0442\u0435\u043a\u0441\u0442.");
       } else {
-        setStatus("Notion без изменений.");
+        setStatus("Notion \u0431\u0435\u0437 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0439.");
       }
     } catch (error) {
       setStatus(error.message);
@@ -1965,14 +2057,10 @@ export default function App() {
     },
     [applyLoadedSnapshot]
   );
-  const handleLoadDocument = async () => {
-    await loadDocumentById(docIdInput.trim());
-  };
   const handleRecentSelect = async (event) => {
     const selected = event.target.value;
     setRecentDocId(selected);
     if (!selected) return;
-    setDocIdInput(selected);
     await loadDocumentById(selected);
   };
   useEffect(() => {
@@ -1997,7 +2085,6 @@ export default function App() {
 
     initialDocRestoreDoneRef.current = true;
     setRecentDocId(targetDocId);
-    setDocIdInput(targetDocId);
     void loadDocumentById(targetDocId);
   }, [autoOpenLastDocEnabled, docId, loadDocumentById, notionUrl, recentDocs, scriptText, segments.length]);
   useEffect(() => {
@@ -2073,9 +2160,8 @@ export default function App() {
     };
   }, [buildSessionPayload, collabSessionEnabled, docId, loadDocumentById]);
   const handleGenerate = async () => {
-    if (!docId) return;
     setLoading(true);
-    setStatus("Генерация сегментов...");
+    setStatus("\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u043e\u0432...");
     try {
       const { cleanText, linkSegments: extractedLinks } = extractLinksFromScript(scriptText);
       const existingLinks = segments.filter((segment) => segment.block_type === "links");
@@ -2084,34 +2170,39 @@ export default function App() {
         setScriptText(cleanText);
       }
       if (!cleanText.trim()) {
-        setStatus("Нет текста для сегментации после удаления ссылок.");
-        setLoading(false);
+        setStatus("\u041d\u0435\u0442 \u0442\u0435\u043a\u0441\u0442\u0430 \u0434\u043b\u044f \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u0430\u0446\u0438\u0438 \u043f\u043e\u0441\u043b\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u044f \u0441\u0441\u044b\u043b\u043e\u043a.");
         return;
       }
-      const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/segments:generate`, {
+
+      let targetDocId = docId;
+      if (!targetDocId || notionUrl.trim()) {
+        const upserted = await upsertDocumentForText(cleanText, notionUrl);
+        targetDocId = upserted.id;
+      }
+
+      const { response, data } = await fetchJsonSafe(`/api/documents/${targetDocId}/segments:generate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ raw_text: cleanText, link_segments: mergedLinks })
       });
-      if (!response.ok) throw new Error(data?.error ?? "Ошибка генерации");
-      const merged = applySectionsFromScript(
+      if (!response.ok) throw new Error(data?.error ?? "\u041e\u0448\u0438\u0431\u043a\u0430 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438");
+
+      const mergedBase = applySectionsFromScript(
         mergeSegmentsAndDecisions(data.segments, data.decisions, config),
         cleanText
       );
+      const merged = splitOutLeadingCommentSegments(mergedBase);
       const linksFromMerged = merged.filter((segment) => segment.block_type === "links");
       const orderedSegments = mergeLinkSegmentsIntoSegments(merged, linksFromMerged);
       setSegments(orderedSegments);
       setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
+
       const visualCount = merged.filter((segment) => hasVisualDecisionContent(segment.visual_decision)).length;
       const searchCount = merged.filter((segment) => hasSearchDecisionContent(segment.search_decision)).length;
       if (visualCount === 0 && searchCount === 0) {
-        setStatus(
-          `Сегменты готовы: ${merged.length}. Нажмите AI Help у нужной темы, чтобы получить визуал и поиск.`
-        );
+        setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${merged.length}. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 AI Help \u0443 \u043d\u0443\u0436\u043d\u043e\u0439 \u0442\u0435\u043c\u044b, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0432\u0438\u0437\u0443\u0430\u043b \u0438 \u043f\u043e\u0438\u0441\u043a.`);
       } else {
-        setStatus(
-          `Сегменты готовы: ${merged.length}. Визуал: ${visualCount}. Поиск: ${searchCount}.`
-        );
+        setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${merged.length}. \u0412\u0438\u0437\u0443\u0430\u043b: ${visualCount}. \u041f\u043e\u0438\u0441\u043a: ${searchCount}.`);
       }
     } catch (error) {
       setStatus(error.message);
@@ -2325,7 +2416,9 @@ export default function App() {
   }, []);
   const updateSegment = React.useCallback((index, updates) => {
     setSegments((prev) =>
-      prev.map((segment, idx) => (idx === index ? { ...segment, ...updates } : segment))
+      prev.map((segment, idx) =>
+        idx === index ? { ...segment, ...(updates ?? {}) } : segment
+      )
     );
   }, []);
   const updateVisual = React.useCallback((index, updates) => {
@@ -2369,7 +2462,15 @@ export default function App() {
               text_quote: value,
               visual_decision: {
                 ...segment.visual_decision,
-                duration_hint_sec: computeDurationHint(value)
+                duration_hint_sec: (() => {
+                  const currentDuration = segment.visual_decision?.duration_hint_sec;
+                  const previousAutoDuration = computeDurationHint(segment.text_quote);
+                  const shouldAutoUpdate =
+                    currentDuration === null ||
+                    currentDuration === undefined ||
+                    currentDuration === previousAutoDuration;
+                  return shouldAutoUpdate ? computeDurationHint(value) : currentDuration;
+                })()
               }
             }
           : segment
@@ -2506,61 +2607,69 @@ export default function App() {
   const handleAiHelp = React.useCallback(
     async (groupId) => {
       if (!docId) {
-        setStatus("Сначала создайте или загрузите документ.");
+        setStatus("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u043e\u0437\u0434\u0430\u0439\u0442\u0435 \u0438\u043b\u0438 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442.");
         return;
       }
       const group = groupedSegments.find((item) => item.id === groupId);
       if (!group || !group.items.length) {
-        setStatus("В этой теме нет сегментов.");
+        setStatus("\u0412 \u044d\u0442\u043e\u0439 \u0442\u0435\u043c\u0435 \u043d\u0435\u0442 \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u043e\u0432.");
         return;
       }
-      const pendingItem =
-        group.items.find(
-          ({ segment }) =>
-            !hasVisualDecisionContent(segment.visual_decision) &&
-            !hasSearchDecisionContent(segment.search_decision)
-        ) ?? group.items[0];
-      if (!pendingItem) {
-        setStatus("Не удалось найти сегмент для AI Help.");
-        return;
-      }
-      const segmentId = pendingItem.segment.segment_id;
-      if (aiLoading[segmentId]) return;
-      setAiLoading((prev) => ({ ...prev, [segmentId]: true }));
-      setStatus(`AI Help: ${segmentId}...`);
+
+      const pendingItems = group.items.filter(
+        ({ segment }) =>
+          !hasVisualDecisionContent(segment.visual_decision) ||
+          !hasSearchDecisionContent(segment.search_decision)
+      );
+      const targetItems = pendingItems.length > 0 ? pendingItems : group.items;
+      const targetSegments = targetItems.map(({ segment }) => ({
+        segment_id: segment.segment_id,
+        block_type: "news",
+        text_quote: segment.text_quote
+      }));
+      const targetIds = targetSegments.map((item) => item.segment_id);
+      if (targetIds.some((id) => aiLoading[id])) return;
+
+      setAiLoading((prev) => {
+        const next = { ...prev };
+        targetIds.forEach((id) => {
+          next[id] = true;
+        });
+        return next;
+      });
+      setStatus(`AI Help: \u043e\u0431\u0440\u0430\u0431\u0430\u0442\u044b\u0432\u0430\u044e ${targetIds.length} \u0441\u0435\u0433\u043c.`);
+
       try {
         const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/decisions:generate`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            segment: {
-              segment_id: segmentId,
-              block_type: "news",
-              text_quote: pendingItem.segment.text_quote
-            }
-          })
+          body: JSON.stringify({ segments: targetSegments })
         });
-        if (!response.ok) throw new Error(data?.error ?? "Ошибка AI Help");
-        const decision = data?.decisions?.[0];
-        if (!decision) throw new Error("AI Help: решение не пришло");
+        if (!response.ok) throw new Error(data?.error ?? "\u041e\u0448\u0438\u0431\u043a\u0430 AI Help");
+        const decisions = Array.isArray(data?.decisions) ? data.decisions : [];
+        if (!decisions.length) throw new Error("AI Help: \u0440\u0435\u0448\u0435\u043d\u0438\u044f \u043d\u0435 \u043f\u0440\u0438\u0448\u043b\u0438");
+
+        const decisionMap = new Map(decisions.map((decision) => [decision.segment_id, decision]));
         setSegments((prev) =>
-          prev.map((segment) =>
-            segment.segment_id === decision.segment_id
-              ? {
-                  ...segment,
-                  visual_decision: normalizeVisualDecision(decision.visual_decision, config),
-                  search_decision: normalizeSearchDecision(decision.search_decision, config)
-                }
-              : segment
-          )
+          prev.map((segment) => {
+            const decision = decisionMap.get(segment.segment_id);
+            if (!decision) return segment;
+            return {
+              ...segment,
+              visual_decision: normalizeVisualDecision(decision.visual_decision, config),
+              search_decision: normalizeSearchDecision(decision.search_decision, config)
+            };
+          })
         );
-        setStatus(`AI Help: ${decision.segment_id} готов.`);
+        setStatus(`AI Help: \u0433\u043e\u0442\u043e\u0432\u043e ${decisions.length}/${targetSegments.length}.`);
       } catch (error) {
         setStatus(error.message);
       } finally {
         setAiLoading((prev) => {
           const next = { ...prev };
-          delete next[segmentId];
+          targetIds.forEach((id) => {
+            delete next[id];
+          });
           return next;
         });
       }
@@ -2623,6 +2732,17 @@ export default function App() {
   const handleCopy = React.useCallback((query) => {
     copyToClipboard(query);
   }, [copyToClipboard]);
+  const handleCopyForFigma = React.useCallback(() => {
+    const { blocks } = splitScriptIntoHeadingBlocks(scriptText);
+    const topics = blocks
+      .map((block) => normalizeHeadingForFigma(block.heading))
+      .filter(Boolean);
+    if (!topics.length) {
+      setStatus("Нет тем для For Figma.");
+      return;
+    }
+    copyToClipboard(topics.join("\n"), `For Figma: скопировано тем (${topics.length}).`);
+  }, [copyToClipboard, scriptText]);
   const handleThemeToggle = React.useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
@@ -2631,31 +2751,29 @@ export default function App() {
       <header className="hero">
         <div>
           <div className="hero-top">
-            <p className="eyebrow">Ассистент визуального брифа</p>
             <button
               className="theme-toggle"
               type="button"
               onClick={handleThemeToggle}
-              aria-label="Переключить тему"
-              title="Переключить тему"
+              aria-label={"\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0442\u0435\u043c\u0443"}
+              title={"\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0442\u0435\u043c\u0443"}
             >
               <span className="theme-dot" aria-hidden="true" />
-              {theme === "dark" ? "Темная" : "Светлая"}
+              {theme === "dark"
+                ? "\u0422\u0435\u043c\u043d\u0430\u044f"
+                : "\u0421\u0432\u0435\u0442\u043b\u0430\u044f"}
             </button>
           </div>
-          <h1>Локальный мозг для визуального ресёрча</h1>
-          <p className="subtitle">
-            Сегментируйте сценарий, получайте визуальные решения и поисковые запросы без потери ритма.
-          </p>
+          <p className="eyebrow">{"\u041f\u043e\u0438\u0441\u043a \u043a\u043e\u043d\u0442\u0435\u043d\u0442\u0430"}</p>
+          <h1 className="hero-title">
+            <span>USACHEV</span>
+            <span>TODAY</span>
+          </h1>
         </div>
         <div className="hero-card">
           <div className="hero-stat">
             <span>Документ</span>
             <strong>{docId ? docId : "—"}</strong>
-          </div>
-          <div className="hero-stat">
-            <span>Сегменты</span>
-            <strong>{segmentsCount}</strong>
           </div>
           <div className="hero-stat">
             <span>Статус</span>
@@ -2696,11 +2814,8 @@ export default function App() {
         <div className="panel-header">
           <h2>Сценарий</h2>
           <div className="panel-actions panel-actions-scenario">
-            <button className="btn ghost" onClick={handleCreateDocument} disabled={loading}>
-              Создать документ
-            </button>
             <button className="btn ghost" onClick={handleStartNewScenario} disabled={loading}>
-              Новый сценарий
+              {"\u041d\u043e\u0432\u044b\u0439 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439"}
             </button>
             <div className="doc-loader notion-loader">
               <input
@@ -2708,21 +2823,21 @@ export default function App() {
                 type="url"
                 value={notionUrl}
                 onChange={(event) => setNotionUrl(event.target.value)}
-                placeholder="Ссылка на Notion"
+                placeholder={"\u0421\u0441\u044b\u043b\u043a\u0430 \u043d\u0430 Notion"}
               />
               <button
                 className="btn ghost notion-load-btn"
                 onClick={handleLoadNotion}
                 disabled={!canLoadNotion}
               >
-                Загрузить Notion
+                {"\u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c Notion"}
               </button>
               <button
                 className="btn ghost icon-btn notion-refresh-btn"
                 onClick={handleRefreshNotion}
                 disabled={!canRefreshNotion}
-                title="Обновить из Notion"
-                aria-label="Обновить из Notion"
+                title={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
+                aria-label={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
                 type="button"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2737,25 +2852,6 @@ export default function App() {
                 </svg>
               </button>
             </div>
-            <div className="doc-loader">
-              <input
-                className="doc-id-input"
-                value={docIdInput}
-                onChange={(event) => setDocIdInput(event.target.value)}
-                placeholder="ID документа"
-              />
-              <button
-                className="btn ghost doc-load-btn"
-                onClick={handleLoadDocument}
-                disabled={!canLoad}
-              >
-                Загрузить
-              </button>
-            </div>
-            <button className="btn ghost" onClick={handleGenerate} disabled={!canGenerate}>
-              Сегментировать
-              {notionHasUpdates ? <span className="badge">NEW</span> : null}
-            </button>
           </div>
         </div>
         <textarea
@@ -2764,13 +2860,22 @@ export default function App() {
           value={scriptText}
           onChange={(event) => setScriptText(event.target.value)}
         />
+        <div className="panel-actions panel-actions-scenario panel-actions-scenario-footer">
+          <button className="btn ghost" onClick={handleGenerate} disabled={!canGenerate}>
+            {"\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c"}
+            {notionHasUpdates ? <span className="badge">NEW</span> : null}
+          </button>
+        </div>
       </section>
       <section className="panel">
         <div className="panel-header">
           <h2>Блоки сценария</h2>
           <div className="panel-actions panel-actions-blocks">
+            <button className="btn" onClick={handleSave} disabled={!canSave}>
+              {"\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"}
+            </button>
             <button className="btn ghost" onClick={handleAddSegment}>
-              Добавить сегмент
+              {"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0441\u0435\u0433\u043c\u0435\u043d\u0442"}
             </button>
             <button
               className="btn ghost"
@@ -2778,27 +2883,17 @@ export default function App() {
               onClick={() => setLinksPanelOpen((prev) => !prev)}
             >
               {linksPanelOpen
-                ? `Скрыть ссылки (${allScenarioLinks.length})`
-                : `Все ссылки (${allScenarioLinks.length})`}
+                ? `\u0421\u043a\u0440\u044b\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0438 (${allScenarioLinks.length})`
+                : `\u0412\u0441\u0435 \u0441\u0441\u044b\u043b\u043a\u0438 (${allScenarioLinks.length})`}
             </button>
-            <button
-              className="btn ghost"
-              type="button"
-              onClick={() => setMediaPanelOpen((prev) => !prev)}
-              disabled={!docId}
-            >
-              {mediaPanelOpen
-                ? `Hide Downloads (${mediaFiles.length})`
-                : `Media Downloads${activeMediaJobsCount > 0 ? ` (${activeMediaJobsCount})` : ""}`}
-            </button>
-            <button className="btn" onClick={handleSave} disabled={!canSave}>
-              Сохранить
+            <button className="btn ghost" type="button" onClick={handleCopyForFigma}>
+              For Figma
             </button>
             <button className="btn ghost" type="button" onClick={() => handleExport("jsonl")}>
-              Экспорт JSONL
+              {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 JSONL"}
             </button>
             <button className="btn ghost" type="button" onClick={() => handleExport("md")}>
-              Экспорт MD
+              {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 MD"}
             </button>
           </div>
         </div>
@@ -2848,58 +2943,6 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        ) : null}
-        {docId && mediaPanelOpen ? (
-          <div className="media-panel">
-            <div className="media-panel-head">
-              <strong>Media Downloads</strong>
-              <span>
-                {mediaTools?.available ? "yt-dlp ready" : "yt-dlp unavailable"}
-              </span>
-            </div>
-            {mediaJobs.length > 0 ? (
-              <div className="media-jobs-list">
-                {mediaJobs.slice(0, 8).map((job) => (
-                  <div key={job.id} className="media-job-row">
-                    <div className="media-job-meta">
-                      <strong>{job.id}</strong>
-                      <span>{job.status}</span>
-                      {job.section_title ? <span>{job.section_title}</span> : null}
-                      {formatMediaJobProgress(job) ? <span>{formatMediaJobProgress(job)}</span> : null}
-                      {job.error ? <span className="muted">{job.error}</span> : null}
-                    </div>
-                    {(job.status === "queued" || job.status === "running") ? (
-                      <button
-                        className="btn ghost small"
-                        type="button"
-                        onClick={() => handleCancelMediaJob(job.id)}
-                      >
-                        Cancel
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {mediaFiles.length > 0 ? (
-              <div className="media-files-list">
-                {mediaFiles.slice(0, 20).map((file) => (
-                  <div key={file.path} className="media-file-row">
-                    <a
-                      href={`/api/documents/${docId}/media/file?path=${encodeURIComponent(file.path)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {file.path}
-                    </a>
-                    <span className="muted">{formatBytes(file.size)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="muted">Downloaded files will appear here.</div>
             )}
           </div>
         ) : null}
@@ -3031,7 +3074,6 @@ export default function App() {
                           onLinkAdd={handleLinkAdd}
                           onLinkUpdate={handleLinkUpdate}
                           onLinkRemove={handleLinkRemove}
-                          onRemoveBlock={handleRemoveSegment}
                           onDownload={handleDownloadMedia}
                           isDownloadBusy={isMediaDownloadBusy}
                           isDownloadSupported={isMediaDownloadSupported}
@@ -3082,6 +3124,73 @@ export default function App() {
             })}
           </div>
         )}
+      </section>
+      <section className="panel media-panel-shell">
+        <div className="panel-header">
+          <h2>{"\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0417\u0430\u0433\u0440\u0443\u0437\u043e\u043a"}</h2>
+          <div className="panel-actions">
+            <button
+              className="btn ghost"
+              type="button"
+              onClick={() => setMediaPanelOpen((prev) => !prev)}
+              disabled={!docId}
+            >
+              {mediaPanelOpen ? "\u0421\u043a\u0440\u044b\u0442\u044c" : "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c"}
+            </button>
+          </div>
+        </div>
+        {docId && mediaPanelOpen ? (
+          <div className="media-panel">
+            <div className="media-panel-head">
+              <strong>{"\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0417\u0430\u0433\u0440\u0443\u0437\u043e\u043a"}</strong>
+              <span>
+                {mediaTools?.available ? "yt-dlp ready" : "yt-dlp unavailable"}
+              </span>
+            </div>
+            {mediaJobs.length > 0 ? (
+              <div className="media-jobs-list">
+                {mediaJobs.slice(0, 8).map((job) => (
+                  <div key={job.id} className="media-job-row">
+                    <div className="media-job-meta">
+                      <strong>{job.id}</strong>
+                      <span>{job.status}</span>
+                      {job.section_title ? <span>{job.section_title}</span> : null}
+                      {formatMediaJobProgress(job) ? <span>{formatMediaJobProgress(job)}</span> : null}
+                      {job.error ? <span className="muted">{job.error}</span> : null}
+                    </div>
+                    {(job.status === "queued" || job.status === "running") ? (
+                      <button
+                        className="btn ghost small"
+                        type="button"
+                        onClick={() => handleCancelMediaJob(job.id)}
+                      >
+                        Cancel
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {mediaFiles.length > 0 ? (
+              <div className="media-files-list">
+                {mediaFiles.slice(0, 20).map((file) => (
+                  <div key={file.path} className="media-file-row">
+                    <a
+                      href={`/api/documents/${docId}/media/file?path=${encodeURIComponent(file.path)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {file.path}
+                    </a>
+                    <span className="muted">{formatBytes(file.size)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="muted">Downloaded files will appear here.</div>
+            )}
+          </div>
+        ) : null}
       </section>
     </div>
   );

@@ -379,9 +379,37 @@ app.post("/api/documents", async (req, res) => {
     }
 
     await ensureDataDir();
+    const nowIso = new Date().toISOString();
+
+    if (notionUrl) {
+      const docs = await listDocuments();
+      const existing = docs.find((item) => normalizeNotionUrl(item?.notion_url ?? "") === notionUrl);
+      if (existing?.id) {
+        const docId = existing.id;
+        const dir = await ensureDocDir(docId);
+        const current = (await readOptionalJson(path.join(dir, "document.json"))) ?? {};
+        const document = {
+          ...current,
+          id: docId,
+          raw_text: rawText,
+          notion_url: notionUrl,
+          created_at: current.created_at ?? existing.created_at ?? nowIso,
+          last_segmented_text_hash: getDocumentLastSegmentedHash(current) || null
+        };
+        syncDocumentSegmentationState(document, rawText);
+        await writeJson(path.join(dir, "document.json"), document);
+        await appendEvent(docId, {
+          timestamp: nowIso,
+          event: "document_upserted",
+          payload: { doc_id: docId, mode: "reuse_by_notion" }
+        });
+        return res.json({ id: docId, document: normalizeDocumentForResponse(document), reused: true });
+      }
+    }
+
     const docId = `doc_${new Date().toISOString().replace(/[:.]/g, "-")}_${nanoid(6)}`;
     const dir = await ensureDocDir(docId);
-    const createdAt = new Date().toISOString();
+    const createdAt = nowIso;
 
     const document = {
       id: docId,
@@ -1656,20 +1684,13 @@ async function fetchLinkPreview(url) {
 
     const tweetId = getTweetId(url);
     if (tweetId) {
-      const tweetData = await fetchJson(`https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}`, controller);
-      if (tweetData) {
-        const media = Array.isArray(tweetData.mediaDetails) ? tweetData.mediaDetails[0] : null;
-        const imageUrl = media?.media_url_https || media?.media_url || "";
-        const image = toProxyImageUrl(imageUrl);
-        const author = tweetData.user?.name || "";
-        return {
-          url,
-          title: tweetData.text ? truncateText(tweetData.text, 200) : "",
-          description: "",
-          image,
-          siteName: author ? `X - ${author}` : "X"
-        };
-      }
+      const xPreview = await fetchXPreview(url, tweetId, controller);
+      if (xPreview) return xPreview;
+    }
+
+    if (isVkUrl(url)) {
+      const vkPreview = await fetchVkOembedPreview(url, controller);
+      if (vkPreview) return vkPreview;
     }
 
     const response = await fetch(url, {
@@ -1689,13 +1710,15 @@ async function fetchLinkPreview(url) {
     if (!contentType.includes("text/html")) {
       return { url, title: "", description: "", image: "", siteName: "" };
     }
-    const html = await response.text();
+    const html = await decodeHtmlResponse(response);
     const head = html.slice(0, 200000);
     const title = extractTitle(head);
     const ogTitle = extractMeta(head, "og:title");
     const description = extractMeta(head, "description");
     const ogDescription = extractMeta(head, "og:description");
     const siteName = extractMeta(head, "og:site_name") || extractMeta(head, "twitter:site");
+    const resolvedTitle = (ogTitle || title || "").trim();
+    const blockedVkTitle = isVkUrl(url) && isVkAntiBotTitle(resolvedTitle);
     const image =
       extractMeta(head, "og:image:secure_url") ||
       extractMeta(head, "og:image") ||
@@ -1708,14 +1731,96 @@ async function fetchLinkPreview(url) {
 
     return {
       url,
-      title: ogTitle || title || "",
-      description: ogDescription || description || "",
+      title: blockedVkTitle ? "" : resolvedTitle,
+      description: blockedVkTitle ? "" : (ogDescription || description || ""),
       image: proxiedImage,
-      siteName: siteName || ""
+      siteName: siteName || (isVkUrl(url) ? "VK" : "")
     };
+  } catch {
+    return { url, title: "", description: "", image: "", siteName: "" };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function decodeHtmlResponse(response) {
+  return response.arrayBuffer().then((arrayBuffer) => {
+    const buffer = Buffer.from(arrayBuffer);
+    const contentType = String(response.headers.get("content-type") ?? "");
+    const headerCharset = parseCharsetFromContentType(contentType);
+    const asciiProbe = buffer.toString("latin1", 0, Math.min(buffer.length, 8192));
+    const metaCharset = parseCharsetFromHtmlProbe(asciiProbe);
+    const candidates = [
+      headerCharset,
+      metaCharset,
+      "utf-8",
+      "windows-1251",
+      "koi8-r"
+    ];
+    const tried = new Set();
+    let best = "";
+    let bestScore = -1;
+    for (const candidateRaw of candidates) {
+      const candidate = normalizeCharsetName(candidateRaw);
+      if (!candidate || tried.has(candidate)) continue;
+      tried.add(candidate);
+      const decoded = decodeBufferWithCharset(buffer, candidate);
+      if (!decoded) continue;
+      const score = scoreDecodedHtml(decoded);
+      if (score > bestScore) {
+        best = decoded;
+        bestScore = score;
+      }
+      if (score >= 1000) break;
+    }
+    if (best) return best;
+    return buffer.toString("utf8");
+  });
+}
+
+function parseCharsetFromContentType(contentType) {
+  const match = String(contentType ?? "").match(/charset\s*=\s*["']?\s*([^;"'\s]+)/i);
+  return match ? match[1].trim() : "";
+}
+
+function parseCharsetFromHtmlProbe(htmlProbe) {
+  const metaCharset = htmlProbe.match(/<meta[^>]+charset\s*=\s*["']?\s*([^"'>\s]+)/i);
+  if (metaCharset?.[1]) return metaCharset[1].trim();
+  const metaContentType = htmlProbe.match(
+    /<meta[^>]+http-equiv\s*=\s*["']content-type["'][^>]*content\s*=\s*["'][^"']*charset=([^"'>\s;]+)/i
+  );
+  return metaContentType?.[1] ? metaContentType[1].trim() : "";
+}
+
+function normalizeCharsetName(raw) {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (!value) return "";
+  if (value === "utf8") return "utf-8";
+  if (value === "cp1251" || value === "windows1251") return "windows-1251";
+  if (value === "win-1251") return "windows-1251";
+  return value;
+}
+
+function decodeBufferWithCharset(buffer, charset) {
+  try {
+    return new TextDecoder(charset, { fatal: false }).decode(buffer);
+  } catch {
+    if (charset === "utf-8") {
+      return buffer.toString("utf8");
+    }
+    return "";
+  }
+}
+
+function scoreDecodedHtml(text) {
+  if (!text) return -1;
+  const replacementCount = (text.match(/\uFFFD/g) ?? []).length;
+  const hasHtml = /<html|<meta|<title|<body/i.test(text) ? 1 : 0;
+  const hasCyrillic = /[А-Яа-яЁё]/.test(text) ? 1 : 0;
+  if (replacementCount === 0 && hasHtml) {
+    return 1000 + hasCyrillic;
+  }
+  return hasHtml * 10 + hasCyrillic - replacementCount * 3;
 }
 
 function extractTitle(html) {
@@ -1781,6 +1886,81 @@ function getTweetId(rawUrl) {
   }
 }
 
+function isVkUrl(rawUrl) {
+  try {
+    const host = new URL(rawUrl).hostname.replace(/^www\./, "").toLowerCase();
+    return host === "vk.com" || host.endsWith(".vk.com");
+  } catch {
+    return false;
+  }
+}
+
+function isVkAntiBotTitle(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("ваш браузер устарел") ||
+    text.includes("browser is outdated") ||
+    text.includes("security check") ||
+    text.includes("подозрительная активность")
+  );
+}
+
+async function fetchXPreview(url, tweetId, controller) {
+  const tweetData = await fetchJson(`https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}`, controller);
+  if (tweetData) {
+    const media = Array.isArray(tweetData.mediaDetails) ? tweetData.mediaDetails[0] : null;
+    const imageUrl = media?.media_url_https || media?.media_url || "";
+    const image = toProxyImageUrl(imageUrl);
+    const author = tweetData.user?.name || "";
+    return {
+      url,
+      title: tweetData.text ? truncateText(tweetData.text, 200) : "",
+      description: "",
+      image,
+      siteName: author ? `X - ${author}` : "X"
+    };
+  }
+
+  const oembed = await fetchJson(
+    `https://publish.twitter.com/oembed?omit_script=1&dnt=true&url=${encodeURIComponent(url)}`,
+    controller
+  );
+  if (oembed) {
+    const textFromHtml = stripHtml(String(oembed.html ?? ""));
+    const fallbackText = textFromHtml || String(oembed.title ?? "").trim();
+    const author = String(oembed.author_name ?? "").trim();
+    return {
+      url,
+      title: fallbackText ? truncateText(fallbackText, 200) : "",
+      description: "",
+      image: "",
+      siteName: author ? `X - ${author}` : "X"
+    };
+  }
+
+  return null;
+}
+
+async function fetchVkOembedPreview(url, controller) {
+  const oembed = await fetchJson(`https://vk.com/oembed.php?url=${encodeURIComponent(url)}`, controller);
+  if (!oembed || oembed.error) return null;
+  const image = toProxyImageUrl(String(oembed.thumbnail_url ?? "").trim());
+  const title = String(oembed.title ?? "").trim();
+  const author = String(oembed.author_name ?? "").trim();
+  return {
+    url,
+    title,
+    description: author,
+    image,
+    siteName: String(oembed.provider_name ?? "VK").trim() || "VK"
+  };
+}
+
+function stripHtml(value) {
+  return decodeHtml(String(value ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+}
+
 async function fetchJson(url, controller) {
   const response = await fetch(url, {
     signal: controller?.signal,
@@ -1805,7 +1985,10 @@ function decodeHtml(value) {
   return value
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
     .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
 }
