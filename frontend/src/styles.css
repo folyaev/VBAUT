@@ -1180,6 +1180,28 @@ body::before {
   font-size: 12px;
 }
 
+.timecode-split-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.timecode-part-input {
+  width: 58px;
+  min-width: 58px;
+  max-width: 58px;
+  text-align: center;
+  padding: 10px 8px;
+}
+
+.timecode-separator {
+  color: var(--muted);
+  font-weight: 600;
+  user-select: none;
+}
+
 .segment-media-options {
   display: grid;
   gap: 6px;
@@ -1507,6 +1529,18 @@ body::before {
   .segment-media-picker-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .timecode-split-input {
+    width: 100%;
+    justify-content: space-between;
+    gap: 4px;
+  }
+
+  .timecode-part-input {
+    width: calc((100% - 16px) / 3);
+    min-width: 0;
+    max-width: none;
   }
 
   .segment-media-options {

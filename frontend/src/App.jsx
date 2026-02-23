@@ -84,6 +84,8 @@ const YTDLP_CANDIDATE_HOSTS = [
   /(^|\.)soundcloud\.com$/i
 ];
 const DIRECT_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|m3u8|mp3|m4a|wav|flac)(?:$|[?#])/i;
+const VIDEO_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|avi|mpg|mpeg|mts|m2ts)(?:$|[?#])/i;
+const TIMECODE_EDIT_FPS = 50;
 const VISUAL_TYPE_LABELS = {
   video: "\u0412\u0438\u0434\u0435\u043e",
   portrait: "\u041f\u043e\u0440\u0442\u0440\u0435\u0442",
@@ -123,7 +125,8 @@ const emptyVisualDecision = () => ({
   format_hint: null,
   duration_hint_sec: null,
   priority: null,
-  media_file_path: null
+  media_file_path: null,
+  media_start_timecode: null
 });
 const emptySearchDecision = () => ({
   keywords: [],
@@ -149,13 +152,15 @@ const normalizeVisualDecision = (decision, config) => {
   const duration_hint_sec = typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : null;
   const priority = normalizePriority(decision.priority, config);
   const media_file_path = normalizeMediaFilePath(decision.media_file_path ?? decision.media_path ?? null);
+  const media_start_timecode = normalizeMediaStartTimecode(decision.media_start_timecode ?? decision.media_start ?? null);
   return {
     type,
     description,
     format_hint,
     duration_hint_sec,
     priority,
-    media_file_path
+    media_file_path,
+    media_start_timecode
   };
 };
 const normalizeFormatHint = (value, config) => {
@@ -248,6 +253,80 @@ const normalizeMediaFilePath = (value) => {
   const normalized = value.replace(/\\/g, "/").trim();
   if (!normalized) return null;
   return normalized.length > 512 ? normalized.slice(0, 512) : normalized;
+};
+const normalizeMediaStartTimecode = (value) => {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.length > 32 ? normalized.slice(0, 32) : normalized;
+};
+
+const parseTimecodeToFrames = (value, fps = TIMECODE_EDIT_FPS) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const normalizedRaw = raw.replace(",", ".");
+
+  if (/^\d+(?:\.\d+)?$/.test(normalizedRaw)) {
+    const sec = Number(normalizedRaw);
+    if (!Number.isFinite(sec) || sec < 0) return null;
+    return Math.max(0, Math.round(sec * fps));
+  }
+
+  const parts = raw.split(":").map((part) => part.trim());
+  if (parts.length < 2 || parts.length > 4) return null;
+  if (parts.some((part) => !/^\d+(?:[.,]\d+)?$/.test(part))) return null;
+  const nums = parts.map((part) => Number(part.replace(",", ".")));
+  if (nums.some((num) => !Number.isFinite(num) || num < 0)) return null;
+
+  if (parts.length === 2) {
+    const [mm, ss] = nums;
+    return Math.max(0, Math.round((mm * 60 + ss) * fps));
+  }
+  if (parts.length === 3) {
+    const [hh, mm, ss] = nums;
+    return Math.max(0, Math.round((hh * 3600 + mm * 60 + ss) * fps));
+  }
+
+  const [hh, mm, ss, ff] = nums;
+  return Math.max(0, Math.round((hh * 3600 + mm * 60 + ss) * fps + ff));
+};
+
+const formatFramesAsTimecode = (frames, fps = TIMECODE_EDIT_FPS) => {
+  const total = Math.max(0, Math.round(Number(frames) || 0));
+  const perHour = 3600 * fps;
+  const perMinute = 60 * fps;
+  const hh = Math.floor(total / perHour);
+  const mm = Math.floor((total % perHour) / perMinute);
+  const ss = Math.floor((total % perMinute) / fps);
+  const ff = total % fps;
+  const pad2 = (num) => String(num).padStart(2, "0");
+  return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}:${pad2(ff)}`;
+};
+const splitTimecodeToParts = (value, fps = TIMECODE_EDIT_FPS) => {
+  const parsed = parseTimecodeToFrames(value, fps);
+  const totalFrames = Math.max(0, parsed == null ? 0 : parsed);
+  const totalSeconds = Math.floor(totalFrames / fps);
+  const hh = Math.floor(totalSeconds / 3600);
+  const mm = Math.floor((totalSeconds % 3600) / 60);
+  const ss = totalSeconds % 60;
+  return {
+    hh: hh > 0 ? String(hh) : "",
+    mm: mm > 0 ? String(mm) : "",
+    ss: ss > 0 ? String(ss) : ""
+  };
+};
+
+const partsToTimecode = (parts, fps = TIMECODE_EDIT_FPS) => {
+  const hh = Math.max(0, Number.parseInt(String(parts?.hh ?? "0"), 10) || 0);
+  const mm = Math.min(59, Math.max(0, Number.parseInt(String(parts?.mm ?? "0"), 10) || 0));
+  const ss = Math.min(59, Math.max(0, Number.parseInt(String(parts?.ss ?? "0"), 10) || 0));
+  const pad2 = (num) => String(num).padStart(2, "0");
+  return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
+};
+
+const isVideoMediaPath = (value) => {
+  if (!value) return false;
+  return VIDEO_MEDIA_PATH_RE.test(String(value));
 };
 const buildMediaFileUrl = (docId, mediaPath) => {
   const id = String(docId ?? "").trim();
@@ -1644,6 +1723,16 @@ const SegmentCard = React.memo(function SegmentCard({
   const [mediaFilter, setMediaFilter] = React.useState("");
   const selectedMediaPath = normalizeMediaFilePath(segment.visual_decision?.media_file_path ?? "");
   const mediaFileUrl = buildMediaFileUrl(docId, selectedMediaPath);
+  const showMediaStartTimecode = isVideoMediaPath(selectedMediaPath);
+  const mediaStartTimecodeValue = segment.visual_decision.media_start_timecode ?? "";
+  const [timecodeDraft, setTimecodeDraft] = React.useState(() =>
+    splitTimecodeToParts(mediaStartTimecodeValue, TIMECODE_EDIT_FPS)
+  );
+  const [focusedTimecodePart, setFocusedTimecodePart] = React.useState(null);
+  const timecodeInputRefs = React.useRef([]);
+  React.useEffect(() => {
+    setTimecodeDraft(splitTimecodeToParts(mediaStartTimecodeValue, TIMECODE_EDIT_FPS));
+  }, [mediaStartTimecodeValue, index]);
   const mediaFileList = Array.isArray(mediaFiles) ? mediaFiles : [];
   const mediaTopicFolder = sanitizeMediaTopicName(segment.section_title ?? "");
   const topicMediaFiles = mediaFileList.filter((file) => getMediaFileTopicFolder(file.path) === mediaTopicFolder);
@@ -1668,6 +1757,34 @@ const SegmentCard = React.memo(function SegmentCard({
         return value.length > 220 ? `${value.slice(0, 220).trimEnd()}...` : value;
       })()
     : getQuotePreview(segment.text_quote, 78);
+  const updateTimecodePart = React.useCallback((partName, rawValue, partIndex) => {
+    const digits = String(rawValue ?? "").replace(/\D/g, "").slice(0, 2);
+    const partValue = digits;
+    const nextParts = { ...timecodeDraft, [partName]: partValue };
+    setTimecodeDraft(nextParts);
+    onVisualUpdate(index, { media_start_timecode: partsToTimecode(nextParts, TIMECODE_EDIT_FPS) });
+    if (digits.length >= 2 && partIndex < 2) {
+      window.setTimeout(() => {
+        const nextInput = timecodeInputRefs.current[partIndex + 1];
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.select();
+        }
+      }, 0);
+    }
+  }, [index, onVisualUpdate, timecodeDraft]);
+  const handleTimecodePartFocus = React.useCallback((event) => {
+    event.currentTarget.select();
+  }, []);
+  const handleTimecodePartBlur = React.useCallback(() => {
+    setFocusedTimecodePart(null);
+  }, []);
+  const getTimecodeDisplayValue = React.useCallback((partName, partIndex) => {
+    const raw = String(timecodeDraft?.[partName] ?? "");
+    if (focusedTimecodePart === partIndex) return raw;
+    if (!raw) return "00";
+    return raw.padStart(2, "0").slice(-2);
+  }, [focusedTimecodePart, timecodeDraft]);
   const statusBadge =
     segment.segment_status === "new"
       ? { text: "NEW", className: "badge badge-new" }
@@ -1880,6 +1997,36 @@ const SegmentCard = React.memo(function SegmentCard({
             </div>
           ) : null}
           {selectedMediaPath ? <div className="muted segment-media-picked">{selectedMediaPath}</div> : null}
+          {showMediaStartTimecode ? (
+            <>
+              <label>{"\u0422\u0430\u0439\u043c\u043a\u043e\u0434"}</label>
+              <div className="timecode-split-input" role="group" aria-label="timecode">
+                {["hh", "mm", "ss"].map((partName, partIndex) => (
+                  <React.Fragment key={partName}>
+                    <input
+                      ref={(node) => {
+                        timecodeInputRefs.current[partIndex] = node;
+                      }}
+                      className="timecode-part-input"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={2}
+                      value={getTimecodeDisplayValue(partName, partIndex)}
+                      onFocus={(event) => {
+                        setFocusedTimecodePart(partIndex);
+                        handleTimecodePartFocus(event);
+                      }}
+                      onBlur={handleTimecodePartBlur}
+                      onChange={(event) => updateTimecodePart(partName, event.target.value, partIndex)}
+                      aria-label={partName.toUpperCase()}
+                    />
+                    {partIndex < 2 ? <span className="timecode-separator">:</span> : null}
+                  </React.Fragment>
+                ))}
+              </div>
+            </>
+          ) : null}
         </div>
         <div className="search-toggle">
           <button
@@ -2971,7 +3118,8 @@ export default function App() {
                       ...nextVisual,
                       ...defaults,
                       description: "",
-                      media_file_path: null
+                      media_file_path: null,
+                      media_start_timecode: null
                     }
                   };
                 }
@@ -2982,6 +3130,12 @@ export default function App() {
                     ...defaults
                   }
                 };
+              }
+              if (updates && Object.prototype.hasOwnProperty.call(updates, "media_file_path")) {
+                const nextPath = normalizeMediaFilePath(updates.media_file_path ?? null);
+                if (!isVideoMediaPath(nextPath)) {
+                  nextVisual.media_start_timecode = null;
+                }
               }
               return { ...segment, visual_decision: nextVisual };
             })()

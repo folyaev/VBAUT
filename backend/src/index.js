@@ -2445,6 +2445,44 @@ function secondsToFrames(seconds, fps) {
   return Math.max(1, Math.round(duration * rate));
 }
 
+function secondsToFramesAllowZero(seconds, fps) {
+  const duration = Number(seconds);
+  const rate = Number(fps);
+  if (!Number.isFinite(duration) || duration <= 0) return 0;
+  if (!Number.isFinite(rate) || rate <= 0) return Math.max(0, Math.round(duration * 50));
+  return Math.max(0, Math.round(duration * rate));
+}
+
+function parseXmlStartTimecodeToSeconds(value, fps) {
+  if (value == null) return 0;
+  const raw = String(value).trim();
+  if (!raw) return 0;
+
+  const normalizedRaw = raw.replace(",", ".");
+  if (/^\d+(?:\.\d+)?$/.test(normalizedRaw)) {
+    const numeric = Number(normalizedRaw);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+  }
+
+  const parts = raw.split(":").map((part) => part.trim());
+  if (parts.length < 2 || parts.length > 4) return 0;
+  if (parts.some((part) => !/^\d+(?:[.,]\d+)?$/.test(part))) return 0;
+  const nums = parts.map((part) => Number(part.replace(",", ".")));
+  if (nums.some((num) => !Number.isFinite(num) || num < 0)) return 0;
+
+  const rate = Number.isFinite(Number(fps)) && Number(fps) > 0 ? Number(fps) : XML_EXPORT_FPS;
+  if (parts.length === 2) {
+    const [mm, ss] = nums;
+    return mm * 60 + ss;
+  }
+  if (parts.length === 3) {
+    const [hh, mm, ss] = nums;
+    return hh * 3600 + mm * 60 + ss;
+  }
+  const [hh, mm, ss, ff] = nums;
+  return hh * 3600 + mm * 60 + ss + ff / rate;
+}
+
 function detectXmlMediaCategory(filePath) {
   const ext = String(path.extname(filePath ?? "")).toLowerCase();
   if (XML_AUDIO_EXTENSIONS.has(ext)) return "audio";
@@ -2849,6 +2887,11 @@ function renderXmlLinkBlock({ targetClipId, mediaType, trackIndex, clipIndex, gr
 function renderXmlFileElement({ clip, fps, includeVideo, includeAudio }) {
   const sourceWidth = Number(clip?.sourceDimensions?.width);
   const sourceHeight = Number(clip?.sourceDimensions?.height);
+  const fileDurationFrames = Math.max(
+    Number(clip?.durationFrames) || 0,
+    Number(clip?.sourceOutFrame) || 0,
+    1
+  );
   const lines = [
     `            <file id="${escapeXml(clip.entry.fileId)}">`,
     `              <name>${escapeXml(clip.fileName)}</name>`,
@@ -2857,7 +2900,7 @@ function renderXmlFileElement({ clip, fps, includeVideo, includeAudio }) {
     `                <timebase>${fps}</timebase>`,
     "                <ntsc>FALSE</ntsc>",
     "              </rate>",
-    `              <duration>${clip.durationFrames}</duration>`,
+    `              <duration>${fileDurationFrames}</duration>`,
     "              <timecode>",
     "                <rate>",
     `                  <timebase>${fps}</timebase>`,
@@ -2905,6 +2948,8 @@ function renderXmlFileElement({ clip, fps, includeVideo, includeAudio }) {
 }
 
 function renderXmlVideoClipItem({ clip, fps, audioPeer }) {
+  const sourceInFrame = Math.max(0, Math.round(Number(clip?.sourceInFrame) || 0));
+  const sourceOutFrame = Math.max(sourceInFrame, Math.round(Number(clip?.sourceOutFrame) || 0));
   const lines = [
     `          <clipitem id="${escapeXml(clip.clipId)}">`,
     `            <masterclipid>${escapeXml(clip.entry.masterClipId)}</masterclipid>`,
@@ -2917,8 +2962,8 @@ function renderXmlVideoClipItem({ clip, fps, audioPeer }) {
     "            </rate>",
     `            <start>${clip.startFrame}</start>`,
     `            <end>${clip.endFrame}</end>`,
-    "            <in>0</in>",
-    `            <out>${clip.durationFrames}</out>`,
+    `            <in>${sourceInFrame}</in>`,
+    `            <out>${sourceOutFrame}</out>`,
     `            <alphatype>${clip.category === "image" ? "straight" : "none"}</alphatype>`,
     "            <pixelaspectratio>square</pixelaspectratio>",
     "            <anamorphic>FALSE</anamorphic>"
@@ -2956,6 +3001,8 @@ function renderXmlVideoClipItem({ clip, fps, audioPeer }) {
 }
 
 function renderXmlAudioClipItem({ clip, fps, videoPeer }) {
+  const sourceInFrame = Math.max(0, Math.round(Number(clip?.sourceInFrame) || 0));
+  const sourceOutFrame = Math.max(sourceInFrame, Math.round(Number(clip?.sourceOutFrame) || 0));
   const lines = [
     `          <clipitem id="${escapeXml(clip.clipId)}" premiereChannelType="stereo">`,
     `            <masterclipid>${escapeXml(clip.entry.masterClipId)}</masterclipid>`,
@@ -2968,8 +3015,8 @@ function renderXmlAudioClipItem({ clip, fps, videoPeer }) {
     "            </rate>",
     `            <start>${clip.startFrame}</start>`,
     `            <end>${clip.endFrame}</end>`,
-    "            <in>0</in>",
-    `            <out>${clip.durationFrames}</out>`
+    `            <in>${sourceInFrame}</in>`,
+    `            <out>${sourceOutFrame}</out>`
   ];
 
   if (videoPeer) {
@@ -3212,6 +3259,11 @@ async function buildXmlExportPayload({
     const category = mediaInfo.category;
     const durationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, category);
     const durationFrames = secondsToFrames(durationSec, fpsValue);
+    const sourceStartSec = category === "video"
+      ? parseXmlStartTimecodeToSeconds(visual.media_start_timecode, fpsValue)
+      : 0;
+    const sourceInFrame = secondsToFramesAllowZero(sourceStartSec, fpsValue);
+    const sourceOutFrame = sourceInFrame + durationFrames;
     const sourceDimensions = mediaInfo.sourceDimensions;
     const motionScale = resolveXmlMotionScale(sourceDimensions);
     const motionCenterPx = resolveXmlMotionCenterPx({
@@ -3234,6 +3286,8 @@ async function buildXmlExportPayload({
       fileName: path.basename(absolutePath),
       pathUrl: pathToFileURL(absolutePath).href,
       durationFrames,
+      sourceInFrame,
+      sourceOutFrame,
       startFrame,
       endFrame,
       category,
@@ -3522,7 +3576,8 @@ function emptyVisualDecision() {
     format_hint: null,
     duration_hint_sec: null,
     priority: null,
-    media_file_path: null
+    media_file_path: null,
+    media_start_timecode: null
   };
 }
 
@@ -3546,6 +3601,7 @@ function normalizeVisualDecisionInput(raw) {
   const durationHint = typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : null;
   const priority = normalizePriority(raw.priority);
   const mediaFilePath = normalizeMediaFilePath(raw.media_file_path ?? raw.media_path ?? null);
+  const mediaStartTimecode = normalizeMediaStartTimecode(raw.media_start_timecode ?? raw.media_start ?? null);
 
   return {
     type,
@@ -3553,8 +3609,16 @@ function normalizeVisualDecisionInput(raw) {
     format_hint: formatHint,
     duration_hint_sec: durationHint,
     priority,
-    media_file_path: mediaFilePath
+    media_file_path: mediaFilePath,
+    media_start_timecode: mediaStartTimecode
   };
+}
+
+function normalizeMediaStartTimecode(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.length > 32 ? normalized.slice(0, 32) : normalized;
 }
 
 function normalizeMediaFilePath(value) {
