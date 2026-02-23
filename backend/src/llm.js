@@ -44,7 +44,7 @@ const VISUAL_TYPES = [
 ];
 const FORMAT_HINTS = ["2:1", "1:1", "Заголовок/Цитата", "Документ"];
 const PRIORITIES = ["обязательно", "рекомендуется", "при наличии"];
-const SEARCH_LIMITS = { maxKeywords: 8, maxQueries: 6 };
+const SEARCH_LIMITS = { maxKeywords: 8, maxQueries: 3 };
 const SEARCH_ENGINES = [
   { id: "youtube", label: "YouTube", url: "https://www.youtube.com/results?search_query=" },
   {
@@ -191,7 +191,7 @@ async function generateSegmentsViaLLM(text) {
 
 export async function generateDecisionsForSegments(segments, text) {
   const model = await resolveModel();
-  const system = `Ты — ассистент по визуальному брифу и поисковым запросам.\n\nПравила:\n- Ты получишь готовые сегменты. Не меняй segment_id, block_type или text_quote.\n- Для каждого сегмента дай visual_decision и search_decision.\n- visual_decision:\n  - type только из: ${VISUAL_TYPES.join(", ")}.\n  - description на русском, 1 короткое предложение, без английского.\n  - format_hint: ${FORMAT_HINTS.join(", ")} или null.\n  - priority: ${PRIORITIES.join(", ")} или null.\n  - duration_hint_sec: число или null.\n- search_decision:\n  - keywords: 5–7 коротких слов/фраз, без повторов; включи все имена, организации и места из сегмента.\n  - queries: 4–5 реальных поисковых запросов на русском с уточнениями (имена, место, время), без английского.\n  - каждое keyword должно встретиться хотя бы в одном запросе.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, visual_decision { type, description, format_hint, duration_hint_sec, priority }, search_decision { keywords, queries }.`;
+  const system = `Ты — ассистент по визуальному брифу и поисковым запросам.\n\nПравила:\n- Ты получишь готовые сегменты. Не меняй segment_id, block_type или text_quote.\n- Для каждого сегмента дай visual_decision и search_decision.\n- visual_decision:\n  - type только из: ${VISUAL_TYPES.join(", ")}.\n  - description на русском, 1 короткое конкретное предложение без воды и без английского.\n  - format_hint: ${FORMAT_HINTS.join(", ")} или null.\n  - priority: ${PRIORITIES.join(", ")} или null.\n  - duration_hint_sec: число или null.\n  - В description указывай конкретный визуальный объект (кто/что/где), избегай абстрактных формулировок.\n- search_decision:\n  - keywords: 5–7 коротких слов/фраз, без повторов; включи имена, организации, места и ключевые сущности сегмента.\n  - queries: ровно 3 запроса на русском:\n    1) первый запрос дословно равен visual_decision.description;\n    2) второй и третий запросы сгенерируй по keywords (поисково-практичные формулировки с уточнениями).\n  - без английского.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, visual_decision { type, description, format_hint, duration_hint_sec, priority }, search_decision { keywords, queries }.`;
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote }) => ({
     segment_id,
@@ -271,7 +271,7 @@ export async function generateDecisionsForSegments(segments, text) {
 
 export async function generateVisualDecisionsForSegments(segments) {
   const model = await resolveModel();
-  const system = `Ты — ассистент по визуальному брифу.\n\nПравила:\n- Ты получишь готовые сегменты. Не меняй segment_id, block_type или text_quote.\n- Для каждого сегмента дай только visual_decision.\n- visual_decision:\n  - type только из: ${VISUAL_TYPES.join(", ")}.\n  - description на русском, 1 короткое предложение, без английского.\n  - format_hint: ${FORMAT_HINTS.join(", ")} или null.\n  - priority: ${PRIORITIES.join(", ")} или null.\n  - duration_hint_sec: число или null.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, visual_decision { type, description, format_hint, duration_hint_sec, priority }.\n`;
+  const system = `Ты — ассистент по визуальному брифу.\n\nПравила:\n- Ты получишь готовые сегменты. Не меняй segment_id, block_type или text_quote.\n- Для каждого сегмента дай только visual_decision.\n- visual_decision:\n  - type только из: ${VISUAL_TYPES.join(", ")}.\n  - description на русском, 1 короткое конкретное предложение без воды и без английского.\n  - format_hint: ${FORMAT_HINTS.join(", ")} или null.\n  - priority: ${PRIORITIES.join(", ")} или null.\n  - duration_hint_sec: число или null.\n  - В description обязательно назови объект съемки/иллюстрации (кто/что/где).\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, visual_decision { type, description, format_hint, duration_hint_sec, priority }.\n`;
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote }) => ({
     segment_id,
@@ -331,7 +331,7 @@ export async function generateVisualDecisionsForSegments(segments) {
 
 export async function generateSearchDecisionsForSegments(segments) {
   const model = await resolveModel();
-  const system = `Ты — ассистент по поисковым запросам.\n\nПравила:\n- Ты получишь сегменты и требования к визуалу.\n- Для каждого сегмента дай только search_decision.\n- search_decision:\n  - keywords: 5–7 коротких слов/фраз, без повторов; включи все имена, организации и места из сегмента.\n  - queries: 4–6 реальных поисковых запросов на русском с уточнениями (имена, место, время), без английского.\n  - каждый keyword должен встретиться хотя бы в одном запросе.\n- Учитывай описание визуала и тип визуала из visual_decision.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, search_decision { keywords, queries }.\n`;
+  const system = `Ты — ассистент по поисковым запросам.\n\nПравила:\n- Ты получишь сегменты и требования к визуалу.\n- Для каждого сегмента дай только search_decision.\n- search_decision:\n  - keywords: 5–7 коротких слов/фраз, без повторов; включи имена, организации, места и ключевые сущности сегмента.\n  - queries: ровно 3 запроса на русском:\n    1) первый запрос дословно равен visual_decision.description;\n    2) второй и третий запросы сгенерируй по keywords (поисково-практичные формулировки с уточнениями);\n  - без английского.\n- Учитывай описание визуала и тип визуала из visual_decision.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, search_decision { keywords, queries }.\n`;
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote, visual_decision }) => ({
     segment_id,
@@ -368,7 +368,9 @@ export async function generateSearchDecisionsForSegments(segments) {
     const normalized = normalizeSearchDecisions(parsed, segments);
     return normalized.map((item) => {
       const source = segments.find((segment) => segment.segment_id === item.segment_id);
-      return applyVisualSearchHints(item, source?.visual_decision ?? emptyVisualDecision());
+      const visualDecision = source?.visual_decision ?? emptyVisualDecision();
+      const hinted = applyVisualSearchHints(item, visualDecision);
+      return applySearchQueryStructure(hinted, visualDecision);
     });
   } catch (error) {
     console.warn("LLM search decisions failed:", error?.message ?? error);
@@ -381,7 +383,7 @@ export async function generateSearchDecisionsForSegments(segments) {
 
 export async function generateEnglishSearchDecisionsForSegments(segments) {
   const model = await resolveModel();
-  const system = `You are a search query assistant.\n\nRules:\n- You will receive segments and visual requirements.\n- For each segment return only search_decision in English.\n- search_decision:\n  - keywords: 5–7 short phrases, no duplicates; include all names, organizations, and places from the segment.\n  - queries: 4–6 realistic English search queries with clarifying details (names, place, time).\n  - each keyword must appear in at least one query.\n- Consider visual_decision (type and description).\n- Output JSON only, no markdown.\n\nOutput: array of objects with fields: segment_id, search_decision { keywords, queries }.\n`;
+  const system = `You are a search query assistant.\n\nRules:\n- You will receive segments and visual requirements.\n- For each segment return only search_decision in English.\n- search_decision:\n  - keywords: 5–7 short phrases, no duplicates; include all names, organizations, and places from the segment.\n  - queries: exactly 3 realistic English search queries with clarifying details (names, place, time).\n  - each query should be practical for real-world search engines.\n- Consider visual_decision (type and description).\n- Output JSON only, no markdown.\n\nOutput: array of objects with fields: segment_id, search_decision { keywords, queries }.\n`;
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote, visual_decision }) => ({
     segment_id,
@@ -511,7 +513,7 @@ function normalizeDecisions(parsed, segments) {
     list.map((item) => {
       const segmentId = String(item?.segment_id ?? "");
       const visual = normalizeVisualDecision(item?.visual_decision ?? item);
-      const search = normalizeSearchDecision(item?.search_decision ?? item);
+      const search = enforceSearchQueryStructure(normalizeSearchDecision(item?.search_decision ?? item), visual);
       return [segmentId, { visual, search }];
     })
   );
@@ -595,6 +597,99 @@ function applyVisualSearchHintsEnglish(item, visualDecision) {
       queries: coveredQueries
     }
   };
+}
+
+function applySearchQueryStructure(item, visualDecision) {
+  return {
+    ...item,
+    search_decision: enforceSearchQueryStructure(item.search_decision, visualDecision)
+  };
+}
+
+function enforceSearchQueryStructure(searchDecision, visualDecision) {
+  const baseKeywords = normalizeStringList(searchDecision?.keywords, SEARCH_LIMITS.maxKeywords);
+  const rawQueries = normalizeStringList(searchDecision?.queries, SEARCH_LIMITS.maxQueries * 4);
+  const visualDescription = String(visualDecision?.description ?? "").trim();
+  const seedText = visualDescription || rawQueries[0] || rawQueries.join(" ");
+  const keywords = (baseKeywords.length ? baseKeywords : deriveKeywordsFromText(seedText)).slice(0, SEARCH_LIMITS.maxKeywords);
+
+  const firstQuery = visualDescription || rawQueries[0] || buildKeywordQuery(keywords, 0);
+  const candidates = rawQueries.filter((query) => String(query ?? "").trim());
+  const secondQuery = pickKeywordQuery(candidates, keywords, 0, [firstQuery]);
+  const thirdQuery = pickKeywordQuery(candidates, keywords, 1, [firstQuery, secondQuery]);
+
+  const queries = [firstQuery, secondQuery, thirdQuery]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .slice(0, SEARCH_LIMITS.maxQueries);
+
+  while (queries.length > 0 && queries.length < SEARCH_LIMITS.maxQueries) {
+    queries.push(queries[queries.length - 1]);
+  }
+
+  return { keywords, queries };
+}
+
+function pickKeywordQuery(candidates, keywords, variant, excludedQueries) {
+  const excluded = new Set(
+    (excludedQueries ?? [])
+      .map((query) => String(query ?? "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  for (const candidate of candidates ?? []) {
+    const query = String(candidate ?? "").trim();
+    if (!query) continue;
+    const lower = query.toLowerCase();
+    if (excluded.has(lower)) continue;
+    if (containsAnyKeyword(query, keywords)) return query;
+  }
+
+  return buildKeywordQuery(keywords, variant);
+}
+
+function containsAnyKeyword(query, keywords) {
+  const text = String(query ?? "").toLowerCase();
+  if (!text) return false;
+  return (keywords ?? []).some((keyword) => {
+    const term = String(keyword ?? "").trim().toLowerCase();
+    return term && text.includes(term);
+  });
+}
+
+function buildKeywordQuery(keywords, variant) {
+  const list = (keywords ?? [])
+    .map((keyword) => String(keyword ?? "").trim())
+    .filter(Boolean);
+  if (!list.length) return "";
+
+  const chunkSize = Math.min(3, list.length);
+  const start = Math.max(0, Number(variant) || 0) * chunkSize;
+  const queryParts = [];
+
+  for (let i = 0; i < chunkSize; i += 1) {
+    queryParts.push(list[(start + i) % list.length]);
+  }
+
+  return queryParts.join(" ").trim();
+}
+
+function deriveKeywordsFromText(text) {
+  const words = String(text ?? "").match(/[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9_-]{2,}/g) ?? [];
+  const seen = new Set();
+  const keywords = [];
+
+  for (const word of words) {
+    const normalized = String(word ?? "").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keywords.push(normalized);
+    if (keywords.length >= SEARCH_LIMITS.maxKeywords) break;
+  }
+
+  return keywords;
 }
 
 function mergeKeywords(required, existing, limit) {

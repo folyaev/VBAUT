@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 const defaultConfig = {
   blockTypes: ["news", "ad", "selfad", "intro", "outro"],
   visualTypes: [
@@ -12,9 +12,9 @@ const defaultConfig = {
     "graphic_element",
     "no_visual"
   ],
-  formatHints: ["2:1", "1:1", "Заголовок/Цитата", "Документ"],
-  priorities: ["обязательно", "рекомендуется", "при наличии"],
-  searchLimits: { maxKeywords: 8, maxQueries: 6 },
+  formatHints: ["2:1", "1:1", "\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a/\u0426\u0438\u0442\u0430\u0442\u0430", "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442"],
+  priorities: ["\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e", "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f", "\u043f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438"],
+  searchLimits: { maxKeywords: 8, maxQueries: 3 },
   searchEngines: [
     { id: "youtube", label: "YouTube", url: "https://www.youtube.com/results?search_query=" },
     {
@@ -25,13 +25,13 @@ const defaultConfig = {
     },
     {
       id: "yandex_hq",
-      label: "Яндекс HQ",
+      label: "\u042f\u043d\u0434\u0435\u043a\u0441 HQ",
       url: "https://yandex.ru/images/search?text=",
       suffix: "&isize=large"
     },
     {
       id: "yandex_hq_square",
-      label: "1:1 Яндекс HQ",
+      label: "1:1 \u042f\u043d\u0434\u0435\u043a\u0441 HQ",
       url: "https://yandex.ru/images/search?text=",
       suffix: "&iorient=square&isize=large"
     },
@@ -41,7 +41,7 @@ const defaultConfig = {
       url: "https://www.google.com/search?q=",
       suffix: "&tbm=isch&tbs=isz:l"
     },
-    { id: "vk_video", label: "VK Видео", url: "https://vk.com/search/video?q=" },
+    { id: "vk_video", label: "VK \u0412\u0438\u0434\u0435\u043e", url: "https://vk.com/search/video?q=" },
     { id: "vk", label: "VK \u041f\u043e\u0441\u0442", url: "https://vk.com/search?q=" },
     {
       id: "x_live",
@@ -49,7 +49,7 @@ const defaultConfig = {
       url: "https://x.com/search?q=",
       suffix: "&src=typed_query&f=live"
     },
-    { id: "dzen_news", label: "Дзен.Новости", url: "https://dzen.ru/news/search?query=" },
+    { id: "dzen_news", label: "\u0414\u0437\u0435\u043d.\u041d\u043e\u0432\u043e\u0441\u0442\u0438", url: "https://dzen.ru/news/search?query=" },
     { id: "reddit", label: "Reddit", url: "https://www.reddit.com/search/?q=" },
     { id: "perplexity", label: "Copy and Perplexity", url: "https://www.perplexity.ai/", action: "copy_open" }
   ]
@@ -85,33 +85,45 @@ const YTDLP_CANDIDATE_HOSTS = [
 ];
 const DIRECT_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|m3u8|mp3|m4a|wav|flac)(?:$|[?#])/i;
 const VISUAL_TYPE_LABELS = {
-  video: "Видео",
-  portrait: "Портрет",
-  image: "Картинка",
-  infographic: "Инфографика",
-  map: "Карта",
-  interface: "Интерфейс",
-  generation_collage: "Генерация / Коллаж",
-  graphic_element: "Графический элемент",
-  no_visual: "Без визуала"
+  video: "\u0412\u0438\u0434\u0435\u043e",
+  portrait: "\u041f\u043e\u0440\u0442\u0440\u0435\u0442",
+  image: "\u041a\u0430\u0440\u0442\u0438\u043d\u043a\u0430",
+  infographic: "\u0418\u043d\u0444\u043e\u0433\u0440\u0430\u0444\u0438\u043a\u0430",
+  map: "\u041a\u0430\u0440\u0442\u0430",
+  interface: "\u0418\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441",
+  generation_collage: "\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f / \u041a\u043e\u043b\u043b\u0430\u0436",
+  graphic_element: "\u0413\u0440\u0430\u0444\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u044d\u043b\u0435\u043c\u0435\u043d\u0442",
+  no_visual: "\u0411\u0435\u0437 \u0432\u0438\u0437\u0443\u0430\u043b\u0430"
 };
 const FORMAT_HINT_LABELS = {
   "2:1": "2:1",
   "1:1": "1:1",
-  "Заголовок/Цитата": "📰 Заголовок/Цитата",
-  "Документ": "📝 Документ"
+  "\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a/\u0426\u0438\u0442\u0430\u0442\u0430": "\u{1F4F0} \u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a/\u0426\u0438\u0442\u0430\u0442\u0430",
+  "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442": "\u{1F4DD} \u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442"
 };
 const PRIORITY_LABELS = {
-  "обязательно": "🔴 Обязательно",
-  "рекомендуется": "🟡 Рекомендуется",
-  "при наличии": "🟢 При наличии"
+  "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e": "\u{1F534} \u041e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e",
+  "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f": "\u{1F7E1} \u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f",
+  "\u043f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438": "\u{1F7E2} \u041f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438"
+};
+const VISUAL_TYPE_DEFAULTS = {
+  video: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  portrait: { format_hint: "1:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  image: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  infographic: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  map: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  interface: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  generation_collage: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  graphic_element: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  no_visual: { format_hint: null, priority: null }
 };
 const emptyVisualDecision = () => ({
   type: "no_visual",
   description: "",
   format_hint: null,
   duration_hint_sec: null,
-  priority: null
+  priority: null,
+  media_file_path: null
 });
 const emptySearchDecision = () => ({
   keywords: [],
@@ -136,19 +148,21 @@ const normalizeVisualDecision = (decision, config) => {
   const durationRaw = decision.duration_hint_sec ?? decision.duration_hint ?? null;
   const duration_hint_sec = typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : null;
   const priority = normalizePriority(decision.priority, config);
+  const media_file_path = normalizeMediaFilePath(decision.media_file_path ?? decision.media_path ?? null);
   return {
     type,
     description,
     format_hint,
     duration_hint_sec,
-    priority
+    priority,
+    media_file_path
   };
 };
 const normalizeFormatHint = (value, config) => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const legacy = { LONG: "Документ", SQUARE: "1:1" };
+  const legacy = { LONG: "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442", SQUARE: "1:1" };
   const upper = trimmed.toUpperCase();
   if (legacy[upper]) return legacy[upper];
   const list = config?.formatHints ?? defaultConfig.formatHints;
@@ -160,7 +174,11 @@ const normalizePriority = (value, config) => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return null;
-  const legacy = { high: "обязательно", medium: "рекомендуется", low: "при наличии" };
+  const legacy = {
+    high: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e",
+    medium: "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f",
+    low: "\u043f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438"
+  };
   if (legacy[trimmed]) return legacy[trimmed];
   const list = config?.priorities ?? defaultConfig.priorities;
   const match = list.find((priority) => priority.toLowerCase() === trimmed);
@@ -225,6 +243,32 @@ const formatBytes = (value) => {
   const digits = current >= 100 ? 0 : current >= 10 ? 1 : 2;
   return `${current.toFixed(digits)} ${units[idx]}`;
 };
+const normalizeMediaFilePath = (value) => {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\\/g, "/").trim();
+  if (!normalized) return null;
+  return normalized.length > 512 ? normalized.slice(0, 512) : normalized;
+};
+const buildMediaFileUrl = (docId, mediaPath) => {
+  const id = String(docId ?? "").trim();
+  const normalizedPath = normalizeMediaFilePath(mediaPath);
+  if (!id || !normalizedPath) return "";
+  return `/api/documents/${encodeURIComponent(id)}/media/file?path=${encodeURIComponent(normalizedPath)}`;
+};
+const getFileNameFromDisposition = (value) => {
+  const header = String(value ?? "").trim();
+  if (!header) return "";
+  const utfMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) {
+    try {
+      return decodeURIComponent(utfMatch[1]);
+    } catch {
+      return utfMatch[1];
+    }
+  }
+  const plainMatch = header.match(/filename=\"?([^\";]+)\"?/i);
+  return plainMatch?.[1] ? plainMatch[1].trim() : "";
+};
 const isYtDlpCandidateUrl = (rawUrl) => {
   const normalized = normalizeLinkUrl(rawUrl);
   if (!normalized) return false;
@@ -250,7 +294,7 @@ const COLLAB_REMOTE_POLL_ENABLED = false;
 const LAST_USED_DOC_STORAGE_KEY = "vbaut:last_used_doc_id";
 const AUTO_OPEN_LAST_DOC_STORAGE_KEY = "vbaut:auto_open_last_doc";
 const API_HTML_RESPONSE_ERROR =
-  "Сервер вернул HTML вместо JSON. Проверьте backend, Vite proxy (/api) и туннель ngrok.";
+  "\u0421\u0435\u0440\u0432\u0435\u0440 \u0432\u0435\u0440\u043d\u0443\u043b HTML \u0432\u043c\u0435\u0441\u0442\u043e JSON. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 backend, Vite proxy (/api) \u0438 \u0442\u0443\u043d\u043d\u0435\u043b\u044c ngrok.";
 
 const shouldLookLikeJson = (text = "") => {
   const trimmed = String(text).trim();
@@ -285,7 +329,9 @@ async function fetchJsonSafe(url, options = {}) {
       const data = JSON.parse(rawText);
       return { response, data, rawText };
     } catch {
-      throw new Error("Сервер вернул поврежденный JSON. Обновите страницу и проверьте backend.");
+      throw new Error(
+        "\u0421\u0435\u0440\u0432\u0435\u0440 \u0432\u0435\u0440\u043d\u0443\u043b \u043f\u043e\u0432\u0440\u0435\u0436\u0434\u0435\u043d\u043d\u044b\u0439 JSON. \u041e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 backend."
+      );
     }
   }
 
@@ -325,7 +371,7 @@ const normalizeSegmentBlockType = (value) => {
   const normalized = String(value ?? "").toLowerCase().trim();
   return normalized === "links" ? "links" : "news";
 };
-const VOWELS_RU = new Set(["а", "е", "ё", "и", "о", "у", "ы", "э", "ю", "я"]);
+const VOWELS_RU = new Set(["\u0430", "\u0435", "\u0451", "\u0438", "\u043e", "\u0443", "\u044b", "\u044d", "\u044e", "\u044f"]);
 const VOWELS_EN = new Set(["a", "e", "i", "o", "u", "y"]);
 const RU_UNITS_SYL = [0, 2, 1, 1, 3, 1, 1, 1, 2, 2];
 const RU_TEENS_SYL = [2, 4, 3, 3, 4, 3, 3, 3, 4, 4];
@@ -410,7 +456,95 @@ const computeDurationHint = (text) => {
   if (!syllables) return null;
   return Math.ceil(syllables / 4.5);
 };
-const LEADING_NUMBERED_LINE_RE = /^\s*\d{1,3}[.)]\s+\S/;
+const LEADING_NUMBERED_LINE_RE = /^\s*\d{1,3}[.)]\s*\S/;
+const COMMENT_NUMBER_PREFIX_RE = /^\s*\d{1,3}[.)]\s*/;
+const normalizeCommentLineForCompare = (value) =>
+  normalizeLineBreaks(value)
+    .replace(COMMENT_NUMBER_PREFIX_RE, "")
+    .replace(/^[/\\\-]+\s*/g, "")
+    .replace(/[«»"“”'`]+/g, " ")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+const isCommentLineDuplicate = (line, pool) => {
+  if (!line) return false;
+  for (const candidate of pool) {
+    if (!candidate) continue;
+    if (candidate === line) return true;
+    const minLen = Math.min(candidate.length, line.length);
+    if (minLen >= 14 && (candidate.includes(line) || line.includes(candidate))) {
+      return true;
+    }
+  }
+  return false;
+};
+const removeDuplicateCommentSegments = (segments = []) => {
+  if (!Array.isArray(segments) || segments.length === 0) return segments;
+  const sectionPools = new Map();
+  const getPool = (segment) => {
+    const key = getSectionKeyFromMeta(segment);
+    if (!sectionPools.has(key)) sectionPools.set(key, []);
+    return sectionPools.get(key);
+  };
+
+  segments.forEach((segment) => {
+    if (normalizeSegmentBlockType(segment?.block_type) === "links") return;
+    if (isCommentsSegment(segment)) return;
+    const normalized = normalizeCommentLineForCompare(segment?.text_quote ?? "");
+    if (!normalized) return;
+    getPool(segment).push(normalized);
+  });
+
+  const result = [];
+  segments.forEach((segment) => {
+    if (!isCommentsSegment(segment)) {
+      result.push(segment);
+      return;
+    }
+    const lines = normalizeLineBreaks(segment?.text_quote ?? "").split("\n");
+    const pool = getPool(segment);
+    const seen = new Set();
+    const kept = [];
+    lines.forEach((line) => {
+      const content = String(line ?? "").replace(COMMENT_NUMBER_PREFIX_RE, "").trim();
+      const normalized = normalizeCommentLineForCompare(content);
+      if (!normalized) return;
+      if (seen.has(normalized)) return;
+      if (isCommentLineDuplicate(normalized, pool)) return;
+      seen.add(normalized);
+      kept.push(content);
+    });
+
+    if (kept.length === 0) return;
+    const normalizedText = kept.map((line, idx) => `${idx + 1}. ${line}`).join("\n");
+    result.push({
+      ...segment,
+      text_quote: normalizedText,
+      visual_decision: {
+        ...emptyVisualDecision(),
+        duration_hint_sec: computeDurationHint(normalizedText)
+      },
+      search_decision: emptySearchDecision(),
+      search_open: false
+    });
+  });
+
+  return result;
+};
+const getVisualDefaultsByType = (type, config = defaultConfig) => {
+  const key = String(type ?? "").trim().toLowerCase();
+  const defaults = VISUAL_TYPE_DEFAULTS[key] ?? VISUAL_TYPE_DEFAULTS.image;
+  const formatHint =
+    defaults.format_hint && (config?.formatHints ?? defaultConfig.formatHints).includes(defaults.format_hint)
+      ? defaults.format_hint
+      : null;
+  const priority =
+    defaults.priority && (config?.priorities ?? defaultConfig.priorities).includes(defaults.priority)
+      ? defaults.priority
+      : null;
+  return { format_hint: formatHint, priority };
+};
 const splitLeadingCommentList = (text) => {
   const lines = normalizeLineBreaks(text).split("\n");
   const commentLines = [];
@@ -434,10 +568,10 @@ const splitLeadingCommentList = (text) => {
     commentLines.push(line);
     index += 1;
   }
-  if (commentLines.length < 2) return null;
+  if (commentLines.length < 1) return null;
   const commentsText = commentLines.join("\n").trim();
   const mainText = lines.slice(index).join("\n").trimStart();
-  if (!commentsText || !mainText) return null;
+  if (!commentsText) return null;
   return { commentsText, mainText };
 };
 const buildCommentsSegmentId = (sourceId, usedIds) => {
@@ -481,6 +615,7 @@ const splitOutLeadingCommentSegments = (segments = []) => {
       segment_id: buildCommentsSegmentId(segment.segment_id, usedIds),
       text_quote: split.commentsText,
       segment_status: "new",
+      is_done: false,
       visual_decision: {
         ...emptyVisualDecision(),
         duration_hint_sec: computeDurationHint(split.commentsText)
@@ -488,14 +623,16 @@ const splitOutLeadingCommentSegments = (segments = []) => {
       search_decision: emptySearchDecision(),
       search_open: false
     });
-    result.push({
-      ...segment,
-      text_quote: split.mainText,
-      visual_decision: {
-        ...currentVisual,
-        duration_hint_sec: shouldAutoUpdateMainDuration ? computeDurationHint(split.mainText) : prevDuration
-      }
-    });
+    if (String(split.mainText ?? "").trim()) {
+      result.push({
+        ...segment,
+        text_quote: split.mainText,
+        visual_decision: {
+          ...currentVisual,
+          duration_hint_sec: shouldAutoUpdateMainDuration ? computeDurationHint(split.mainText) : prevDuration
+        }
+      });
+    }
   });
   return result;
 };
@@ -508,12 +645,69 @@ const normalizeTopicTitleForDisplay = (title) => {
     .trim();
   return value;
 };
+const DEFAULT_MEDIA_TOPIC_NAME = "\u0411\u0435\u0437 \u0442\u0435\u043c\u044b";
+const sanitizeMediaTopicName = (rawTitle) => {
+  const value = String(rawTitle ?? "").trim();
+  if (!value) return DEFAULT_MEDIA_TOPIC_NAME;
+
+  const replaced = value
+    .replace(/[\u0000-\u001f<>:"/\\|?*]+/g, " ")
+    .replace(/\d+/g, " ")
+    .replace(/\(\s*\)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+
+  const normalized = replaced || DEFAULT_MEDIA_TOPIC_NAME;
+  const clipped = normalized.length > 96 ? normalized.slice(0, 96).trim() : normalized;
+  if (!clipped) return DEFAULT_MEDIA_TOPIC_NAME;
+
+  const upper = clipped.toUpperCase();
+  const reserved = new Set([
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9"
+  ]);
+  return reserved.has(upper) ? `_${clipped}` : clipped;
+};
+const getMediaFileTopicFolder = (mediaPath) => {
+  const normalizedPath = normalizeMediaFilePath(mediaPath);
+  if (!normalizedPath) return "";
+  const [folder] = normalizedPath.split("/");
+  return String(folder ?? "").trim();
+};
 const normalizeHeadingForFigma = (title) =>
   normalizeLineBreaks(title)
     .replace(/^#{1,}\s*/g, "")
     .replace(/\(\s*\d+\s*\)\s*$/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+const getQuotePreview = (text, limit = 110) => {
+  const value = normalizeLineBreaks(text).replace(/\s+/g, " ").trim();
+  if (!value) return "\u041f\u0443\u0441\u0442\u0430\u044f \u0446\u0438\u0442\u0430\u0442\u0430";
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit).trimEnd()}...`;
+};
+const isCommentsSegment = (segment) => /^comments_/i.test(String(segment?.segment_id ?? "").trim());
 const normalizeSectionTitleForId = (title) =>
   normalizeLineBreaks(title)
     .toLowerCase()
@@ -812,14 +1006,68 @@ const mergeLinkSegmentsIntoSegments = (segments, linkSegments) => {
   });
   return result;
 };
-const parseScriptSections = (text) => {
+const collapseDuplicateLinkOnlyTopics = (segments = []) => {
+  if (!Array.isArray(segments) || segments.length === 0) return segments;
+
+  const primaryByTitle = new Map();
+  segments.forEach((segment) => {
+    if (normalizeSegmentBlockType(segment?.block_type) === "links") return;
+    const titleKey = normalizeSectionTitleForMerge(segment?.section_title ?? "");
+    if (!titleKey) return;
+    if (!primaryByTitle.has(titleKey)) {
+      primaryByTitle.set(titleKey, {
+        section_id: segment?.section_id ?? null,
+        section_title: segment?.section_title ?? null,
+        section_index: Number.isFinite(Number(segment?.section_index)) ? Number(segment.section_index) : null
+      });
+      return;
+    }
+    const current = primaryByTitle.get(titleKey);
+    if (!current?.section_id && segment?.section_id) {
+      primaryByTitle.set(titleKey, {
+        section_id: segment.section_id,
+        section_title: segment.section_title ?? current.section_title ?? null,
+        section_index: Number.isFinite(Number(segment?.section_index))
+          ? Number(segment.section_index)
+          : current.section_index
+      });
+    }
+  });
+
+  const reassigned = segments.map((segment) => {
+    if (normalizeSegmentBlockType(segment?.block_type) !== "links") return segment;
+    const titleKey = normalizeSectionTitleForMerge(segment?.section_title ?? "");
+    if (!titleKey) return segment;
+    const target = primaryByTitle.get(titleKey);
+    if (!target) return segment;
+    const sectionId = target.section_id ?? segment.section_id ?? null;
+    return {
+      ...segment,
+      segment_id: sectionId ? `links_${sectionId}` : String(segment.segment_id ?? ""),
+      section_id: sectionId,
+      section_title: target.section_title ?? segment.section_title ?? null,
+      section_index: Number.isFinite(Number(target.section_index))
+        ? Number(target.section_index)
+        : Number.isFinite(Number(segment?.section_index))
+          ? Number(segment.section_index)
+          : null
+    };
+  });
+
+  const withoutLinks = reassigned.filter((segment) => normalizeSegmentBlockType(segment?.block_type) !== "links");
+  const linkSegments = reassigned.filter((segment) => normalizeSegmentBlockType(segment?.block_type) === "links");
+  const mergedLinks = mergeLinkSegmentsBySection([], linkSegments);
+  return mergeLinkSegmentsIntoSegments(withoutLinks, mergedLinks);
+};
+const parseScriptSections = (text, options = {}) => {
+  const includeEmpty = Boolean(options?.includeEmpty);
   const sections = [];
   const { normalized, blocks } = splitScriptIntoHeadingBlocks(text);
   const titleOccurrences = new Map();
   for (const block of blocks) {
     if (!block.heading) continue;
     const hasContent = block.lines.some((line) => String(line ?? "").trim());
-    if (!hasContent) continue;
+    if (!hasContent && !includeEmpty) continue;
     const index = sections.length + 1;
     const titleKey = normalizeSectionTitleForId(block.heading);
     const occurrence = (titleOccurrences.get(titleKey) ?? 0) + 1;
@@ -833,6 +1081,97 @@ const parseScriptSections = (text) => {
     });
   }
   return sections;
+};
+const buildEmptyTopicSegmentId = (section, usedIds) => {
+  const fallbackIndex = Number.isFinite(Number(section?.index)) ? Number(section.index) : usedIds.size + 1;
+  const rawBase = String(section?.id ?? `topic_${String(fallbackIndex).padStart(2, "0")}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const base = rawBase || `topic_${String(fallbackIndex).padStart(2, "0")}`;
+  let candidate = `${base}_01`;
+  let counter = 1;
+  while (usedIds.has(candidate)) {
+    counter += 1;
+    candidate = `${base}_${String(counter).padStart(2, "0")}`;
+  }
+  usedIds.add(candidate);
+  return candidate;
+};
+const ensureEmptySectionTopics = (segments = [], scriptText = "") => {
+  const sections = parseScriptSections(scriptText, { includeEmpty: true });
+  if (!sections.length) return segments;
+
+  const result = [...segments];
+  const titleOnlyIndexMap = new Map();
+  result.forEach((segment, idx) => {
+    if (segment?.section_id) return;
+    const titleKey = normalizeSectionTitleForId(segment?.section_title ?? "");
+    if (!titleKey) return;
+    if (!titleOnlyIndexMap.has(titleKey)) titleOnlyIndexMap.set(titleKey, []);
+    titleOnlyIndexMap.get(titleKey).push(idx);
+  });
+
+  const usedTitleOnlyIndexes = new Set();
+  sections.forEach((section) => {
+    const titleKey = normalizeSectionTitleForId(section.title ?? "");
+    const candidates = titleOnlyIndexMap.get(titleKey) ?? [];
+    const targetIndex = candidates.find((idx) => !usedTitleOnlyIndexes.has(idx));
+    if (!Number.isInteger(targetIndex)) return;
+    const current = result[targetIndex];
+    result[targetIndex] = {
+      ...current,
+      section_id: section.id,
+      section_title: section.title,
+      section_index: section.index
+    };
+    usedTitleOnlyIndexes.add(targetIndex);
+  });
+
+  const usedIds = new Set(segments.map((segment) => String(segment.segment_id ?? "")));
+  const existingSectionKeys = new Set(
+    result.map((segment) =>
+      getSectionKeyFromMeta({
+        section_id: segment.section_id ?? null,
+        section_title: segment.section_title ?? null
+      })
+    )
+  );
+
+  sections.forEach((section) => {
+    const sectionKey = getSectionKeyFromMeta({
+      section_id: section.id,
+      section_title: section.title
+    });
+    if (existingSectionKeys.has(sectionKey)) return;
+
+    const placeholder = {
+      segment_id: buildEmptyTopicSegmentId(section, usedIds),
+      block_type: "news",
+      text_quote: "",
+      section_id: section.id,
+      section_title: section.title,
+      section_index: section.index,
+      visual_decision: emptyVisualDecision(),
+      search_decision: emptySearchDecision(),
+      search_open: false,
+      is_done: false,
+      segment_status: "new"
+    };
+
+    const insertAt = result.findIndex((segment) => {
+      const idx = Number(segment?.section_index);
+      return Number.isFinite(idx) && idx > section.index;
+    });
+    if (insertAt === -1) {
+      result.push(placeholder);
+    } else {
+      result.splice(insertAt, 0, placeholder);
+    }
+    existingSectionKeys.add(sectionKey);
+  });
+
+  return result;
 };
 const assignSectionsByIndex = (segments, sections, options = {}) => {
   if (!sections.length || !segments.length) return segments;
@@ -946,12 +1285,13 @@ const emptySegment = (index, section = {}) => ({
   visual_decision: emptyVisualDecision(),
   search_decision: emptySearchDecision(),
   search_open: false,
+  is_done: false
 });
 const GROUP_RENDER_CHUNK = 20;
 const getSegmentGroupKey = (segment) => getSectionKeyFromMeta(segment);
 const getSegmentGroupTitle = (segment) => {
   const title = normalizeTopicTitleForDisplay(segment.section_title ?? "");
-  return title || "Без темы";
+  return title || "\u0411\u0435\u0437 \u0442\u0435\u043c\u044b";
 };
 const getSubSegmentBaseId = (segmentId) => {
   const value = String(segmentId ?? "");
@@ -1281,6 +1621,8 @@ const SegmentCard = React.memo(function SegmentCard({
   index,
   animationIndex = 0,
   config,
+  docId,
+  mediaFiles,
   onUpdate,
   onVisualUpdate,
   onSearchUpdate,
@@ -1292,18 +1634,67 @@ const SegmentCard = React.memo(function SegmentCard({
   searchLoading,
   onSearchToggle,
   onSearch,
-  onCopy
+  onCopy,
+  onDoneToggle
 }) {
   const queriesValue = (segment.search_decision?.queries ?? []).join("\n");
   const queryItems = (segment.search_decision?.queries ?? []).filter(
     (query) => String(query ?? "").trim().length > 0
   );
+  const [mediaFilter, setMediaFilter] = React.useState("");
+  const selectedMediaPath = normalizeMediaFilePath(segment.visual_decision?.media_file_path ?? "");
+  const mediaFileUrl = buildMediaFileUrl(docId, selectedMediaPath);
+  const mediaFileList = Array.isArray(mediaFiles) ? mediaFiles : [];
+  const mediaTopicFolder = sanitizeMediaTopicName(segment.section_title ?? "");
+  const topicMediaFiles = mediaFileList.filter((file) => getMediaFileTopicFolder(file.path) === mediaTopicFolder);
+  const mediaFileOptions = topicMediaFiles;
+  const hasTopicFiles = mediaFileOptions.length > 0;
+  const normalizedMediaFilter = mediaFilter.trim().toLowerCase();
+  const filteredMediaFileOptions = React.useMemo(() => {
+    if (!normalizedMediaFilter) return mediaFileOptions;
+    return mediaFileOptions.filter((file) =>
+      `${file.name} ${file.path}`.toLowerCase().includes(normalizedMediaFilter)
+    );
+  }, [mediaFileOptions, normalizedMediaFilter]);
+  const mediaVisibleLimit = 10;
+  const visibleMediaFileOptions = filteredMediaFileOptions.slice(0, mediaVisibleLimit);
+  const hasMoreMediaFiles = filteredMediaFileOptions.length > mediaVisibleLimit;
+  const isDone = Boolean(segment.is_done);
+  const isCommentOnlySegment = isCommentsSegment(segment);
+  const donePreview = isCommentOnlySegment
+    ? (() => {
+        const value = normalizeLineBreaks(segment.text_quote).trim();
+        if (!value) return "\u041f\u0443\u0441\u0442\u043e";
+        return value.length > 220 ? `${value.slice(0, 220).trimEnd()}...` : value;
+      })()
+    : getQuotePreview(segment.text_quote, 78);
   const statusBadge =
     segment.segment_status === "new"
       ? { text: "NEW", className: "badge badge-new" }
       : segment.segment_status === "changed"
         ? { text: "CHANGED", className: "badge badge-changed" }
         : null;
+  if (isDone) {
+    return (
+      <article
+        className="segment-card segment-card-done"
+        style={{ animationDelay: `${animationIndex * 40}ms` }}
+      >
+        <div className={`segment-done-row${isCommentOnlySegment ? " segment-done-row-comments" : ""}`}>
+          {!isCommentOnlySegment ? (
+            <label className="done-toggle-inline" title="\u0421\u043d\u044f\u0442\u044c \u043e\u0442\u043c\u0435\u0442\u043a\u0443">
+              <input
+                type="checkbox"
+                checked={true}
+                onChange={(event) => onDoneToggle?.(index, event.target.checked)}
+              />
+            </label>
+          ) : null}
+          <span className="segment-done-preview">{donePreview}</span>
+        </div>
+      </article>
+    );
+  }
   return (
     <article
       className="segment-card"
@@ -1320,36 +1711,44 @@ const SegmentCard = React.memo(function SegmentCard({
             {statusBadge ? <span className={statusBadge.className}>{statusBadge.text}</span> : null}
           </div>
         </div>
-        <div className="segment-head-actions">
-          <button
-            className="btn small ghost"
-            type="button"
-            onClick={() => onInsertAfter(index)}
-            title="Добавить подблок"
-            aria-label="Добавить подблок"
-          >
-            +
-          </button>
-          <button
-            className="btn small ghost"
-            type="button"
-            onClick={() => onRemove(index)}
-            title="Удалить"
-            aria-label="Удалить"
-          >
-            -
-          </button>
-        </div>
+        {!isCommentOnlySegment ? (
+          <div className="segment-head-actions">
+            <button
+              className="btn small ghost"
+              type="button"
+              onClick={() => onInsertAfter(index)}
+              title={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+              aria-label={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+            >
+              +
+            </button>
+            <button
+              className="btn small ghost"
+              type="button"
+              onClick={() => onRemove(index)}
+              title={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+              aria-label={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+            >
+              -
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="segment-body">
-        <label>Цитата</label>
+        <label>
+          {isCommentOnlySegment
+            ? "\u041a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0438"
+            : "\u0426\u0438\u0442\u0430\u0442\u0430"}
+        </label>
         <textarea
           value={segment.text_quote}
           onChange={(event) => onQuoteChange(index, event.target.value)}
         />
+        {!isCommentOnlySegment ? (
+          <>
         <div className="decision-grid">
           <div>
-            <label>Визуал</label>
+            <label>{"\u0412\u0438\u0437\u0443\u0430\u043b"}</label>
             <select
               value={segment.visual_decision.type}
               onChange={(event) => onVisualUpdate(index, { type: event.target.value })}
@@ -1362,7 +1761,7 @@ const SegmentCard = React.memo(function SegmentCard({
             </select>
           </div>
           <div>
-            <label>Формат</label>
+            <label>{"\u0424\u043e\u0440\u043c\u0430\u0442"}</label>
             <select
               value={segment.visual_decision.format_hint ?? ""}
               onChange={(event) =>
@@ -1380,7 +1779,7 @@ const SegmentCard = React.memo(function SegmentCard({
             </select>
           </div>
           <div>
-            <label>Приоритет</label>
+            <label>{"\u041f\u0440\u0438\u043e\u0440\u0438\u0442\u0435\u0442"}</label>
             <select
               value={segment.visual_decision.priority ?? ""}
               onChange={(event) =>
@@ -1398,7 +1797,7 @@ const SegmentCard = React.memo(function SegmentCard({
             </select>
           </div>
           <div>
-            <label>Длительность (сек)</label>
+            <label>{"\u0414\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c (\u0441\u0435\u043a)"}</label>
             <input
               type="number"
               value={segment.visual_decision.duration_hint_sec ?? ""}
@@ -1410,11 +1809,78 @@ const SegmentCard = React.memo(function SegmentCard({
             />
           </div>
         </div>
-        <label>Описание визуала</label>
+        <label>{"\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0432\u0438\u0437\u0443\u0430\u043b\u0430"}</label>
         <textarea
           value={segment.visual_decision.description}
           onChange={(event) => onVisualUpdate(index, { description: event.target.value })}
         />
+        <div className="segment-media-picker">
+          <label>{"\u0424\u0430\u0439\u043b"}</label>
+          <div className="segment-media-picker-row">
+            {hasTopicFiles ? (
+              <input
+                className="segment-media-filter-input"
+                type="search"
+                value={mediaFilter}
+                onChange={(event) => setMediaFilter(event.target.value)}
+                placeholder={"\u041f\u043e\u0438\u0441\u043a \u0444\u0430\u0439\u043b\u0430..."}
+              />
+            ) : null}
+            {selectedMediaPath ? (
+              <button
+                className="btn ghost small"
+                type="button"
+                onClick={() => onVisualUpdate(index, { media_file_path: null })}
+              >
+                {"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c"}
+              </button>
+            ) : null}
+            {mediaFileUrl ? (
+              <a className="btn ghost small" href={mediaFileUrl} target="_blank" rel="noopener noreferrer">
+                {"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0444\u0430\u0439\u043b"}
+              </a>
+            ) : null}
+          </div>
+          {hasTopicFiles ? (
+            filteredMediaFileOptions.length > 0 ? (
+              <div className="segment-media-options" role="listbox" aria-label="media-files">
+                <button
+                  type="button"
+                  className={`segment-media-option${!selectedMediaPath ? " is-selected" : ""}`}
+                  onClick={() => onVisualUpdate(index, { media_file_path: null })}
+                >
+                  {"\u2014 \u0411\u0435\u0437 \u0444\u0430\u0439\u043b\u0430"}
+                </button>
+                {visibleMediaFileOptions.map((file) => (
+                  <button
+                    type="button"
+                    key={file.path}
+                    className={`segment-media-option${selectedMediaPath === file.path ? " is-selected" : ""}`}
+                    onClick={() => onVisualUpdate(index, { media_file_path: file.path })}
+                    title={file.path}
+                  >
+                    <span className="segment-media-option-name">{file.name}</span>
+                    <span className="segment-media-option-size">{formatBytes(file.size)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="muted segment-media-empty-hint">
+                {"\u041d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e \u043f\u043e \u043f\u043e\u0438\u0441\u043a\u0443"}
+              </div>
+            )
+          ) : (
+            <div className="muted segment-media-empty-hint">
+              {"\u041d\u0435\u0442 \u0444\u0430\u0439\u043b\u043e\u0432 \u0432 \u0442\u0435\u043c\u0435"}
+            </div>
+          )}
+          {hasMoreMediaFiles ? (
+            <div className="muted segment-media-empty-hint">
+              {`\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e ${mediaVisibleLimit} \u0438\u0437 ${filteredMediaFileOptions.length}. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u043f\u043e\u0438\u0441\u043a.`}
+            </div>
+          ) : null}
+          {selectedMediaPath ? <div className="muted segment-media-picked">{selectedMediaPath}</div> : null}
+        </div>
         <div className="search-toggle">
           <button
             className="btn ghost small"
@@ -1428,15 +1894,23 @@ const SegmentCard = React.memo(function SegmentCard({
             className="btn ghost small"
             type="button"
             onClick={() => onSearchToggle(index)}
+            title={
+              segment.search_open
+                ? "\u0421\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b"
+                : `\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b (${queryItems.length})`
+            }
+            aria-label={
+              segment.search_open
+                ? "\u0421\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b"
+                : `\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b (${queryItems.length})`
+            }
           >
-            {segment.search_open
-              ? "Скрыть поисковые запросы"
-              : `Показать поисковые запросы (${queryItems.length})`}
+            {"\u{1F50D}"}
           </button>
         </div>
         {segment.search_open ? (
           <>
-            <label>Поисковые запросы</label>
+            <label>{"\u041f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b"}</label>
             <textarea
               value={queriesValue}
               onChange={(event) =>
@@ -1444,7 +1918,7 @@ const SegmentCard = React.memo(function SegmentCard({
                   queries: normalizeQueryList(event.target.value, config.searchLimits?.maxQueries)
                 })
               }
-              placeholder="Каждый запрос с новой строки"
+              placeholder={"\u041a\u0430\u0436\u0434\u044b\u0439 \u0437\u0430\u043f\u0440\u043e\u0441 \u0441 \u043d\u043e\u0432\u043e\u0439 \u0441\u0442\u0440\u043e\u043a\u0438"}
             />
             {queryItems.length ? (
               <div className="query-list">
@@ -1467,7 +1941,7 @@ const SegmentCard = React.memo(function SegmentCard({
                         type="button"
                         onClick={() => onCopy(query)}
                       >
-                        Копировать
+                        {"\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c"}
                       </button>
                     </div>
                   </div>
@@ -1476,31 +1950,42 @@ const SegmentCard = React.memo(function SegmentCard({
             ) : null}
             <div className="segment-actions">
               <button className="btn ghost small" onClick={() => onClearSearch(index)}>
-                Очистить поисковые
+                {"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435"}
               </button>
             </div>
           </>
         ) : null}
-        <div className="segment-tail-actions">
-          <button
-            className="btn ghost icon-round"
-            type="button"
-            onClick={() => onInsertAfter(index)}
-            title="Добавить подблок"
-            aria-label="Добавить подблок"
-          >
-            +
-          </button>
-          <button
-            className="btn ghost icon-round"
-            type="button"
-            onClick={() => onRemove(index)}
-            title="Удалить"
-            aria-label="Удалить"
-          >
-            -
-          </button>
-        </div>
+          </>
+        ) : null}
+        {!isCommentOnlySegment ? (
+          <div className="segment-tail-actions">
+            <label className="done-toggle-inline segment-done-bottom-toggle" title="\u041e\u0442\u043c\u0435\u0442\u0438\u0442\u044c \u043a\u0430\u043a \u0433\u043e\u0442\u043e\u0432\u043e">
+              <input
+                type="checkbox"
+                checked={isDone}
+                onChange={(event) => onDoneToggle?.(index, event.target.checked)}
+              />
+            </label>
+            <button
+              className="btn ghost icon-round"
+              type="button"
+              onClick={() => onInsertAfter(index)}
+              title={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+              aria-label={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+            >
+              +
+            </button>
+            <button
+              className="btn ghost icon-round"
+              type="button"
+              onClick={() => onRemove(index)}
+              title={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+              aria-label={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+            >
+              -
+            </button>
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -1516,6 +2001,7 @@ export default function App() {
   const [recentDocs, setRecentDocs] = useState([]);
   const [recentDocId, setRecentDocId] = useState("");
   const [status, setStatus] = useState("");
+  const [scenarioPanelOpen, setScenarioPanelOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState({});
   const [searchLoading, setSearchLoading] = useState({});
@@ -1803,9 +2289,7 @@ export default function App() {
     });
   }, [groupedSegments]);
   const canGenerate = Boolean(String(scriptText).trim()) && !loading;
-  const canSave = Boolean(docId) && segmentsCount > 0 && !loading;
-  const canLoadNotion = Boolean(notionUrl.trim()) && !loading;
-  const canRefreshNotion = canLoadNotion;
+  const canSaveBase = Boolean(docId) && segmentsCount > 0 && !loading;
   const buildSessionPayload = React.useCallback(
     () =>
       buildSessionPayloadFromState({
@@ -1815,6 +2299,14 @@ export default function App() {
       }),
     [notionUrl, scriptText, segments]
   );
+  const hasUnsavedChanges = React.useMemo(() => {
+    if (!docId) return false;
+    const fingerprint = getSessionFingerprint(buildSessionPayload());
+    return fingerprint !== collabLastSavedFingerprintRef.current;
+  }, [buildSessionPayload, docId, collabRevision, collabAutoSaving, loading, status]);
+  const canSave = canSaveBase && hasUnsavedChanges;
+  const canLoadNotion = Boolean(notionUrl.trim()) && !loading;
+  const canRefreshNotion = canLoadNotion;
   const rememberSessionSnapshot = React.useCallback((snapshot, revision = 0) => {
     collabLastSavedFingerprintRef.current = getSessionFingerprint(snapshot);
     const normalizedRevision = Number(revision);
@@ -1834,8 +2326,12 @@ export default function App() {
         mergeSegmentsAndDecisions(data.segments, data.decisions, config),
         rawText
       );
-      const linksFromMerged = merged.filter((item) => item.block_type === "links");
-      const ordered = mergeLinkSegmentsIntoSegments(merged, linksFromMerged);
+      const normalizedComments = removeDuplicateCommentSegments(merged);
+      const mergedWithTopics = ensureEmptySectionTopics(normalizedComments, rawText);
+      const linksFromMerged = mergedWithTopics.filter((item) => item.block_type === "links");
+      const ordered = collapseDuplicateLinkOnlyTopics(
+        mergeLinkSegmentsIntoSegments(mergedWithTopics, linksFromMerged)
+      );
 
       collabIsApplyingRemoteRef.current = true;
       const snapshot = buildSessionPayloadFromState({
@@ -2092,7 +2588,7 @@ export default function App() {
       clearTimeout(collabSaveTimerRef.current);
       collabSaveTimerRef.current = null;
     }
-    if (!collabSessionEnabled || !docId) {
+    if (!docId) {
       setCollabAutoSaving(false);
       return;
     }
@@ -2123,7 +2619,7 @@ export default function App() {
         collabSaveTimerRef.current = null;
       }
     };
-  }, [buildSessionPayload, collabSessionEnabled, docId, saveSessionSnapshot]);
+  }, [buildSessionPayload, docId, saveSessionSnapshot]);
   useEffect(() => {
     if (!COLLAB_REMOTE_POLL_ENABLED || !collabSessionEnabled || !docId) return;
     let stopped = false;
@@ -2191,9 +2687,13 @@ export default function App() {
         mergeSegmentsAndDecisions(data.segments, data.decisions, config),
         cleanText
       );
-      const merged = splitOutLeadingCommentSegments(mergedBase);
+      const mergedWithComments = splitOutLeadingCommentSegments(mergedBase);
+      const normalizedComments = removeDuplicateCommentSegments(mergedWithComments);
+      const merged = ensureEmptySectionTopics(normalizedComments, cleanText);
       const linksFromMerged = merged.filter((segment) => segment.block_type === "links");
-      const orderedSegments = mergeLinkSegmentsIntoSegments(merged, linksFromMerged);
+      const orderedSegments = collapseDuplicateLinkOnlyTopics(
+        mergeLinkSegmentsIntoSegments(merged, linksFromMerged)
+      );
       setSegments(orderedSegments);
       setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
 
@@ -2223,14 +2723,19 @@ export default function App() {
       setLoading(false);
     }
   };
-  const handleExport = async (format) => {
+  const handleExport = async (format, options = {}) => {
     if (!docId) {
       setStatus("Сначала создайте или загрузите документ.");
       return;
     }
     try {
       setStatus(`Экспорт ${format.toUpperCase()}...`);
-      const response = await fetch(`/api/documents/${docId}/export?format=${format}`);
+      const params = new URLSearchParams();
+      params.set("format", String(format ?? "").toLowerCase());
+      if (options?.scope) params.set("scope", String(options.scope));
+      if (options?.section_id) params.set("section_id", String(options.section_id));
+      if (options?.section_title) params.set("section_title", String(options.section_title));
+      const response = await fetch(`/api/documents/${docId}/export?${params.toString()}`);
       if (!response.ok) {
         const rawText = await response.text().catch(() => "");
         let data = null;
@@ -2244,16 +2749,17 @@ export default function App() {
         throw new Error(data?.error ?? `Ошибка экспорта ${format.toUpperCase()}`);
       }
       const blob = await response.blob();
-      const ext = format === "jsonl" ? "jsonl" : "md";
+      const ext = format === "jsonl" ? "jsonl" : format === "xml" ? "xml" : "md";
+      const fileNameFromHeader = getFileNameFromDisposition(response.headers.get("content-disposition"));
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${docId}.${ext}`;
+      link.download = fileNameFromHeader || `${docId}.${ext}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      setStatus(`Экспорт готов: ${docId}.${ext}`);
+      setStatus(`Экспорт готов: ${link.download}`);
     } catch (error) {
       setStatus(error.message);
     }
@@ -2338,6 +2844,32 @@ export default function App() {
   const handleRemoveSegment = React.useCallback((index) => {
     setSegments((prev) => prev.filter((_, idx) => idx !== index));
   }, []);
+  const handleToggleSegmentDone = React.useCallback((index, isDone) => {
+    setSegments((prev) =>
+      prev.map((segment, idx) =>
+        idx === index ? { ...segment, is_done: Boolean(isDone) } : segment
+      )
+    );
+  }, []);
+  const handleToggleGroupDone = React.useCallback((groupId, isDone) => {
+    setSegments((prev) =>
+      prev.map((segment) => {
+        if (normalizeSegmentBlockType(segment.block_type) === "links") return segment;
+        if (getSegmentGroupKey(segment) !== groupId) return segment;
+        return { ...segment, is_done: Boolean(isDone) };
+      })
+    );
+  }, []);
+  const handleMarkAllDone = React.useCallback(() => {
+    setSegments((prev) =>
+      prev.map((segment) =>
+        normalizeSegmentBlockType(segment.block_type) === "links"
+          ? segment
+          : { ...segment, is_done: true }
+      )
+    );
+    setStatus("Все сегменты отмечены как сделано.");
+  }, []);
   const handleAddLinksBlock = React.useCallback((group) => {
     setSegments((prev) => {
       const exists = prev.some(
@@ -2357,6 +2889,7 @@ export default function App() {
         visual_decision: emptyVisualDecision(),
         search_decision: emptySearchDecision(),
         search_open: false,
+        is_done: false,
       };
       return [...prev, linkSegment];
     });
@@ -2407,6 +2940,7 @@ export default function App() {
         visual_decision: emptyVisualDecision(),
         search_decision: emptySearchDecision(),
         search_open: false,
+        is_done: false,
         version: 1
       };
       const next = [...prev];
@@ -2425,11 +2959,36 @@ export default function App() {
     setSegments((prev) =>
       prev.map((segment, idx) =>
         idx === index
-          ? { ...segment, visual_decision: { ...segment.visual_decision, ...updates } }
+          ? (() => {
+              const nextVisual = { ...segment.visual_decision, ...(updates ?? {}) };
+              if (updates && Object.prototype.hasOwnProperty.call(updates, "type")) {
+                const nextType = String(updates.type ?? "").trim().toLowerCase();
+                const defaults = getVisualDefaultsByType(nextType, config);
+                if (nextType === "no_visual") {
+                  return {
+                    ...segment,
+                    visual_decision: {
+                      ...nextVisual,
+                      ...defaults,
+                      description: "",
+                      media_file_path: null
+                    }
+                  };
+                }
+                return {
+                  ...segment,
+                  visual_decision: {
+                    ...nextVisual,
+                    ...defaults
+                  }
+                };
+              }
+              return { ...segment, visual_decision: nextVisual };
+            })()
           : segment
       )
     );
-  }, []);
+  }, [config]);
   const updateSearch = React.useCallback((index, updates) => {
     setSegments((prev) =>
       prev.map((segment, idx) =>
@@ -2775,9 +3334,10 @@ export default function App() {
             <span>Документ</span>
             <strong>{docId ? docId : "—"}</strong>
           </div>
+
           <div className="hero-stat">
             <span>Статус</span>
-            <strong>{status || "Готов"}</strong>
+            <strong>{status || "\u0413\u043e\u0442\u043e\u0432"}</strong>
           </div>
           <div className="hero-recent">
             <label>Недавние документы</label>
@@ -2812,66 +3372,94 @@ export default function App() {
       </header>
       <section className="panel">
         <div className="panel-header">
-          <h2>Сценарий</h2>
-          <div className="panel-actions panel-actions-scenario">
-            <button className="btn ghost" onClick={handleStartNewScenario} disabled={loading}>
-              {"\u041d\u043e\u0432\u044b\u0439 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439"}
+          <h2>{"\u0421\u0446\u0435\u043d\u0430\u0440\u0438\u0439"}</h2>
+          <div className="panel-actions panel-actions-scenario-toggle">
+            <button
+              className="btn ghost small segment-group-expand-icon scenario-panel-toggle"
+              type="button"
+              onClick={() => setScenarioPanelOpen((prev) => !prev)}
+              title={scenarioPanelOpen ? "\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c" : "\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c"}
+              aria-label={scenarioPanelOpen ? "\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c" : "\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c"}
+              aria-expanded={scenarioPanelOpen}
+            >
+              {scenarioPanelOpen ? "▴" : "▾"}
             </button>
-            <div className="doc-loader notion-loader">
-              <input
-                className="notion-url-input"
-                type="url"
-                value={notionUrl}
-                onChange={(event) => setNotionUrl(event.target.value)}
-                placeholder={"\u0421\u0441\u044b\u043b\u043a\u0430 \u043d\u0430 Notion"}
-              />
-              <button
-                className="btn ghost notion-load-btn"
-                onClick={handleLoadNotion}
-                disabled={!canLoadNotion}
-              >
-                {"\u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c Notion"}
-              </button>
-              <button
-                className="btn ghost icon-btn notion-refresh-btn"
-                onClick={handleRefreshNotion}
-                disabled={!canRefreshNotion}
-                title={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
-                aria-label={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
-                type="button"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M4 12a8 8 0 0 1 13.66-5.66L20 8V3h-5l2.22 2.22A10 10 0 1 0 22 12"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-            </div>
           </div>
         </div>
-        <textarea
-          className="script-input"
-          placeholder="Вставьте готовый текст сценария..."
-          value={scriptText}
-          onChange={(event) => setScriptText(event.target.value)}
-        />
-        <div className="panel-actions panel-actions-scenario panel-actions-scenario-footer">
-          <button className="btn ghost" onClick={handleGenerate} disabled={!canGenerate}>
-            {"\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c"}
-            {notionHasUpdates ? <span className="badge">NEW</span> : null}
-          </button>
-        </div>
+        {scenarioPanelOpen ? (
+          <>
+            <div className="panel-actions panel-actions-scenario">
+              <button className="btn ghost" onClick={handleStartNewScenario} disabled={loading}>
+                {"\u041d\u043e\u0432\u044b\u0439 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439"}
+              </button>
+              <div className="doc-loader notion-loader">
+                <input
+                  className="notion-url-input"
+                  type="url"
+                  value={notionUrl}
+                  onChange={(event) => setNotionUrl(event.target.value)}
+                  placeholder={"\u0421\u0441\u044b\u043b\u043a\u0430 \u043d\u0430 Notion"}
+                />
+                <button
+                  className="btn ghost notion-load-btn"
+                  onClick={handleLoadNotion}
+                  disabled={!canLoadNotion}
+                >
+                  {"\u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c Notion"}
+                </button>
+                <button
+                  className="btn ghost icon-btn notion-refresh-btn"
+                  onClick={handleRefreshNotion}
+                  disabled={!canRefreshNotion}
+                  title={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
+                  aria-label={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
+                  type="button"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M4 12a8 8 0 0 1 13.66-5.66L20 8V3h-5l2.22 2.22A10 10 0 1 0 22 12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <textarea
+              className="script-input"
+              placeholder={"\u0412\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u0433\u043e\u0442\u043e\u0432\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u044f..."}
+              value={scriptText}
+              onChange={(event) => setScriptText(event.target.value)}
+            />
+            <div className="panel-actions panel-actions-scenario panel-actions-scenario-footer">
+              <button className="btn ghost" onClick={handleGenerate} disabled={!canGenerate}>
+                {"\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c"}
+                {notionHasUpdates ? <span className="badge">NEW</span> : null}
+              </button>
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={handleMarkAllDone}
+                disabled={segmentsCount === 0}
+              >
+                {"\u0413\u043e\u0442\u043e\u0432\u043e"}
+              </button>
+            </div>
+          </>
+        ) : null}
       </section>
       <section className="panel">
         <div className="panel-header">
           <h2>Блоки сценария</h2>
           <div className="panel-actions panel-actions-blocks">
-            <button className="btn" onClick={handleSave} disabled={!canSave}>
+            <button
+              className={`btn save-btn${hasUnsavedChanges ? " is-dirty" : ""}`}
+              onClick={handleSave}
+              disabled={!canSave}
+            >
               {"\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"}
             </button>
             <button className="btn ghost" onClick={handleAddSegment}>
@@ -2894,6 +3482,9 @@ export default function App() {
             </button>
             <button className="btn ghost" type="button" onClick={() => handleExport("md")}>
               {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 MD"}
+            </button>
+            <button className="btn ghost" type="button" onClick={() => handleExport("xml")}>
+              {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 XML"}
             </button>
           </div>
         </div>
@@ -2958,19 +3549,30 @@ export default function App() {
               const visibleItems = isExpanded ? group.items.slice(0, limit) : [];
               const remaining = group.items.length - visibleItems.length;
               const groupLoading = group.items.some(({ segment }) => aiLoading[segment.segment_id]);
+              const doneCount = group.items.filter(({ segment }) => Boolean(segment.is_done)).length;
+              const groupDone = group.items.length > 0 && doneCount === group.items.length;
               const headingRuQuery = group.title === "Без темы" ? "" : group.title;
               const headingEnQuery = String(headingEnglishQueries[group.id] ?? headingRuQuery);
               const isHeadingSearchOpen = Boolean(headingSearchOpen[group.id]);
+              const canExportGroupXml = Boolean(
+                docId && (group.section_id || (group.title && group.title !== "Без темы"))
+              );
               return (
                 <div key={`${group.id}-${groupIndex}`} className="segment-group">
                   <div className="segment-group-header">
                     <div className="segment-group-title">
-                      <h3>{group.title === "Без темы" ? "Без темы" : `### ${group.title}`}</h3>
-                      <div className="segment-group-meta">
-                        <span>{group.items.length} сегм.</span>
-                        {group.linkSegment ? (
-                          <span>{(group.linkSegment.segment.links ?? []).length} ссылок</span>
-                        ) : null}
+                      <div className="segment-group-title-row">
+                        <h3>{group.title === "Без темы" ? "Без темы" : group.title}</h3>
+                        <label
+                          className="done-toggle-inline segment-group-done-toggle"
+                          title="Отметить тему как готово"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={groupDone}
+                            onChange={(event) => handleToggleGroupDone(group.id, event.target.checked)}
+                          />
+                        </label>
                       </div>
                       <div className="segment-group-controls">
                         <div className="segment-group-actions">
@@ -2980,7 +3582,7 @@ export default function App() {
                               type="button"
                               onClick={() => handleAddLinksBlock(group)}
                             >
-                              Ссылки +
+                              {"\u{1F517}+"}
                             </button>
                           ) : null}
                           {group.items.length > 0 ? (
@@ -2989,8 +3591,10 @@ export default function App() {
                               type="button"
                               onClick={() => handleAiHelp(group.id)}
                               disabled={!docId || loading || groupLoading}
+                              title="AI Help"
+                              aria-label="AI Help"
                             >
-                              {groupLoading ? "AI Help..." : "AI Help"}
+                              {groupLoading ? "..." : "✨"}
                             </button>
                           ) : null}
                           <button
@@ -2998,20 +3602,42 @@ export default function App() {
                             type="button"
                             onClick={() => toggleHeadingSearch(group.id, headingRuQuery, headingEnQuery)}
                             disabled={!headingRuQuery}
+                            title="Поиск по заголовку"
+                            aria-label="Поиск по заголовку"
                           >
-                            {isHeadingSearchOpen ? "Скрыть поиск темы" : "Поиск по заголовку"}
+                            {"🔍"}
+                          </button>
+                          <button
+                            className="btn ghost small"
+                            type="button"
+                            onClick={() =>
+                              handleExport("xml", {
+                                scope: "section",
+                                section_id: group.section_id ?? "",
+                                section_title: group.title === "Без темы" ? "" : group.title
+                              })
+                            }
+                            disabled={!canExportGroupXml}
+                            title="Экспорт XML темы"
+                            aria-label="Экспорт XML темы"
+                          >
+                            XML
                           </button>
                         </div>
                       </div>
                     </div>
-                    <button
-                      className="btn ghost small segment-group-expand"
-                      type="button"
-                      onClick={() => toggleGroup(group.id)}
-                      aria-expanded={isExpanded}
-                    >
-                      {isExpanded ? "Свернуть" : "Развернуть"}
-                    </button>
+                    <div className="segment-group-right">
+                      <button
+                        className="btn ghost small segment-group-expand segment-group-expand-icon"
+                        type="button"
+                        onClick={() => toggleGroup(group.id)}
+                        title={isExpanded ? "Свернуть" : "Развернуть"}
+                        aria-label={isExpanded ? "Свернуть" : "Развернуть"}
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded ? "▴" : "▾"}
+                      </button>
+                    </div>
                   </div>
                   {isHeadingSearchOpen ? (
                     <div className="heading-search-panel">
@@ -3088,6 +3714,8 @@ export default function App() {
                             index={index}
                             animationIndex={localIndex}
                             config={config}
+                            docId={docId}
+                            mediaFiles={mediaFiles}
                             onUpdate={updateSegment}
                             onVisualUpdate={updateVisual}
                             onSearchUpdate={updateSearch}
@@ -3100,6 +3728,7 @@ export default function App() {
                             onSearchToggle={handleSearchToggle}
                             onSearch={handleSearch}
                             onCopy={handleCopy}
+                            onDoneToggle={handleToggleSegmentDone}
                           />
                         ))}
                       </div>
@@ -3223,7 +3852,8 @@ function mergeSegmentsAndDecisions(segments = [], decisions = [], config = defau
       decisionMap.get(segment.segment_id)?.search ?? segment.search_decision,
       config
     ),
-    search_open: Boolean(segment.search_open)
+    search_open: Boolean(segment.search_open),
+    is_done: Boolean(segment.is_done)
   }));
 }
 function splitSegmentsAndDecisions(segments = []) {
@@ -3236,6 +3866,7 @@ function splitSegmentsAndDecisions(segments = []) {
     section_index: segment.section_index ?? null,
     links: Array.isArray(segment.links) ? dedupeLinks(segment.links) : [],
     segment_status: segment.segment_status ?? null,
+    is_done: Boolean(segment.is_done),
     version: segment.version ?? 1
   }));
   const decisionsPayload = segments.map((segment) => ({
@@ -3252,3 +3883,8 @@ function splitSegmentsAndDecisions(segments = []) {
   }));
   return { segmentsPayload, decisionsPayload };
 }
+
+
+
+
+
