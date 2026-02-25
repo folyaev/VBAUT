@@ -3,13 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "dev": "concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm run dev:frontend:wait\"",
+    "dev:frontend:wait": "wait-on tcp:127.0.0.1:8787 && npm --prefix frontend run dev",
+    "test:backend": "npm --prefix backend test",
     "guard:encoding": "node scripts/guard-encoding.mjs",
+    "guard:ui:utf8": "node scripts/guard-ui-utf8.mjs",
+    "guard:ci": "npm run guard:encoding && npm run guard:ui:utf8",
     "guard:encoding:staged": "node scripts/guard-encoding.mjs --staged",
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "prepare": "npm run hooks:install"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^9.2.1",
+    "wait-on": "^9.0.4"
   }
 }

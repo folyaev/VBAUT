@@ -1,4 +1,13 @@
-﻿const DEFAULT_BASE_URL = process.env.LLAMA_BASE_URL ?? "http://127.0.0.1:8080";
+import {
+  buildEnglishSearchSystemPrompt,
+  buildSearchOnlySystemPrompt,
+  buildSegmentationSystemPrompt,
+  buildVisualAndSearchSystemPrompt,
+  buildVisualOnlySystemPrompt,
+  HEADING_TRANSLATION_SYSTEM_PROMPT
+} from "./prompts/llm-prompts.js";
+
+const DEFAULT_BASE_URL = process.env.LLAMA_BASE_URL ?? "http://127.0.0.1:8080";
 const DEFAULT_MODEL = process.env.LLAMA_MODEL ?? "";
 let cachedModel = null;
 
@@ -45,6 +54,7 @@ const VISUAL_TYPES = [
 const FORMAT_HINTS = ["2:1", "1:1", "Заголовок/Цитата", "Документ"];
 const PRIORITIES = ["обязательно", "рекомендуется", "при наличии"];
 const SEARCH_LIMITS = { maxKeywords: 8, maxQueries: 3 };
+const MAX_QUERY_SIMILARITY = 0.7;
 const SEARCH_ENGINES = [
   { id: "youtube", label: "YouTube", url: "https://www.youtube.com/results?search_query=" },
   {
@@ -158,7 +168,7 @@ function safeParseJson(content) {
 
 async function generateSegmentsViaLLM(text) {
   const model = await resolveModel();
-  const system = `Ты — ассистент по сегментированию сценариев.\n\nПравила:\n- Не переписывай текст.\n- Делай осмысленные сегменты.\n- У каждого сегмента ровно один block_type: ${BLOCK_TYPES.join(", ")}.\n- text_quote должен быть точной подстрокой входного текста.\n- Выводи только JSON, без markdown.\n- segment_id формат: {block_type}_{index:02d}.\n\nВывод: массив объектов с полями: segment_id, block_type, text_quote.`;
+  const system = buildSegmentationSystemPrompt({ blockTypes: BLOCK_TYPES });
 
   const user = `SCRIPT:\n${text}`;
 
@@ -191,7 +201,11 @@ async function generateSegmentsViaLLM(text) {
 
 export async function generateDecisionsForSegments(segments, text) {
   const model = await resolveModel();
-  const system = `Ты — ассистент по визуальному брифу и поисковым запросам.\n\nПравила:\n- Ты получишь готовые сегменты. Не меняй segment_id, block_type или text_quote.\n- Для каждого сегмента дай visual_decision и search_decision.\n- visual_decision:\n  - type только из: ${VISUAL_TYPES.join(", ")}.\n  - description на русском, 1 короткое конкретное предложение без воды и без английского.\n  - format_hint: ${FORMAT_HINTS.join(", ")} или null.\n  - priority: ${PRIORITIES.join(", ")} или null.\n  - duration_hint_sec: число или null.\n  - В description указывай конкретный визуальный объект (кто/что/где), избегай абстрактных формулировок.\n- search_decision:\n  - keywords: 5–7 коротких слов/фраз, без повторов; включи имена, организации, места и ключевые сущности сегмента.\n  - queries: ровно 3 запроса на русском:\n    1) первый запрос дословно равен visual_decision.description;\n    2) второй и третий запросы сгенерируй по keywords (поисково-практичные формулировки с уточнениями).\n  - без английского.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, visual_decision { type, description, format_hint, duration_hint_sec, priority }, search_decision { keywords, queries }.`;
+  const system = buildVisualAndSearchSystemPrompt({
+    visualTypes: VISUAL_TYPES,
+    formatHints: FORMAT_HINTS,
+    priorities: PRIORITIES
+  });
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote }) => ({
     segment_id,
@@ -271,7 +285,11 @@ export async function generateDecisionsForSegments(segments, text) {
 
 export async function generateVisualDecisionsForSegments(segments) {
   const model = await resolveModel();
-  const system = `Ты — ассистент по визуальному брифу.\n\nПравила:\n- Ты получишь готовые сегменты. Не меняй segment_id, block_type или text_quote.\n- Для каждого сегмента дай только visual_decision.\n- visual_decision:\n  - type только из: ${VISUAL_TYPES.join(", ")}.\n  - description на русском, 1 короткое конкретное предложение без воды и без английского.\n  - format_hint: ${FORMAT_HINTS.join(", ")} или null.\n  - priority: ${PRIORITIES.join(", ")} или null.\n  - duration_hint_sec: число или null.\n  - В description обязательно назови объект съемки/иллюстрации (кто/что/где).\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, visual_decision { type, description, format_hint, duration_hint_sec, priority }.\n`;
+  const system = buildVisualOnlySystemPrompt({
+    visualTypes: VISUAL_TYPES,
+    formatHints: FORMAT_HINTS,
+    priorities: PRIORITIES
+  });
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote }) => ({
     segment_id,
@@ -331,7 +349,7 @@ export async function generateVisualDecisionsForSegments(segments) {
 
 export async function generateSearchDecisionsForSegments(segments) {
   const model = await resolveModel();
-  const system = `Ты — ассистент по поисковым запросам.\n\nПравила:\n- Ты получишь сегменты и требования к визуалу.\n- Для каждого сегмента дай только search_decision.\n- search_decision:\n  - keywords: 5–7 коротких слов/фраз, без повторов; включи имена, организации, места и ключевые сущности сегмента.\n  - queries: ровно 3 запроса на русском:\n    1) первый запрос дословно равен visual_decision.description;\n    2) второй и третий запросы сгенерируй по keywords (поисково-практичные формулировки с уточнениями);\n  - без английского.\n- Учитывай описание визуала и тип визуала из visual_decision.\n- Выводи только JSON, без markdown.\n\nВывод: массив объектов с полями: segment_id, search_decision { keywords, queries }.\n`;
+  const system = buildSearchOnlySystemPrompt();
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote, visual_decision }) => ({
     segment_id,
@@ -383,7 +401,7 @@ export async function generateSearchDecisionsForSegments(segments) {
 
 export async function generateEnglishSearchDecisionsForSegments(segments) {
   const model = await resolveModel();
-  const system = `You are a search query assistant.\n\nRules:\n- You will receive segments and visual requirements.\n- For each segment return only search_decision in English.\n- search_decision:\n  - keywords: 5–7 short phrases, no duplicates; include all names, organizations, and places from the segment.\n  - queries: exactly 3 realistic English search queries with clarifying details (names, place, time).\n  - each query should be practical for real-world search engines.\n- Consider visual_decision (type and description).\n- Output JSON only, no markdown.\n\nOutput: array of objects with fields: segment_id, search_decision { keywords, queries }.\n`;
+  const system = buildEnglishSearchSystemPrompt();
 
   const promptSegments = segments.map(({ segment_id, block_type, text_quote, visual_decision }) => ({
     segment_id,
@@ -432,12 +450,11 @@ export async function generateEnglishSearchDecisionsForSegments(segments) {
 }
 
 export async function translateHeadingToEnglishQuery(text) {
-  const source = String(text ?? "").trim();
+  const source = normalizeHeadingTitleForSearch(text);
   if (!source) return "";
 
   const model = await resolveModel();
-  const system =
-    "You translate short topic titles into concise English search queries. Return plain text only, no JSON, no quotes.";
+  const system = HEADING_TRANSLATION_SYSTEM_PROMPT;
   const body = {
     model,
     temperature: 0.1,
@@ -470,6 +487,13 @@ export async function translateHeadingToEnglishQuery(text) {
     console.warn("LLM heading translation failed:", error?.message ?? error);
     return source;
   }
+}
+
+function normalizeHeadingTitleForSearch(text) {
+  return String(text ?? "")
+    .replace(/\(\s*\d+\s*\)\s*$/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeSegments(parsed) {
@@ -627,7 +651,10 @@ function enforceSearchQueryStructure(searchDecision, visualDecision) {
     queries.push(queries[queries.length - 1]);
   }
 
-  return { keywords, queries };
+  return {
+    keywords,
+    queries: ensureSearchQueryDiversity(queries, keywords, SEARCH_LIMITS.maxQueries, MAX_QUERY_SIMILARITY)
+  };
 }
 
 function pickKeywordQuery(candidates, keywords, variant, excludedQueries) {
@@ -672,6 +699,115 @@ function buildKeywordQuery(keywords, variant) {
   }
 
   return queryParts.join(" ").trim();
+}
+
+function tokenizeQueryForSimilarity(query) {
+  return (
+    String(query ?? "")
+      .toLowerCase()
+      .match(/[\p{L}\p{N}]+/gu) ?? []
+  );
+}
+
+function querySimilarityRatio(left, right) {
+  const leftTokens = new Set(tokenizeQueryForSimilarity(left));
+  const rightTokens = new Set(tokenizeQueryForSimilarity(right));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+
+  let overlap = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) overlap += 1;
+  }
+  return overlap / Math.max(1, Math.min(leftTokens.size, rightTokens.size));
+}
+
+function maxQuerySimilarity(query, others) {
+  let max = 0;
+  for (const other of others ?? []) {
+    const score = querySimilarityRatio(query, other);
+    if (score > max) max = score;
+  }
+  return max;
+}
+
+function hasCyrillicText(text) {
+  return /[\p{Script=Cyrillic}]/u.test(String(text ?? ""));
+}
+
+function getDiversityHints(variant, useCyrillic) {
+  const ru = ["дата", "место", "контекст", "фото", "видео", "хронология"];
+  const en = ["date", "location", "context", "photo", "video", "timeline"];
+  const list = useCyrillic ? ru : en;
+  const offset = Math.abs(Number(variant) || 0) % list.length;
+  return [...list.slice(offset), ...list.slice(0, offset)];
+}
+
+function buildDiversityCandidates(query, keywords, variant) {
+  const baseQuery = String(query ?? "").trim();
+  const normalizedKeywords = (keywords ?? [])
+    .map((keyword) => String(keyword ?? "").trim())
+    .filter(Boolean);
+  const pool = [];
+
+  if (baseQuery) pool.push(baseQuery);
+  pool.push(buildKeywordQuery(normalizedKeywords, variant + 1));
+  pool.push(buildKeywordQuery(normalizedKeywords, variant + 2));
+
+  const useCyrillic = hasCyrillicText(baseQuery) || normalizedKeywords.some(hasCyrillicText);
+  const hints = getDiversityHints(variant, useCyrillic);
+  const seed = baseQuery || buildKeywordQuery(normalizedKeywords, 0);
+  hints.forEach((hint) => {
+    if (seed) pool.push(`${seed} ${hint}`.trim());
+    const keyword = normalizedKeywords[(Number(variant) || 0) % Math.max(1, normalizedKeywords.length)];
+    if (keyword) pool.push(`${keyword} ${hint}`.trim());
+  });
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of pool) {
+    const value = String(item ?? "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
+function ensureSearchQueryDiversity(queries, keywords, limit, maxSimilarity = MAX_QUERY_SIMILARITY) {
+  const normalized = (queries ?? [])
+    .map((query) => String(query ?? "").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+  if (normalized.length < 2) return normalized;
+
+  for (let i = 1; i < normalized.length; i += 1) {
+    const previous = normalized.slice(0, i);
+    let current = normalized[i];
+    let currentScore = maxQuerySimilarity(current, previous);
+    if (currentScore <= maxSimilarity) continue;
+
+    const excluded = new Set(previous.map((query) => query.toLowerCase()));
+    let bestCandidate = current;
+    let bestScore = currentScore;
+    const candidates = buildDiversityCandidates(current, keywords, i);
+
+    for (const candidate of candidates) {
+      const lower = candidate.toLowerCase();
+      if (excluded.has(lower)) continue;
+      const score = maxQuerySimilarity(candidate, previous);
+      if (score < bestScore) {
+        bestCandidate = candidate;
+        bestScore = score;
+      }
+      if (score <= maxSimilarity) break;
+    }
+
+    normalized[i] = bestCandidate;
+  }
+
+  return normalized;
 }
 
 function deriveKeywordsFromText(text) {
@@ -1077,7 +1213,10 @@ function normalizeSearchDecision(raw) {
   const keywords = normalizeStringList(raw.keywords, SEARCH_LIMITS.maxKeywords);
   const queries = normalizeStringList(raw.queries ?? raw.search_queries ?? raw.searchQueries, SEARCH_LIMITS.maxQueries);
   const covered = ensureSearchCoverage(keywords, queries, SEARCH_LIMITS.maxQueries);
-  return { keywords, queries: covered };
+  return {
+    keywords,
+    queries: ensureSearchQueryDiversity(covered, keywords, SEARCH_LIMITS.maxQueries, MAX_QUERY_SIMILARITY)
+  };
 }
 
 function splitByHeadings(text) {
@@ -1149,7 +1288,7 @@ function buildSegmentsFromHeadings(blocks) {
     if (!block.heading) continue;
     if (shouldSkipHeading(block.heading)) continue;
     const blockType = inferBlockType(block.heading);
-    const parts = splitIntoParagraphs(block.text);
+    const parts = splitIntoSegmentUnits(block.text);
     if (parts.length === 0) continue;
 
     sectionIndex += 1;
@@ -1190,6 +1329,15 @@ function shouldSkipHeading(heading) {
   return false;
 }
 
+const SEGMENT_TARGET_MAX_CHARS = 210;
+const SEGMENT_HARD_MAX_CHARS = 280;
+const SEGMENT_MIN_SPLIT_PART_CHARS = 28;
+const SEGMENT_MIN_CHARS = 20;
+const NARRATIVE_SPLIT_RE = /(?<=[.!?…])\s+/u;
+const CLAUSE_PIVOT_RE =
+  /,\s+(если|но|а|и|однако|зато|при этом|чтобы|когда|где|так как|потому что|котор(?:ый|ая|ое|ые|ого|ому|ым|ых)?)\b/iu;
+const HARD_SENTENCE_START_RE = /^(а|но|однако|зато|при этом|например|во-первых|во-вторых|кстати)\b/iu;
+
 function splitIntoParagraphs(text) {
   const normalized = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const paragraphs = normalized
@@ -1205,8 +1353,163 @@ function splitIntoParagraphs(text) {
     .filter(Boolean);
 }
 
+function normalizeSegmentText(text) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countPunctuationSentences(text) {
+  const matches = String(text ?? "").match(/[.!?…]/g);
+  return Math.max(1, matches?.length ?? 0);
+}
+
+function splitLongClause(text) {
+  const sentence = normalizeSegmentText(text);
+  if (!sentence) return [];
+  if (sentence.startsWith("/")) return [sentence];
+  if (sentence.length <= SEGMENT_HARD_MAX_CHARS) return [sentence];
+
+  const pivot = sentence.match(CLAUSE_PIVOT_RE);
+  if (pivot && Number.isInteger(pivot.index)) {
+    const commaIndex = sentence.indexOf(",", pivot.index);
+    if (commaIndex !== -1) {
+      const left = sentence.slice(0, commaIndex + 1).trim();
+      const right = sentence.slice(commaIndex + 1).trim();
+      if (left.length >= SEGMENT_MIN_SPLIT_PART_CHARS && right.length >= SEGMENT_MIN_SPLIT_PART_CHARS) {
+        return [left, right];
+      }
+    }
+  }
+
+  const commaMatches = Array.from(sentence.matchAll(/,\s+/g));
+  if (commaMatches.length >= 2) {
+    const midpoint = Math.floor(sentence.length / 2);
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const match of commaMatches) {
+      const idx = Number(match.index ?? -1);
+      if (idx <= 0) continue;
+      const distance = Math.abs(idx - midpoint);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = idx;
+      }
+    }
+    if (bestIndex !== -1) {
+      const left = sentence.slice(0, bestIndex + 1).trim();
+      const right = sentence.slice(bestIndex + 1).trim();
+      if (left.length >= SEGMENT_MIN_SPLIT_PART_CHARS && right.length >= SEGMENT_MIN_SPLIT_PART_CHARS) {
+        return [left, right];
+      }
+    }
+  }
+
+  return [sentence];
+}
+
+function splitParagraphIntoNarrativeSegments(paragraph) {
+  const text = normalizeSegmentText(paragraph);
+  if (!text) return [];
+  if (text.startsWith("/")) return [text];
+
+  const sentences = text
+    .split(NARRATIVE_SPLIT_RE)
+    .map((part) => normalizeSegmentText(part))
+    .filter(Boolean)
+    .flatMap((part) => splitLongClause(part));
+  if (!sentences.length) return [text];
+
+  const segments = [];
+  let current = "";
+  let currentSentenceCount = 0;
+
+  for (const sentence of sentences) {
+    if (!current) {
+      current = sentence;
+      currentSentenceCount = countPunctuationSentences(sentence);
+      continue;
+    }
+
+    const combined = `${current} ${sentence}`.trim();
+    const nextSentenceCount = countPunctuationSentences(sentence);
+    const shouldSplit =
+      currentSentenceCount >= 2 ||
+      combined.length > SEGMENT_TARGET_MAX_CHARS ||
+      (current.length >= 56 &&
+        sentence.length >= SEGMENT_MIN_SPLIT_PART_CHARS &&
+        HARD_SENTENCE_START_RE.test(sentence));
+
+    if (shouldSplit) {
+      segments.push(current);
+      current = sentence;
+      currentSentenceCount = nextSentenceCount;
+      continue;
+    }
+
+    current = combined;
+    currentSentenceCount += nextSentenceCount;
+  }
+
+  if (current) segments.push(current);
+  return mergeShortNarrativeSegments(segments);
+}
+
+function isServiceSegment(text) {
+  const value = String(text ?? "").trim().toLowerCase();
+  if (!value) return false;
+  return value.startsWith("/фрагмент") || value.startsWith("/нарезка") || value.startsWith("/нейро-видео");
+}
+
+function mergeShortNarrativeSegments(segments) {
+  const merged = [];
+  for (const segment of segments) {
+    const text = String(segment ?? "").trim();
+    if (!text) continue;
+    if (isServiceSegment(text)) {
+      merged.push(text);
+      continue;
+    }
+
+    if (text.length >= SEGMENT_MIN_CHARS) {
+      merged.push(text);
+      continue;
+    }
+
+    const prev = merged[merged.length - 1];
+    if (prev && !isServiceSegment(prev)) {
+      merged[merged.length - 1] = `${prev} ${text}`.trim();
+      continue;
+    }
+
+    merged.push(text);
+  }
+
+  if (merged.length < 2) return merged;
+  const normalized = [...merged];
+  for (let i = 0; i < normalized.length - 1; i += 1) {
+    const current = normalized[i];
+    if (isServiceSegment(current)) continue;
+    if (current.length >= SEGMENT_MIN_CHARS) continue;
+    const next = normalized[i + 1];
+    if (!next || isServiceSegment(next)) continue;
+    normalized[i + 1] = `${current} ${next}`.trim();
+    normalized[i] = "";
+  }
+  return normalized.filter(Boolean);
+}
+
+function splitIntoSegmentUnits(text) {
+  const paragraphs = splitIntoParagraphs(text);
+  const segments = [];
+  for (const paragraph of paragraphs) {
+    segments.push(...splitParagraphIntoNarrativeSegments(paragraph));
+  }
+  return segments.map((part) => part.trim()).filter(Boolean);
+}
+
 function buildSegmentsFromText(text) {
-  const parts = splitIntoParagraphs(text);
+  const parts = splitIntoSegmentUnits(text);
   const segments = [];
   let index = 0;
   for (const part of parts) {

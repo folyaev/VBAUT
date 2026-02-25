@@ -45,15 +45,22 @@ npm --prefix HeadlessNotion install
 - `data/<doc_id>/decisions.json`
 - `data/<doc_id>/events.jsonl`
 - `data/<doc_id>/*.vN.json` (versioned snapshots)
+- глобальный API audit: `data/_audit/api-requests-YYYY-MM-DD.jsonl`
+- глобальный UI audit: `data/_audit/ui-actions-YYYY-MM-DD.jsonl`
 
 Ключевые поля:
 - в `segments.json`: `segment_id`, `block_type`, `text_quote`, `section_id`, `section_title`, `is_done`
 - в `decisions.json`: `visual_decision`, `search_decision`, `search_decision_en`
 - для XML-кейса: `visual_decision.media_file_path`
 
+Флаги audit:
+- `API_AUDIT_LOG_ENABLED` (default `1`)
+- `API_AUDIT_LOG_INCLUDE_HEALTH` (default `0`)
+- `UI_ACTION_AUDIT_ENABLED` (default `1`)
+
 ## 5) XML-экспорт (без Python)
 
-Реализован в backend (Node.js), не зависит от `UTCollection.py`.
+Реализован в backend (Node.js).
 
 Эндпоинт:
 - `GET /api/documents/:id/export?format=xml` — весь документ
@@ -68,8 +75,8 @@ npm --prefix HeadlessNotion install
 - FPS: `XML_EXPORT_FPS`;
 - размер секвенции: `1920x960`;
 - для видео+аудио используется общий `file id` (важно для корректного relink в Premiere);
-- перенесены базовые motion templates размеров из `UTCollection.py` (`1920x960`, `960x960` и др.).
-- для видео-сегментов поддержан `media_start_timecode` (UI: `Старт файла (таймкод)`).
+- встроены базовые motion templates размеров (`1920x960`, `960x960` и др.).
+- для видео-сегментов поддержан `media_start_timecode` (UI: `Таймкод`, формат `HH:MM:SS`).
 - `out` вручную не задается: рассчитывается автоматически как `in + duration_hint_sec`.
 
 Переменные окружения:
@@ -95,6 +102,8 @@ npm --prefix HeadlessNotion install
 - через `yt-dlp` (+ `ffmpeg` при необходимости);
 - root-папка: `MEDIA_DOWNLOAD_ROOT` (обычно `C:\Users\Nemifist\YandexDisk\PAMPAM`);
 - события и статусы пишутся в `events.jsonl`.
+- в UI есть проверка версии `yt-dlp` и ручное обновление (`yt-dlp -U`);
+- обновление `yt-dlp` не запускается при активных задачах загрузки.
 
 ## 7) Кодировка (критично)
 
@@ -109,8 +118,14 @@ npm --prefix HeadlessNotion install
 
 ```powershell
 npm run guard:encoding
+npm run guard:ui:utf8
+npm run guard:ci
 npm run guard:encoding:staged
 ```
+
+CI:
+- `.github/workflows/guard-encoding.yml` запускает `guard:encoding` и `guard:ui:utf8`.
+- В защищенной ветке этот check должен быть обязательным (required status check).
 
 ## 8) Проверки после правок
 
@@ -124,6 +139,7 @@ Backend:
 
 ```powershell
 node --check backend/src/index.js
+npm --prefix backend test
 ```
 
 ## 9) Правила изменения поведения
@@ -133,7 +149,10 @@ node --check backend/src/index.js
 - при добавлении новых кнопок/фич — обновлять `README.md` и этот `AGENTS.md`;
 - для новых API обязательно добавлять понятную ошибку и успешный статус.
 
-## 10) Про `UTCollection.py`
+Дополнительно по сегментации:
+- `POST /api/documents/:id/segments:generate` возвращает `segmentation_diff` (added/changed/same/removed/preserved_manual).
+- При `Новый сценарий` на фронте есть подтверждение, если состояние не сохранено.
 
-`UTCollection.py` оставлен как справочный файл по логике таймлайна.
-Текущий прод-путь в проекте — Node.js backend экспорт `XML (xmeml)` без Python-зависимостей.
+## 10) Актуальный путь XML
+
+Прод-путь — Node.js backend экспорт `XML (xmeml)` без Python-зависимостей.

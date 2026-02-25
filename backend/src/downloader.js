@@ -17,6 +17,7 @@ const DEFAULT_FORMAT = [
   "bv*[height<=1080]+ba/",
   "b[height<=1080]/best[height<=1080]/best"
 ].join("");
+const YTDLP_UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
 const VERIFYABLE_MEDIA_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 const TRACKED_OUTPUT_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus|jpg|jpeg|png|webp|gif)$/i;
 
@@ -105,6 +106,37 @@ export async function resolveDownloaderTools() {
   };
 }
 
+export async function getYtDlpVersion(ytDlpPath) {
+  const command = String(ytDlpPath ?? "").trim();
+  if (!command) return null;
+  const version = await runCommandCaptureFirstLine(command, ["--version"], 12000);
+  const normalized = String(version ?? "").trim();
+  return normalized || null;
+}
+
+export async function updateYtDlpBinary(ytDlpPath) {
+  const command = String(ytDlpPath ?? "").trim();
+  if (!command) {
+    throw new Error("yt-dlp unavailable");
+  }
+
+  const before = await getYtDlpVersion(command);
+  const result = await runCommandCaptureOutput(command, ["-U"], YTDLP_UPDATE_TIMEOUT_MS);
+  const after = await getYtDlpVersion(command);
+  const combinedOutput = `${result.stdout}\n${result.stderr}`.trim();
+  const lower = combinedOutput.toLowerCase();
+  const changed = Boolean(before && after && before !== after);
+  const upToDate = !changed && /up to date|latest version|already up[- ]to[- ]date/i.test(lower);
+
+  return {
+    before,
+    after,
+    changed,
+    up_to_date: upToDate,
+    output_tail: trimOutputTail(combinedOutput, 3000)
+  };
+}
+
 export class MediaDownloadQueue {
   constructor(options = {}) {
     this.ytDlpPath = options.ytDlpPath ?? null;
@@ -129,6 +161,13 @@ export class MediaDownloadQueue {
 
   isAvailable() {
     return Boolean(this.ytDlpPath);
+  }
+
+  hasActiveJobs() {
+    for (const job of this.jobs.values()) {
+      if (job.status === "queued" || job.status === "running") return true;
+    }
+    return false;
   }
 
   getToolsInfo() {
@@ -979,6 +1018,56 @@ async function runCommandCaptureFirstLine(command, args, timeoutMs = 10000) {
   });
 }
 
+async function runCommandCaptureOutput(command, args, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    const child = spawn(command, args, { windowsHide: true });
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // noop
+      }
+      reject(new Error(`Command timeout: ${command}`));
+    }, timeoutMs);
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk ?? "");
+    });
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk ?? "");
+    });
+
+    child.on("error", (error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        const text = trimOutputTail(`${stdout}\n${stderr}`.trim(), 3000);
+        reject(new Error(text || `Command failed: ${command}`));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
 async function runCommandExitZero(command, args, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let done = false;
@@ -1026,4 +1115,10 @@ function sleep(ms) {
 
 function escapeRegex(value) {
   return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function trimOutputTail(text, maxLength = 2000) {
+  const value = String(text ?? "");
+  if (value.length <= maxLength) return value;
+  return value.slice(-maxLength);
 }

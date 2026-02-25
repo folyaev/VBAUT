@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node src/index.js",
-    "start": "node src/index.js"
+    "dev": "node src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",

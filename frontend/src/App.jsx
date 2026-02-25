@@ -420,6 +420,144 @@ async function fetchJsonSafe(url, options = {}) {
 
   return { response, data: null, rawText };
 }
+const UI_AUDIT_BATCH_SIZE = 25;
+const UI_AUDIT_MAX_QUEUE = 500;
+const UI_AUDIT_FLUSH_MS = 1500;
+const UI_AUDIT_INPUT_THROTTLE_MS = 1200;
+const UI_AUDIT_TARGET_SELECTOR = "button,a,input,select,textarea,[role='button'],[data-action],[data-audit],label";
+const UI_AUDIT_TEXT_INPUT_TYPES = new Set([
+  "text",
+  "search",
+  "email",
+  "url",
+  "tel",
+  "password",
+  "number",
+  "date",
+  "datetime-local",
+  "month",
+  "time",
+  "week"
+]);
+
+const truncateText = (value, maxLength = 160) => {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length <= maxLength ? text : text.slice(0, maxLength);
+};
+
+const safeUrlHint = (value) => {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text, window.location.origin);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return truncateText(text, 200);
+  }
+};
+
+const extractUiTargetInfo = (rawTarget) => {
+  if (typeof window === "undefined") return null;
+  if (!(rawTarget instanceof Element)) return null;
+  const target = rawTarget.closest(UI_AUDIT_TARGET_SELECTOR) ?? rawTarget;
+  if (!(target instanceof Element)) return null;
+
+  const base = {
+    tag: String(target.tagName ?? "").toLowerCase(),
+    id: truncateText(target.id, 80) || null,
+    name: truncateText(target.getAttribute("name"), 80) || null,
+    role: truncateText(target.getAttribute("role"), 80) || null,
+    class: truncateText(target.className, 120) || null,
+    text: truncateText(target.textContent, 120) || null,
+    type: null,
+    href: null,
+    data_action: truncateText(target.getAttribute("data-action"), 120) || null
+  };
+
+  if (target instanceof HTMLInputElement) {
+    base.type = truncateText(target.type, 40) || "input";
+    return base;
+  }
+  if (target instanceof HTMLTextAreaElement) {
+    base.type = "textarea";
+    return base;
+  }
+  if (target instanceof HTMLSelectElement) {
+    base.type = "select";
+    return base;
+  }
+  if (target instanceof HTMLAnchorElement) {
+    base.type = "link";
+    base.href = safeUrlHint(target.href) || null;
+    return base;
+  }
+  base.type = base.tag || null;
+  return base;
+};
+
+const buildUiActionPayload = (eventType, event, docId) => {
+  if (!event || typeof eventType !== "string") return null;
+  const target = extractUiTargetInfo(event.target);
+  if (!target) return null;
+
+  const meta = {
+    trusted: Boolean(event.isTrusted)
+  };
+
+  if ((eventType === "change" || eventType === "input") && event.target instanceof HTMLInputElement) {
+    const inputType = String(event.target.type ?? "").toLowerCase();
+    if (inputType === "checkbox" || inputType === "radio") {
+      meta.checked = Boolean(event.target.checked);
+    } else if (UI_AUDIT_TEXT_INPUT_TYPES.has(inputType)) {
+      meta.value_length = String(event.target.value ?? "").length;
+    } else {
+      meta.value_hint = truncateText(event.target.value, 120) || null;
+    }
+  } else if ((eventType === "change" || eventType === "input") && event.target instanceof HTMLTextAreaElement) {
+    meta.value_length = String(event.target.value ?? "").length;
+  } else if ((eventType === "change" || eventType === "input") && event.target instanceof HTMLSelectElement) {
+    meta.value_hint = truncateText(event.target.value, 120) || null;
+  } else if (eventType === "submit" && event.target instanceof HTMLFormElement) {
+    meta.form_action = safeUrlHint(event.target.action) || null;
+  }
+
+  return {
+    ts: new Date().toISOString(),
+    type: eventType,
+    path: `${window.location.pathname}${window.location.search}`,
+    doc_id: docId || null,
+    target,
+    meta
+  };
+};
+
+async function sendUiAuditActions(actions, options = {}) {
+  const list = Array.isArray(actions) ? actions : [];
+  if (!list.length) return true;
+  const bodyText = JSON.stringify({
+    source: "frontend_app",
+    actions: list
+  });
+
+  const keepalive = Boolean(options.keepalive);
+  try {
+    await fetch("/api/audit/ui-actions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "ngrok-skip-browser-warning": "1"
+      },
+      body: bodyText,
+      keepalive
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const getInitialCollaborativeMode = () => {
   return false;
 };
@@ -719,7 +857,6 @@ const normalizeLineBreaks = (text) => String(text ?? "").replace(/\r\n/g, "\n").
 const normalizeTopicTitleForDisplay = (title) => {
   const value = normalizeLineBreaks(title)
     .replace(/\(\s*\d+\s*\)\s*$/g, " ")
-    .replace(/\d+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return value;
@@ -731,7 +868,7 @@ const sanitizeMediaTopicName = (rawTitle) => {
 
   const replaced = value
     .replace(/[\u0000-\u001f<>:"/\\|?*]+/g, " ")
-    .replace(/\d+/g, " ")
+    .replace(/\(\s*\d+\s*\)\s*$/g, " ")
     .replace(/\(\s*\)/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -789,13 +926,17 @@ const getQuotePreview = (text, limit = 110) => {
 const isCommentsSegment = (segment) => /^comments_/i.test(String(segment?.segment_id ?? "").trim());
 const normalizeSectionTitleForId = (title) =>
   normalizeLineBreaks(title)
+    .replace(/^#{1,}\s*/g, " ")
+    .replace(/[«»"“”'`]+/g, " ")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
 const normalizeSectionTitleForMerge = (title) =>
   normalizeLineBreaks(title)
+    .replace(/^#{1,}\s*/g, " ")
     .toLowerCase()
     .replace(/\(\s*\d+\s*\)\s*$/g, " ")
+    .replace(/[«»"“”'`]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 const hashSectionTitle = (value) => {
@@ -2163,6 +2304,9 @@ export default function App() {
   const [downloadedMediaUrls, setDownloadedMediaUrls] = useState([]);
   const [mediaQueue, setMediaQueue] = useState({});
   const [mediaTools, setMediaTools] = useState(null);
+  const [ytDlpVersion, setYtDlpVersion] = useState(null);
+  const [ytDlpVersionLoading, setYtDlpVersionLoading] = useState(false);
+  const [ytDlpUpdateLoading, setYtDlpUpdateLoading] = useState(false);
   const [mediaPanelOpen, setMediaPanelOpen] = useState(false);
   const [collabSessionEnabled, setCollabSessionEnabled] = useState(getInitialCollaborativeMode);
   const [autoOpenLastDocEnabled, setAutoOpenLastDocEnabled] = useState(getInitialAutoOpenLastDoc);
@@ -2177,6 +2321,10 @@ export default function App() {
   const initialDocRestoreDoneRef = React.useRef(false);
   const mediaJobStatusRef = React.useRef(new Map());
   const mediaJobStatusReadyRef = React.useRef(false);
+  const uiAuditQueueRef = React.useRef([]);
+  const uiAuditTimerRef = React.useRef(null);
+  const uiAuditDocIdRef = React.useRef("");
+  const uiAuditLastInputRef = React.useRef(new Map());
   useEffect(() => {
     collabRevisionRef.current = collabRevision;
   }, [collabRevision]);
@@ -2232,8 +2380,104 @@ export default function App() {
     window.localStorage?.setItem(LAST_USED_DOC_STORAGE_KEY, docId);
   }, [docId]);
   useEffect(() => {
+    uiAuditDocIdRef.current = docId || "";
+  }, [docId]);
+  const flushUiAuditQueue = React.useCallback(async ({ keepalive = false } = {}) => {
+    if (uiAuditTimerRef.current) {
+      clearTimeout(uiAuditTimerRef.current);
+      uiAuditTimerRef.current = null;
+    }
+    const queue = uiAuditQueueRef.current;
+    if (!Array.isArray(queue) || queue.length === 0) return;
+
+    const batch = queue.splice(0, UI_AUDIT_BATCH_SIZE);
+    const ok = await sendUiAuditActions(batch, { keepalive });
+    if (!ok) {
+      uiAuditQueueRef.current = [...batch, ...uiAuditQueueRef.current].slice(-UI_AUDIT_MAX_QUEUE);
+    }
+
+    if (uiAuditQueueRef.current.length > 0 && !uiAuditTimerRef.current) {
+      uiAuditTimerRef.current = setTimeout(() => {
+        void flushUiAuditQueue();
+      }, UI_AUDIT_FLUSH_MS);
+    }
+  }, []);
+  const enqueueUiAuditAction = React.useCallback(
+    (action) => {
+      if (!action || typeof action !== "object") return;
+      uiAuditQueueRef.current.push(action);
+      if (uiAuditQueueRef.current.length > UI_AUDIT_MAX_QUEUE) {
+        uiAuditQueueRef.current = uiAuditQueueRef.current.slice(-UI_AUDIT_MAX_QUEUE);
+      }
+      if (uiAuditQueueRef.current.length >= UI_AUDIT_BATCH_SIZE) {
+        void flushUiAuditQueue();
+        return;
+      }
+      if (!uiAuditTimerRef.current) {
+        uiAuditTimerRef.current = setTimeout(() => {
+          void flushUiAuditQueue();
+        }, UI_AUDIT_FLUSH_MS);
+      }
+    },
+    [flushUiAuditQueue]
+  );
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+
+    const record = (type, event) => {
+      const payload = buildUiActionPayload(type, event, uiAuditDocIdRef.current);
+      if (!payload) return;
+      enqueueUiAuditAction(payload);
+    };
+
+    const onClick = (event) => record("click", event);
+    const onInput = (event) => {
+      const target = extractUiTargetInfo(event.target);
+      if (!target) return;
+      const key = `${target.tag || "unknown"}|${target.id || ""}|${target.name || ""}|${target.class || ""}`;
+      const now = Date.now();
+      const prevAt = Number(uiAuditLastInputRef.current.get(key) ?? 0);
+      if (now - prevAt < UI_AUDIT_INPUT_THROTTLE_MS) return;
+      uiAuditLastInputRef.current.set(key, now);
+      record("input", event);
+    };
+    const onChange = (event) => record("change", event);
+    const onSubmit = (event) => record("submit", event);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        void flushUiAuditQueue({ keepalive: true });
+      }
+    };
+    const onBeforeUnload = () => {
+      void flushUiAuditQueue({ keepalive: true });
+    };
+
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("input", onInput, true);
+    document.addEventListener("change", onChange, true);
+    document.addEventListener("submit", onSubmit, true);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("input", onInput, true);
+      document.removeEventListener("change", onChange, true);
+      document.removeEventListener("submit", onSubmit, true);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      if (uiAuditTimerRef.current) {
+        clearTimeout(uiAuditTimerRef.current);
+        uiAuditTimerRef.current = null;
+      }
+      uiAuditLastInputRef.current = new Map();
+      void flushUiAuditQueue({ keepalive: true });
+    };
+  }, [enqueueUiAuditAction, flushUiAuditQueue]);
+  useEffect(() => {
     setMediaQueue({});
     setDownloadedMediaUrls([]);
+    setYtDlpVersion(null);
     setMediaPanelOpen(false);
     mediaJobStatusRef.current = new Map();
     mediaJobStatusReadyRef.current = false;
@@ -2244,6 +2488,7 @@ export default function App() {
       setMediaFiles([]);
       setDownloadedMediaUrls([]);
       setMediaTools(null);
+      setYtDlpVersion(null);
       return;
     }
     try {
@@ -2257,6 +2502,7 @@ export default function App() {
       setMediaJobs([]);
       setMediaFiles([]);
       setDownloadedMediaUrls([]);
+      setYtDlpVersion(null);
     }
   }, [docId]);
   useEffect(() => {
@@ -2313,6 +2559,67 @@ export default function App() {
       setStatus(statusMessage);
     }
   }, [mediaJobs]);
+  const handleCheckYtDlpVersion = React.useCallback(
+    async ({ silent = false } = {}) => {
+      if (ytDlpVersionLoading) return;
+      setYtDlpVersionLoading(true);
+      try {
+        const { response, data } = await fetchJsonSafe("/api/downloader/yt-dlp/version");
+        if (!response.ok) throw new Error(data?.error ?? "Version check failed");
+        const version = typeof data?.version === "string" ? data.version : null;
+        const normalizedVersion = version || "unknown";
+        setYtDlpVersion(normalizedVersion);
+        if (!silent) {
+          if (data?.available) {
+            setStatus(`yt-dlp version: ${normalizedVersion}`);
+          } else {
+            setStatus("yt-dlp unavailable");
+          }
+        }
+      } catch (error) {
+        if (!silent) {
+          setStatus(error.message);
+        }
+      } finally {
+        setYtDlpVersionLoading(false);
+      }
+    },
+    [ytDlpVersionLoading]
+  );
+  const handleUpdateYtDlp = React.useCallback(async () => {
+    if (ytDlpUpdateLoading) return;
+    setYtDlpUpdateLoading(true);
+    try {
+      const { response, data } = await fetchJsonSafe("/api/downloader/yt-dlp:update", {
+        method: "POST"
+      });
+      if (!response.ok) throw new Error(data?.error ?? "yt-dlp update failed");
+      const nextVersion =
+        (typeof data?.after === "string" && data.after) ||
+        (typeof data?.before === "string" && data.before) ||
+        ytDlpVersion ||
+        "unknown";
+      setYtDlpVersion(nextVersion);
+      await refreshMedia();
+      if (data?.changed) {
+        setStatus(`yt-dlp updated: ${data?.before ?? "unknown"} -> ${data?.after ?? "unknown"}`);
+      } else if (data?.up_to_date) {
+        setStatus(`yt-dlp already up to date: ${data?.after ?? data?.before ?? "unknown"}`);
+      } else {
+        setStatus(`yt-dlp update completed: ${data?.after ?? data?.before ?? "unknown"}`);
+      }
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setYtDlpUpdateLoading(false);
+    }
+  }, [refreshMedia, ytDlpUpdateLoading, ytDlpVersion]);
+  useEffect(() => {
+    if (!mediaPanelOpen) return;
+    if (!mediaTools?.available) return;
+    if (ytDlpVersion || ytDlpVersionLoading || ytDlpUpdateLoading) return;
+    handleCheckYtDlpVersion({ silent: true });
+  }, [handleCheckYtDlpVersion, mediaPanelOpen, mediaTools, ytDlpUpdateLoading, ytDlpVersion, ytDlpVersionLoading]);
   const segmentsCount = segments.filter((segment) => segment.block_type !== "links").length;
   const activeMediaJobsCount = React.useMemo(
     () => mediaJobs.filter((job) => job.status === "queued" || job.status === "running").length,
@@ -2571,6 +2878,15 @@ export default function App() {
     [applyLoadedSnapshot, docId, fetchRecentDocuments, rememberSessionSnapshot]
   );
   const handleStartNewScenario = React.useCallback(() => {
+    const hasDraftContent =
+      Boolean(String(scriptText ?? "").trim()) ||
+      Boolean(String(notionUrl ?? "").trim()) ||
+      (Array.isArray(segments) && segments.length > 0);
+    const shouldConfirmReset = Boolean(hasUnsavedChanges || hasDraftContent);
+    if (shouldConfirmReset && typeof window !== "undefined") {
+      const ok = window.confirm("Есть несохраненные изменения. Сбросить и начать новый сценарий?");
+      if (!ok) return;
+    }
     initialDocRestoreDoneRef.current = true;
     setDocId("");
     setRecentDocId("");
@@ -2594,7 +2910,7 @@ export default function App() {
     if (typeof window !== "undefined") {
       window.localStorage?.removeItem(LAST_USED_DOC_STORAGE_KEY);
     }
-  }, [rememberSessionSnapshot]);
+  }, [hasUnsavedChanges, notionUrl, rememberSessionSnapshot, scriptText, segments]);
   const fetchNotionContent = async (statusLabel) => {
     const url = notionUrl.trim();
     if (!url) {
@@ -2846,7 +3162,20 @@ export default function App() {
 
       const visualCount = merged.filter((segment) => hasVisualDecisionContent(segment.visual_decision)).length;
       const searchCount = merged.filter((segment) => hasSearchDecisionContent(segment.search_decision)).length;
-      if (visualCount === 0 && searchCount === 0) {
+      const diff = data?.segmentation_diff ?? null;
+      if (diff && typeof diff === "object") {
+        const added = Number(diff.added ?? 0);
+        const changed = Number(diff.changed ?? 0);
+        const same = Number(diff.same ?? 0);
+        const removed = Number(diff.removed ?? 0);
+        const preservedManual = Number(diff.preserved_manual ?? 0);
+        const collapsedLinks = Number(diff.link_topics_collapsed ?? 0);
+        setStatus(
+          `Сегменты готовы: ${merged.length}. NEW +${added}, ~${changed}, =${same}, -${removed}. ` +
+            `Ручные сохранены: ${preservedManual}. Схлопнуто дублей ссылок: ${collapsedLinks}. ` +
+            `Визуал: ${visualCount}. Поиск: ${searchCount}.`
+        );
+      } else if (visualCount === 0 && searchCount === 0) {
         setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${merged.length}. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 AI Help \u0443 \u043d\u0443\u0436\u043d\u043e\u0439 \u0442\u0435\u043c\u044b, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0432\u0438\u0437\u0443\u0430\u043b \u0438 \u043f\u043e\u0438\u0441\u043a.`);
       } else {
         setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${merged.length}. \u0412\u0438\u0437\u0443\u0430\u043b: ${visualCount}. \u041f\u043e\u0438\u0441\u043a: ${searchCount}.`);
@@ -3077,17 +3406,28 @@ export default function App() {
       const source = prev[index];
       const baseId = getSubSegmentBaseId(source.segment_id);
       const newId = getNextSubSegmentId(prev, baseId);
+      const sourceVisual = source?.visual_decision ?? emptyVisualDecision();
+      const sourceSearch = source?.search_decision ?? emptySearchDecision();
       const newSegment = {
+        ...source,
         segment_id: newId,
-        block_type: "news",
+        block_type: normalizeSegmentBlockType(source?.block_type),
         text_quote: "",
         section_id: source.section_id ?? null,
         section_title: source.section_title ?? null,
         section_index: source.section_index ?? null,
-        visual_decision: emptyVisualDecision(),
-        search_decision: emptySearchDecision(),
-        search_open: false,
-        is_done: false,
+        links: Array.isArray(source?.links) ? dedupeLinks(source.links) : [],
+        visual_decision: {
+          ...sourceVisual
+        },
+        search_decision: {
+          ...sourceSearch,
+          keywords: Array.isArray(sourceSearch?.keywords) ? [...sourceSearch.keywords] : [],
+          queries: Array.isArray(sourceSearch?.queries) ? [...sourceSearch.queries] : []
+        },
+        search_open: Boolean(source?.search_open),
+        is_done: Boolean(source?.is_done),
+        segment_status: null,
         version: 1
       };
       const next = [...prev];
@@ -3926,9 +4266,31 @@ export default function App() {
           <div className="media-panel">
             <div className="media-panel-head">
               <strong>{"\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0417\u0430\u0433\u0440\u0443\u0437\u043e\u043a"}</strong>
-              <span>
-                {mediaTools?.available ? "yt-dlp ready" : "yt-dlp unavailable"}
-              </span>
+              <div className="media-panel-head-right">
+                <span>
+                  {mediaTools?.available
+                    ? `yt-dlp ready${ytDlpVersion ? ` (${ytDlpVersion})` : ""}`
+                    : "yt-dlp unavailable"}
+                </span>
+                <div className="query-actions">
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    onClick={() => handleCheckYtDlpVersion()}
+                    disabled={!mediaTools?.available || ytDlpVersionLoading || ytDlpUpdateLoading}
+                  >
+                    {ytDlpVersionLoading ? "Проверка..." : "Версия yt-dlp"}
+                  </button>
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    onClick={handleUpdateYtDlp}
+                    disabled={!mediaTools?.available || ytDlpUpdateLoading || activeMediaJobsCount > 0}
+                  >
+                    {ytDlpUpdateLoading ? "Обновление..." : "Обновить yt-dlp"}
+                  </button>
+                </div>
+              </div>
             </div>
             {mediaJobs.length > 0 ? (
               <div className="media-jobs-list">
