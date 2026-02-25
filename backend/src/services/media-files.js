@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+﻿import fs from "node:fs/promises";
 import path from "node:path";
 
 export function createMediaFilesUtils(options = {}) {
@@ -103,8 +103,9 @@ export function createMediaFilesUtils(options = {}) {
   }
 
   function sanitizeMediaTopicName(rawTitle) {
+    const fallbackTopic = "Без темы";
     const value = String(rawTitle ?? "").trim();
-    if (!value) return "Р‘РµР· С‚РµРјС‹";
+    if (!value) return fallbackTopic;
 
     const replaced = value
       .replace(/[\u0000-\u001f<>:\"/\\|?*]+/g, " ")
@@ -114,9 +115,9 @@ export function createMediaFilesUtils(options = {}) {
       .trim()
       .replace(/[. ]+$/g, "");
 
-    const normalized = replaced || "Р‘РµР· С‚РµРјС‹";
+    const normalized = replaced || fallbackTopic;
     const clipped = normalized.length > 96 ? normalized.slice(0, 96).trim() : normalized;
-    if (!clipped) return "Р‘РµР· С‚РµРјС‹";
+    if (!clipped) return fallbackTopic;
 
     const upper = clipped.toUpperCase();
     const reserved = new Set([
@@ -145,7 +146,6 @@ export function createMediaFilesUtils(options = {}) {
     ]);
     return reserved.has(upper) ? `_${clipped}` : clipped;
   }
-
   return {
     ensureMediaDir,
     ensureMediaTopicFoldersForSegments,
@@ -155,3 +155,4 @@ export function createMediaFilesUtils(options = {}) {
     sanitizeMediaTopicName
   };
 }
+

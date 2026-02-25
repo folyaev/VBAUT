@@ -59,6 +59,7 @@ app.post("/api/documents", async (req, res) => {
         const docId = existing.id;
         const dir = await ensureDocDir(docId);
         const current = (await readOptionalJson(path.join(dir, "document.json"))) ?? {};
+        const prevRawText = String(current.raw_text ?? "");
         const document = {
           ...current,
           id: docId,
@@ -68,13 +69,24 @@ app.post("/api/documents", async (req, res) => {
           last_segmented_text_hash: getDocumentLastSegmentedHash(current) || null
         };
         syncDocumentSegmentationState(document, rawText);
-        await writeJson(path.join(dir, "document.json"), document);
+        const rawTextChanged = prevRawText !== rawText;
+        let documentVersion = null;
+        if (rawTextChanged) {
+          documentVersion = await saveVersioned(docId, "document", document);
+        } else {
+          await writeJson(path.join(dir, "document.json"), document);
+        }
         await appendEvent(docId, {
           timestamp: nowIso,
           event: "document_upserted",
-          payload: { doc_id: docId, mode: "reuse_by_notion" }
+          payload: { doc_id: docId, mode: "reuse_by_notion", document_version: documentVersion }
         });
-        return res.json({ id: docId, document: normalizeDocumentForResponse(document), reused: true });
+        return res.json({
+          id: docId,
+          document: normalizeDocumentForResponse(document),
+          reused: true,
+          document_version: documentVersion
+        });
       }
     }
 
@@ -91,14 +103,14 @@ app.post("/api/documents", async (req, res) => {
       last_segmented_text_hash: null
     };
 
-    await writeJson(path.join(dir, "document.json"), document);
+    const documentVersion = await saveVersioned(docId, "document", document);
     await appendEvent(docId, {
       timestamp: new Date().toISOString(),
       event: "document_created",
-      payload: { doc_id: docId }
+      payload: { doc_id: docId, document_version: documentVersion }
     });
 
-    res.json({ id: docId, document: normalizeDocumentForResponse(document) });
+    res.json({ id: docId, document: normalizeDocumentForResponse(document), document_version: documentVersion });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -169,8 +181,11 @@ app.put("/api/documents/:id", async (req, res) => {
       return res.status(400).json({ error: "raw_text or notion_url is required" });
     }
 
+    const previousRawText = String(document.raw_text ?? "");
+    let rawTextChanged = false;
     if (hasRawText) {
       const nextRawText = String(rawTextInput);
+      rawTextChanged = nextRawText !== previousRawText;
       document.raw_text = nextRawText;
       syncDocumentSegmentationState(document, nextRawText);
     }
@@ -189,14 +204,19 @@ app.put("/api/documents/:id", async (req, res) => {
     }
 
     document.updated_at = new Date().toISOString();
-    await writeJson(path.join(dir, "document.json"), document);
+    let documentVersion = null;
+    if (rawTextChanged) {
+      documentVersion = await saveVersioned(docId, "document", document);
+    } else {
+      await writeJson(path.join(dir, "document.json"), document);
+    }
     await appendEvent(docId, {
       timestamp: document.updated_at,
       event: "document_updated",
-      payload: { doc_id: docId }
+      payload: { doc_id: docId, document_version: documentVersion }
     });
 
-    res.json({ document: normalizeDocumentForResponse(document) });
+    res.json({ document: normalizeDocumentForResponse(document), document_version: documentVersion });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -217,8 +237,11 @@ app.put("/api/documents/:id/session", async (req, res) => {
     const normalizedSegments = normalizeSegmentsInput(segments);
     const normalizedDecisions = normalizeDecisionsInput(decisions);
 
+    const previousRawText = String(document.raw_text ?? "");
+    let rawTextChanged = false;
     if (typeof req.body?.raw_text === "string") {
       const nextRawText = String(req.body.raw_text);
+      rawTextChanged = nextRawText !== previousRawText;
       document.raw_text = nextRawText;
       syncDocumentSegmentationState(document, nextRawText);
     }
@@ -237,7 +260,12 @@ app.put("/api/documents/:id/session", async (req, res) => {
     }
 
     document.updated_at = new Date().toISOString();
-    await writeJson(path.join(dir, "document.json"), document);
+    let documentVersion = null;
+    if (rawTextChanged) {
+      documentVersion = await saveVersioned(docId, "document", document);
+    } else {
+      await writeJson(path.join(dir, "document.json"), document);
+    }
 
     const segmentsVersion = await saveVersioned(docId, "segments", normalizedSegments);
     const decisionsVersion = await saveVersioned(docId, "decisions", normalizedDecisions);
@@ -248,6 +276,7 @@ app.put("/api/documents/:id/session", async (req, res) => {
       event: "session_saved",
       payload: {
         source,
+        document_version: documentVersion,
         segments_version: segmentsVersion,
         decisions_version: decisionsVersion
       }
@@ -258,6 +287,7 @@ app.put("/api/documents/:id/session", async (req, res) => {
       document: normalizeDocumentForResponse(document),
       segments: normalizedSegments,
       decisions: normalizedDecisions,
+      document_version: documentVersion,
       segments_version: segmentsVersion,
       decisions_version: decisionsVersion,
       revision: state.revision,

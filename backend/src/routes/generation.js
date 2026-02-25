@@ -36,17 +36,18 @@ export function registerGenerationRoutes(app, deps) {
 
       let text = document.raw_text;
       const incomingText = typeof req.body?.raw_text === "string" ? req.body.raw_text.trim() : "";
+      let documentVersion = null;
       if (incomingText) {
         text = incomingText;
         if (incomingText !== document.raw_text) {
           document.raw_text = incomingText;
           syncDocumentSegmentationState(document, incomingText);
           document.updated_at = new Date().toISOString();
-          await writeJson(path.join(dir, "document.json"), document);
+          documentVersion = await saveVersioned(docId, "document", document);
           await appendEvent(docId, {
             timestamp: new Date().toISOString(),
             event: "document_updated",
-            payload: { doc_id: docId }
+            payload: { doc_id: docId, document_version: documentVersion }
           });
         }
       }
@@ -91,6 +92,7 @@ export function registerGenerationRoutes(app, deps) {
         timestamp: new Date().toISOString(),
         event: "segments_generated",
         payload: {
+          document_version: documentVersion,
           segmentsVersion,
           decisionsVersion,
           media_topic_folders_ensured: ensuredMediaTopics.length,

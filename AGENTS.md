@@ -41,6 +41,7 @@ npm --prefix HeadlessNotion install
 
 Для каждого `doc_id`:
 - `data/<doc_id>/document.json`
+- `data/<doc_id>/document.vN.json` (снимки при изменении текста сценария)
 - `data/<doc_id>/segments.json`
 - `data/<doc_id>/decisions.json`
 - `data/<doc_id>/events.jsonl`

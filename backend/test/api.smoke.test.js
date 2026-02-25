@@ -105,12 +105,32 @@ test("notion progress endpoint returns 404 for unknown progress id", async () =>
 test("POST/GET document lifecycle works", async () => {
   const rawText = "   Smoke test script text   ";
   const created = await createDocument(rawText);
+  assert.equal(Number(created?.document_version), 1);
+
+  const v1Path = path.join(testDataDir, created.id, "document.v1.json");
+  const v1Stat = await fs.stat(v1Path);
+  assert.equal(v1Stat.isFile(), true);
 
   const getResponse = await fetch(`${baseUrl}/api/documents/${encodeURIComponent(created.id)}`);
   assert.equal(getResponse.status, 200);
   const loaded = await getResponse.json();
   assert.equal(loaded?.document?.id, created.id);
   assert.equal(loaded?.document?.raw_text, rawText.trim());
+
+  const updatedText = "Smoke test script text updated";
+  const updateResponse = await fetch(`${baseUrl}/api/documents/${encodeURIComponent(created.id)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ raw_text: updatedText })
+  });
+  assert.equal(updateResponse.status, 200);
+  const updated = await updateResponse.json();
+  assert.equal(updated?.document?.raw_text, updatedText);
+  assert.equal(Number(updated?.document_version), 2);
+
+  const v2Path = path.join(testDataDir, created.id, "document.v2.json");
+  const v2Stat = await fs.stat(v2Path);
+  assert.equal(v2Stat.isFile(), true);
 });
 
 test("session/segments/decisions endpoints keep state consistent", async () => {
