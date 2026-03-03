@@ -58,6 +58,7 @@ import { isNotionUrl, normalizeNotionUrl } from "./services/notion-url.js";
 import { createSegmentsSessionUtils } from "./services/segments-session.js";
 import { createRequestAuditLogger } from "./services/request-audit.js";
 import { createUiActionsAuditStore } from "./services/ui-actions-audit.js";
+import { createTelegramSdvgBotService } from "./services/telegram-sdvg-bot.js";
 
 const app = express();
 export const DEFAULT_PORT = Number(process.env.PORT ?? 8787);
@@ -316,19 +317,37 @@ registerExportRoutes(app, {
   buildXmlExportPayload,
   emptySearchDecision,
   emptyVisualDecision,
+  getDataDir,
   getDocDir,
   getMediaDir,
   normalizeLinksInput,
   normalizeSearchDecisionInput,
   normalizeSectionTitleForMatch,
   normalizeVisualDecisionInput,
-  readOptionalJson
+  readOptionalJson,
+  writeJson
 });
+
+const telegramSdvgBot = createTelegramSdvgBotService({
+  appendEvent,
+  ensureMediaDir,
+  getDocDir,
+  getMediaDir,
+  isHttpUrl,
+  isYtDlpCandidateUrl,
+  listDocuments,
+  mediaDownloader,
+  readOptionalJson,
+  sanitizeMediaTopicName,
+  saveVersioned
+});
+telegramSdvgBot.start();
 
 export function getServerRuntimeInfo() {
   return {
     mediaRoot: MEDIA_DOWNLOAD_ROOT,
-    tools: mediaDownloader.getToolsInfo()
+    tools: mediaDownloader.getToolsInfo(),
+    telegram: telegramSdvgBot.getRuntimeInfo()
   };
 }
 

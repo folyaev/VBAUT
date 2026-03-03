@@ -24,10 +24,14 @@ export function createXmlExportUtils(deps) {
     : 2;
   const XML_SECTION_GAP_SEC = Number.isFinite(Number(process.env.XML_SECTION_GAP_SEC))
     ? Math.max(0, Number(process.env.XML_SECTION_GAP_SEC))
-    : 0;
+    : 7;
   const XML_SEQUENCE_WIDTH = 1920;
   const XML_SEQUENCE_HEIGHT = 960;
   const XML_SECTION_MARKER_COLOR = "4294741314";
+  const XML_DONE_MARKER_COLOR = "4294967295";
+  const XML_REQUIRED_MARKER_COLOR = "4294901760";
+  const XML_RECOMMENDED_MARKER_COLOR = "4294967040";
+  const XML_OPTIONAL_MARKER_COLOR = "4278255360";
   const XML_DEFAULT_CENTER = {
     x: XML_SEQUENCE_WIDTH / 2,
     y: XML_SEQUENCE_HEIGHT / 2
@@ -44,6 +48,7 @@ export function createXmlExportUtils(deps) {
       [960, 960, 100, null, null],
       [3840, 1920, 50, XML_DEFAULT_CENTER.x, XML_DEFAULT_CENTER.y],
       [872, 480, 222, XML_DEFAULT_CENTER.x, XML_DEFAULT_CENTER.y],
+      [852, 480, 226, XML_DEFAULT_CENTER.x, XML_DEFAULT_CENTER.y],
       [854, 480, 225, XML_DEFAULT_CENTER.x, XML_DEFAULT_CENTER.y],
       [1024, 1024, 94, null, null],
       [1280, 720, 150, XML_DEFAULT_CENTER.x, XML_DEFAULT_CENTER.y],
@@ -221,7 +226,7 @@ async function probeXmlMediaInfo(filePath) {
     "-v",
     "error",
     "-show_entries",
-    "stream=codec_type,width,height",
+    "stream=codec_type,width,height,duration:format=duration",
     "-of",
     "json",
     absolute
@@ -239,6 +244,7 @@ async function probeXmlMediaInfo(filePath) {
       let hasAudio = false;
       let width = null;
       let height = null;
+      const streamDurations = [];
 
       for (const stream of streams) {
         const codecType = String(stream?.codec_type ?? "").toLowerCase();
@@ -252,14 +258,30 @@ async function probeXmlMediaInfo(filePath) {
               height = Math.round(h);
             }
           }
+          const streamDuration = Number(stream?.duration);
+          if (Number.isFinite(streamDuration) && streamDuration > 0) {
+            streamDurations.push(streamDuration);
+          }
         } else if (codecType === "audio") {
           hasAudio = true;
+          const streamDuration = Number(stream?.duration);
+          if (Number.isFinite(streamDuration) && streamDuration > 0) {
+            streamDurations.push(streamDuration);
+          }
         }
       }
+
+      const formatDuration = Number(payload?.format?.duration);
+      const durationSec = Number.isFinite(formatDuration) && formatDuration > 0
+        ? formatDuration
+        : streamDurations.length > 0
+          ? Math.max(...streamDurations)
+          : null;
 
       const result = {
         hasVideo,
         hasAudio,
+        durationSec: Number.isFinite(Number(durationSec)) && Number(durationSec) > 0 ? Number(durationSec) : null,
         sourceDimensions:
           Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
             ? { width, height }
@@ -288,6 +310,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       category: hintedCategory,
       hasAudio: hintedCategory === "audio",
       hasVideo: hintedCategory !== "audio",
+      durationSec: null,
       sourceDimensions: null
     };
   }
@@ -298,6 +321,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       category: "image",
       hasAudio: false,
       hasVideo: true,
+      durationSec: null,
       sourceDimensions: info?.sourceDimensions ?? null
     };
   }
@@ -308,6 +332,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       category: hintedCategory,
       hasAudio: hintedCategory === "audio",
       hasVideo: hintedCategory !== "audio",
+      durationSec: null,
       sourceDimensions: XML_DIMENSIONS_CACHE.get(absolute.toLowerCase()) ?? null
     };
   }
@@ -317,6 +342,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       category: hintedCategory === "image" ? "image" : "video",
       hasAudio: true,
       hasVideo: true,
+      durationSec: info.durationSec ?? null,
       sourceDimensions: info.sourceDimensions ?? null
     };
   }
@@ -325,6 +351,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       category: hintedCategory === "image" ? "image" : "video",
       hasAudio: false,
       hasVideo: true,
+      durationSec: info.durationSec ?? null,
       sourceDimensions: info.sourceDimensions ?? null
     };
   }
@@ -333,6 +360,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       category: "audio",
       hasAudio: true,
       hasVideo: false,
+      durationSec: info.durationSec ?? null,
       sourceDimensions: null
     };
   }
@@ -340,6 +368,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
     category: hintedCategory,
     hasAudio: hintedCategory === "audio",
     hasVideo: hintedCategory !== "audio",
+    durationSec: info.durationSec ?? null,
     sourceDimensions: info.sourceDimensions ?? null
   };
 }
@@ -421,6 +450,27 @@ function getXmlSectionMarkerKey(segment) {
   return "section:unknown";
 }
 
+function getXmlSegmentMarkerName(segment) {
+  const quote = String(segment?.text_quote ?? "").replace(/\s+/g, " ").trim();
+  if (quote) {
+    return quote.length > 96 ? `${quote.slice(0, 93)}...` : quote;
+  }
+  return getXmlSectionMarkerName(segment);
+}
+
+function resolveXmlSegmentMarkerColor({ segment, visual }) {
+  if (Boolean(segment?.is_done)) {
+    return XML_DONE_MARKER_COLOR;
+  }
+
+  const priority = String(visual?.priority ?? "").trim().toLowerCase();
+  if (!priority) return XML_SECTION_MARKER_COLOR;
+  if (/(обяз|нужн|required|high)/i.test(priority)) return XML_REQUIRED_MARKER_COLOR;
+  if (/(рекоменд|recommend|medium)/i.test(priority)) return XML_RECOMMENDED_MARKER_COLOR;
+  if (/(при\s*налич|если\s*есть|optional|low)/i.test(priority)) return XML_OPTIONAL_MARKER_COLOR;
+  return XML_SECTION_MARKER_COLOR;
+}
+
 function buildContentDisposition(fileName) {
   const raw = String(fileName ?? "").trim();
   const extRaw = path.extname(raw).toLowerCase();
@@ -431,6 +481,42 @@ function buildContentDisposition(fileName) {
   const fallbackBase = toSafeXmlFileNamePart(transliterateRuForFileName(utfBase), "export");
   const fallbackName = `${fallbackBase}${ext}`;
   return `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodeURIComponent(utfName)}`;
+}
+
+function resolveXmlPathWithMediaRootOverride({ mediaPath, absolutePath, mediaPathRootOverride }) {
+  const overrideRoot = String(mediaPathRootOverride ?? "").trim();
+  if (!overrideRoot) return absolutePath;
+  const normalizedMediaPath = String(mediaPath ?? "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+  if (!normalizedMediaPath) return absolutePath;
+
+  if (/^[a-zA-Z]:[\\/]/.test(overrideRoot) || /^\\\\/.test(overrideRoot)) {
+    return path.win32.join(overrideRoot, normalizedMediaPath.replace(/\//g, "\\"));
+  }
+  if (overrideRoot.startsWith("/")) {
+    const trimmedRoot = overrideRoot.replace(/\/+$/, "");
+    return `${trimmedRoot}/${normalizedMediaPath}`;
+  }
+  return path.join(overrideRoot, normalizedMediaPath);
+}
+
+function toXmlFileUrl(pathLike) {
+  const raw = String(pathLike ?? "").trim();
+  if (!raw) return "";
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)) return raw;
+  if (/^[a-zA-Z]:[\\/]/.test(raw) || /^\\\\/.test(raw)) {
+    return pathToFileURL(path.win32.normalize(raw)).href;
+  }
+  if (raw.startsWith("/")) {
+    const normalized = raw.replace(/\\/g, "/");
+    const encodedPath = normalized
+      .split("/")
+      .map((part, index) => (index === 0 ? "" : encodeURIComponent(part)))
+      .join("/");
+    return `file://${encodedPath}`;
+  }
+  return pathToFileURL(path.resolve(raw)).href;
 }
 
 function formatXmlNumber(value) {
@@ -571,7 +657,9 @@ function renderXmlLinkBlock({ targetClipId, mediaType, trackIndex, clipIndex, gr
 function renderXmlFileElement({ clip, fps, includeVideo, includeAudio }) {
   const sourceWidth = Number(clip?.sourceDimensions?.width);
   const sourceHeight = Number(clip?.sourceDimensions?.height);
+  const sourceTotalFrames = Number(clip?.sourceTotalFrames);
   const fileDurationFrames = Math.max(
+    Number.isFinite(sourceTotalFrames) && sourceTotalFrames > 0 ? sourceTotalFrames : 0,
     Number(clip?.durationFrames) || 0,
     Number(clip?.sourceOutFrame) || 0,
     1
@@ -719,7 +807,7 @@ function renderXmlAudioClipItem({ clip, fps, videoPeer }) {
   lines.push(
     "            <sourcetrack>",
     "              <mediatype>audio</mediatype>",
-    `              <trackindex>${clip.audioTrackIndex ?? 1}</trackindex>`,
+    "              <trackindex>1</trackindex>",
     "            </sourcetrack>",
     ...renderXmlLinkBlock({
       targetClipId: clip.clipId,
@@ -743,21 +831,30 @@ function renderXmlAudioClipItem({ clip, fps, videoPeer }) {
   return lines;
 }
 
-function renderXmlSequenceMarker({ name, inFrame, outFrame }) {
+function renderXmlSequenceMarker({ name, inFrame, outFrame, color }) {
   const markerIn = Math.max(0, Math.round(Number(inFrame) || 0));
   const markerOut = Math.max(markerIn, Math.round(Number(outFrame) || markerIn));
+  const markerColor = String(color ?? XML_SECTION_MARKER_COLOR).trim() || XML_SECTION_MARKER_COLOR;
   return [
     "    <marker>",
     "      <comment></comment>",
     `      <name>${escapeXml(name || "Тема")}</name>`,
     `      <in>${markerIn}</in>`,
     `      <out>${markerOut}</out>`,
-    `      <pproColor>${XML_SECTION_MARKER_COLOR}</pproColor>`,
+    `      <pproColor>${markerColor}</pproColor>`,
     "    </marker>"
   ];
 }
 
-function buildXmemlTimeline({ sequenceName, fps, totalFrames, videoClips, audioClips, sectionMarkers = [] }) {
+function buildXmemlTimeline({
+  sequenceName,
+  fps,
+  totalFrames,
+  videoClips,
+  audioClips,
+  sectionMarkers = [],
+  audioTrackCount = 1
+}) {
   const audioByEntryId = new Map(audioClips.map((clip) => [clip.entry.entryId, clip]));
   const videoByEntryId = new Map(videoClips.map((clip) => [clip.entry.entryId, clip]));
   const videoTracks = new Map();
@@ -852,23 +949,49 @@ function buildXmemlTimeline({ sequenceName, fps, totalFrames, videoClips, audioC
     "              <index>2</index>",
     "            </channel>",
     "          </group>",
-    "        </outputs>",
-    "        <track>",
-    "          <enabled>TRUE</enabled>",
-    "          <locked>FALSE</locked>",
-    "          <outputchannelindex>1</outputchannelindex>"
+    "        </outputs>"
   );
 
+  const audioTracks = new Map();
   audioClips.forEach((clip) => {
-    lines.push(...renderXmlAudioClipItem({
-      clip,
-      fps,
-      videoPeer: videoByEntryId.get(clip.entry.entryId) ?? null
-    }));
+    const trackIndex = Number.isFinite(Number(clip?.audioTrackIndex))
+      ? Math.max(1, Math.round(Number(clip.audioTrackIndex)))
+      : 1;
+    if (!audioTracks.has(trackIndex)) {
+      audioTracks.set(trackIndex, []);
+    }
+    audioTracks.get(trackIndex).push(clip);
+  });
+  const maxClipAudioTrackIndex = audioTracks.size > 0 ? Math.max(...audioTracks.keys()) : 1;
+  const forcedAudioTrackCount = Number.isFinite(Number(audioTrackCount))
+    ? Math.max(1, Math.round(Number(audioTrackCount)))
+    : 1;
+  const totalAudioTracks = Math.max(forcedAudioTrackCount, maxClipAudioTrackIndex);
+  const orderedAudioTrackIndexes = Array.from({ length: totalAudioTracks }, (_, index) => index + 1);
+
+  orderedAudioTrackIndexes.forEach((trackIndex) => {
+    lines.push(
+      "        <track>",
+      "          <enabled>TRUE</enabled>",
+      "          <locked>FALSE</locked>",
+      "          <outputchannelindex>1</outputchannelindex>"
+    );
+    const clipsForTrack = (audioTracks.get(trackIndex) ?? []).slice().sort((left, right) => {
+      const startDiff = (Number(left?.startFrame) || 0) - (Number(right?.startFrame) || 0);
+      if (startDiff !== 0) return startDiff;
+      return (Number(left?.clipIndexInTrack) || 0) - (Number(right?.clipIndexInTrack) || 0);
+    });
+    clipsForTrack.forEach((clip) => {
+      lines.push(...renderXmlAudioClipItem({
+        clip,
+        fps,
+        videoPeer: videoByEntryId.get(clip.entry.entryId) ?? null
+      }));
+    });
+    lines.push("        </track>");
   });
 
   lines.push(
-    "        </track>",
     "      </audio>",
     "    </media>",
   );
@@ -900,6 +1023,7 @@ async function buildXmlExportPayload({
   segments,
   decisionsBySegment,
   mediaDir,
+  mediaPathRootOverride,
   fps,
   defaultDurationSec,
   sectionId,
@@ -922,6 +1046,7 @@ async function buildXmlExportPayload({
   const mediaEntries = [];
   let frameCursor = 0;
   let activeSectionKey = null;
+  let maxAudioFilesPerSegment = 1;
 
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
@@ -930,12 +1055,19 @@ async function buildXmlExportPayload({
     const sectionKey = getXmlSectionMarkerKey(segment);
     if (sectionKey !== activeSectionKey) {
       if (activeSectionKey && sectionGapFrames > 0) {
+        sectionMarkers.push({
+          name: getXmlSectionMarkerName(segment),
+          inFrame: frameCursor,
+          outFrame: frameCursor + sectionGapFrames,
+          color: XML_SECTION_MARKER_COLOR
+        });
         frameCursor += sectionGapFrames;
       }
       sectionMarkers.push({
         name: getXmlSectionMarkerName(segment),
         inFrame: frameCursor,
-        outFrame: frameCursor + markerDurationFrames
+        outFrame: frameCursor + markerDurationFrames,
+        color: XML_SECTION_MARKER_COLOR
       });
       activeSectionKey = sectionKey;
     }
@@ -973,30 +1105,61 @@ async function buildXmlExportPayload({
     }
 
     if (!resolvedMediaFiles.length) {
-      const gapDurationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, "video");
-      const gapFrames = secondsToFrames(gapDurationSec, fpsValue);
-      frameCursor += gapFrames;
+      const segmentStartFrame = frameCursor;
+      const segmentDurationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, "video");
+      const segmentDurationFrames = secondsToFrames(segmentDurationSec, fpsValue);
+      const segmentEndFrame = segmentStartFrame + segmentDurationFrames;
+      sectionMarkers.push({
+        name: getXmlSegmentMarkerName(segment),
+        inFrame: segmentStartFrame,
+        outFrame: segmentEndFrame,
+        color: resolveXmlSegmentMarkerColor({ segment, visual })
+      });
+      frameCursor = segmentEndFrame;
       continue;
     }
+    let segmentAudioTrackCursor = 0;
+    let segmentAudioFilesCount = 0;
 
     const primaryCategory = detectXmlMediaCategory(resolvedMediaFiles[0].absolutePath);
-    const durationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, primaryCategory);
-    const durationFrames = secondsToFrames(durationSec, fpsValue);
+    const desiredDurationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, primaryCategory);
+    const desiredDurationFrames = secondsToFrames(desiredDurationSec, fpsValue);
     const segmentStartFrame = frameCursor;
-    const segmentEndFrame = segmentStartFrame + durationFrames;
-    frameCursor = segmentEndFrame;
+    const segmentEndFrame = segmentStartFrame + desiredDurationFrames;
+    const segmentMarkerName = getXmlSegmentMarkerName(segment);
+    const segmentMarkerColor = resolveXmlSegmentMarkerColor({ segment, visual });
+    const segmentEntries = [];
+    let segmentVideoTrackCursor = 0;
 
     for (let mediaOffset = 0; mediaOffset < resolvedMediaFiles.length; mediaOffset += 1) {
       const { mediaPath, absolutePath } = resolvedMediaFiles[mediaOffset];
       const hintedCategory = detectXmlMediaCategory(absolutePath);
       const mediaInfo = await getXmlMediaInfo(absolutePath, hintedCategory);
+      const segmentVideoTrackIndex = mediaInfo.hasVideo ? segmentVideoTrackCursor + 1 : null;
+      if (mediaInfo.hasVideo) {
+        segmentVideoTrackCursor = segmentVideoTrackIndex;
+      }
+      const segmentAudioTrackIndex = mediaInfo.hasAudio ? segmentAudioTrackCursor + 1 : null;
+      if (mediaInfo.hasAudio) {
+        segmentAudioTrackCursor = segmentAudioTrackIndex;
+        segmentAudioFilesCount += 1;
+      }
       const category = mediaInfo.category;
       const sourceStartRaw = visualMediaTimecodes[mediaPath] ?? visual.media_start_timecode;
       const sourceStartSec = category === "video"
         ? parseXmlStartTimecodeToSeconds(sourceStartRaw, fpsValue)
         : 0;
       const sourceInFrame = secondsToFramesAllowZero(sourceStartSec, fpsValue);
-      const sourceOutFrame = sourceInFrame + durationFrames;
+      const sourceTotalFrames = Number.isFinite(Number(mediaInfo.durationSec)) && Number(mediaInfo.durationSec) > 0
+        ? secondsToFramesAllowZero(mediaInfo.durationSec, fpsValue)
+        : null;
+      const availableFrames = Number.isFinite(sourceTotalFrames)
+        ? Math.max(0, sourceTotalFrames - sourceInFrame)
+        : null;
+      const entryDurationFrames = Number.isFinite(availableFrames)
+        ? Math.max(1, Math.min(desiredDurationFrames, availableFrames))
+        : desiredDurationFrames;
+      const sourceOutFrame = sourceInFrame + entryDurationFrames;
       const sourceDimensions = mediaInfo.sourceDimensions;
       const motionScale = resolveXmlMotionScale(sourceDimensions);
       const motionCenterPx = resolveXmlMotionCenterPx({
@@ -1005,32 +1168,50 @@ async function buildXmlExportPayload({
         scale: motionScale
       });
       const motionCenter = encodeXmlMotionCenter(motionCenterPx);
-      const mediaIndex = mediaEntries.length + 1;
-
-      mediaEntries.push({
+      const mediaIndex = mediaEntries.length + segmentEntries.length + 1;
+      const mediaXmlPath = resolveXmlPathWithMediaRootOverride({
+        mediaPath,
+        absolutePath,
+        mediaPathRootOverride
+      });
+      segmentEntries.push({
         entryId: `entry-${mediaIndex}`,
         segmentId: segmentId || `segment_${index + 1}`,
         segmentQuote: String(segment?.text_quote ?? ""),
         fileId: `file-${mediaIndex}`,
         masterClipId: `masterclip-${mediaIndex}`,
         fileName: path.basename(absolutePath),
-        pathUrl: pathToFileURL(absolutePath).href,
-        durationFrames,
+        pathUrl: toXmlFileUrl(mediaXmlPath),
+        durationFrames: entryDurationFrames,
+        sourceTotalFrames: Number.isFinite(Number(sourceTotalFrames)) && Number(sourceTotalFrames) > 0
+          ? sourceTotalFrames
+          : null,
         sourceInFrame,
         sourceOutFrame,
         startFrame: segmentStartFrame,
-        endFrame: segmentEndFrame,
+        endFrame: segmentStartFrame + entryDurationFrames,
         category,
         hasAudio: Boolean(mediaInfo.hasAudio),
         hasVideo: Boolean(mediaInfo.hasVideo),
         sourceDimensions,
-        videoTrackIndex: mediaOffset + 1,
+        videoTrackIndex: segmentVideoTrackIndex,
+        audioTrackHint: segmentAudioTrackIndex,
         motion: {
           scale: motionScale,
           center: motionCenter
         }
       });
     }
+    maxAudioFilesPerSegment = Math.max(maxAudioFilesPerSegment, segmentAudioFilesCount || 1);
+    sectionMarkers.push({
+      name: segmentMarkerName,
+      inFrame: segmentStartFrame,
+      outFrame: segmentEndFrame,
+      color: segmentMarkerColor
+    });
+
+    frameCursor = segmentEndFrame;
+    mediaEntries.push(...segmentEntries);
   }
 
   if (!mediaEntries.length) {
@@ -1046,7 +1227,7 @@ async function buildXmlExportPayload({
   let videoClipIndex = 1;
   let audioClipIndex = 1;
   const videoTrackClipCounters = new Map();
-  const audioTrackIndex = 1;
+  const audioTrackClipCounters = new Map();
   mediaEntries.forEach((entry) => {
     if (entry.hasVideo) {
       const trackIndex = Number.isFinite(Number(entry.videoTrackIndex))
@@ -1068,6 +1249,11 @@ async function buildXmlExportPayload({
     }
 
     if (entry.hasAudio) {
+      const trackIndex = Number.isFinite(Number(entry.audioTrackHint))
+        ? Math.max(1, Math.round(Number(entry.audioTrackHint)))
+        : 1;
+      const trackClipIndex = (audioTrackClipCounters.get(trackIndex) ?? 0) + 1;
+      audioTrackClipCounters.set(trackIndex, trackClipIndex);
       audioClips.push({
         ...entry,
         entry,
@@ -1075,8 +1261,8 @@ async function buildXmlExportPayload({
         endFrame: entry.endFrame,
         clipId: `aclipitem-${audioClipIndex}`,
         clipIndex: audioClipIndex,
-        clipIndexInTrack: audioClipIndex,
-        audioTrackIndex
+        clipIndexInTrack: trackClipIndex,
+        audioTrackIndex: trackIndex
       });
       audioClipIndex += 1;
     }
@@ -1088,7 +1274,8 @@ async function buildXmlExportPayload({
     totalFrames: frameCursor,
     videoClips,
     audioClips,
-    sectionMarkers
+    sectionMarkers,
+    audioTrackCount: maxAudioFilesPerSegment
   });
 
   return {

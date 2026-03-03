@@ -3451,6 +3451,67 @@ export default function App() {
       setLoading(false);
     }
   };
+  const handleConfigureXmlMediaRoot = () => {
+    const run = async () => {
+      const storageKey = "vbaut.xmlMediaRoot";
+      let recentRoots = [];
+      let savedRoot = String(window.localStorage.getItem(storageKey) ?? "").trim();
+      try {
+        const response = await fetch("/api/settings/xml-export");
+        if (response.ok) {
+          const data = await response.json().catch(() => ({}));
+          const serverRoot = String(data?.xml_media_root ?? "").trim();
+          const serverRecent = Array.isArray(data?.xml_media_roots_recent)
+            ? data.xml_media_roots_recent.map((item) => String(item ?? "").trim()).filter(Boolean).slice(0, 3)
+            : [];
+          recentRoots = serverRecent;
+          if (!savedRoot && serverRoot) {
+            savedRoot = serverRoot;
+          }
+        }
+      } catch {
+        // ignore and keep local fallback
+      }
+
+      const hintLines = recentRoots.length
+        ? [
+            "",
+            "Недавние пути:",
+            ...recentRoots.map((item, index) => `${index + 1}) ${item}`),
+            "Введи путь или 1/2/3. Пусто = сброс."
+          ]
+        : ["", "Введи путь. Пусто = сброс."];
+      const inputRoot = window.prompt(
+        `Папка медиа для XML (сохранится для следующих экспортов).${hintLines.join("\n")}`,
+        savedRoot
+      );
+      if (inputRoot === null) return;
+      const rawInput = String(inputRoot ?? "").trim();
+      const numericChoice = Number(rawInput);
+      const xmlMediaRoot =
+        /^[1-3]$/.test(rawInput) && Number.isFinite(numericChoice) && recentRoots[numericChoice - 1]
+          ? recentRoots[numericChoice - 1]
+          : rawInput;
+      window.localStorage.setItem(storageKey, xmlMediaRoot);
+
+      const response = await fetch("/api/settings/xml-export", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ xml_media_root: xmlMediaRoot })
+      }).catch(() => null);
+      if (response && !response.ok) {
+        const rawText = await response.text().catch(() => "");
+        throw new Error(rawText || "Не удалось сохранить путь XML на сервере");
+      }
+
+      if (xmlMediaRoot) {
+        setStatus(`Путь XML медиа сохранен: ${xmlMediaRoot}`);
+      } else {
+        setStatus("Путь XML медиа очищен.");
+      }
+    };
+    void run().catch((error) => setStatus(error.message));
+  };
   const handleExport = async (format, options = {}) => {
     if (!docId) {
       setStatus("Сначала создайте или загрузите документ.");
@@ -3463,6 +3524,23 @@ export default function App() {
       if (options?.scope) params.set("scope", String(options.scope));
       if (options?.section_id) params.set("section_id", String(options.section_id));
       if (options?.section_title) params.set("section_title", String(options.section_title));
+      if (String(format ?? "").toLowerCase() === "xml") {
+        const storageKey = "vbaut.xmlMediaRoot";
+        let xmlMediaRoot = String(window.localStorage.getItem(storageKey) ?? "").trim();
+        if (!xmlMediaRoot) {
+          const settingsResponse = await fetch("/api/settings/xml-export").catch(() => null);
+          if (settingsResponse?.ok) {
+            const settingsData = await settingsResponse.json().catch(() => ({}));
+            xmlMediaRoot = String(settingsData?.xml_media_root ?? "").trim();
+            if (xmlMediaRoot) {
+              window.localStorage.setItem(storageKey, xmlMediaRoot);
+            }
+          }
+        }
+        if (xmlMediaRoot) {
+          params.set("xml_media_root", xmlMediaRoot);
+        }
+      }
       const response = await fetch(`/api/documents/${docId}/export?${params.toString()}`);
       if (!response.ok) {
         const rawText = await response.text().catch(() => "");
@@ -4252,6 +4330,9 @@ export default function App() {
             </button>
             <button className="btn ghost" type="button" onClick={() => handleExport("xml")}>
               {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 XML"}
+            </button>
+            <button className="btn ghost" type="button" onClick={handleConfigureXmlMediaRoot}>
+              XML путь
             </button>
           </div>
         </div>

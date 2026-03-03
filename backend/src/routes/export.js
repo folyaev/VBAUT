@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 
 export function registerExportRoutes(app, deps) {
@@ -8,14 +9,99 @@ export function registerExportRoutes(app, deps) {
     buildXmlExportPayload,
     emptySearchDecision,
     emptyVisualDecision,
+    getDataDir,
     getDocDir,
     getMediaDir,
     normalizeLinksInput,
     normalizeSearchDecisionInput,
     normalizeSectionTitleForMatch,
     normalizeVisualDecisionInput,
-    readOptionalJson
+    readOptionalJson,
+    writeJson
   } = deps;
+  const xmlSettingsPath = typeof getDataDir === "function"
+    ? path.join(getDataDir(), "_settings", "xml-export.json")
+    : null;
+  const MAX_XML_MEDIA_ROOT_RECENT = 3;
+
+  const normalizeXmlMediaRootValue = (value) => {
+    if (typeof value !== "string") return "";
+    return value.trim().slice(0, 1024);
+  };
+
+  const normalizeXmlMediaRootRecent = (values, preferred) => {
+    const unique = [];
+    const push = (value) => {
+      const normalized = normalizeXmlMediaRootValue(value);
+      if (!normalized) return;
+      if (unique.includes(normalized)) return;
+      unique.push(normalized);
+    };
+    push(preferred);
+    if (Array.isArray(values)) {
+      values.forEach((value) => push(value));
+    }
+    return unique.slice(0, MAX_XML_MEDIA_ROOT_RECENT);
+  };
+
+  const readXmlMediaRootSettings = async () => {
+    const envDefault = normalizeXmlMediaRootValue(String(process.env.XML_EXPORT_MEDIA_ROOT ?? ""));
+    if (!xmlSettingsPath) {
+      return {
+        xml_media_root: envDefault,
+        xml_media_roots_recent: envDefault ? [envDefault] : []
+      };
+    }
+    const payload = await readOptionalJson(xmlSettingsPath).catch(() => null);
+    const storedCurrent = normalizeXmlMediaRootValue(String(payload?.xml_media_root ?? ""));
+    const storedRecent = normalizeXmlMediaRootRecent(payload?.xml_media_roots_recent ?? [], storedCurrent);
+    const current = storedCurrent || storedRecent[0] || envDefault;
+    return {
+      xml_media_root: current,
+      xml_media_roots_recent: normalizeXmlMediaRootRecent([current, ...storedRecent, envDefault], current)
+    };
+  };
+
+  app.get("/api/settings/xml-export", async (_req, res) => {
+    try {
+      const settings = await readXmlMediaRootSettings();
+      return res.json({
+        ok: true,
+        xml_media_root: settings.xml_media_root || "",
+        xml_media_roots_recent: settings.xml_media_roots_recent ?? []
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/settings/xml-export", async (req, res) => {
+    try {
+      if (!xmlSettingsPath || typeof writeJson !== "function") {
+        return res.status(503).json({ error: "XML settings storage unavailable" });
+      }
+      const xmlMediaRoot = normalizeXmlMediaRootValue(String(req.body?.xml_media_root ?? ""));
+      const previous = await readXmlMediaRootSettings();
+      const recent = xmlMediaRoot
+        ? normalizeXmlMediaRootRecent([xmlMediaRoot, ...(previous.xml_media_roots_recent ?? [])], xmlMediaRoot)
+        : normalizeXmlMediaRootRecent(previous.xml_media_roots_recent ?? [], "");
+      const payload = {
+        xml_media_root: xmlMediaRoot,
+        xml_media_roots_recent: recent,
+        updated_at: new Date().toISOString()
+      };
+      const settingsDir = path.dirname(xmlSettingsPath);
+      await fs.mkdir(settingsDir, { recursive: true });
+      await writeJson(xmlSettingsPath, payload);
+      return res.json({
+        ok: true,
+        xml_media_root: xmlMediaRoot,
+        xml_media_roots_recent: recent
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
 
   app.get("/api/documents/:id/export", async (req, res) => {
     try {
@@ -46,6 +132,8 @@ export function registerExportRoutes(app, deps) {
       if (format === "xml") {
         const sectionId = String(req.query?.section_id ?? "").trim();
         const sectionTitle = String(req.query?.section_title ?? "").trim();
+        const xmlMediaRootQuery = String(req.query?.xml_media_root ?? "").trim();
+        const xmlMediaRoot = xmlMediaRootQuery || (await readXmlMediaRootSettings()).xml_media_root;
         const scope = String(req.query?.scope ?? "").trim().toLowerCase();
         const wantSection = scope === "section" || Boolean(sectionId) || Boolean(sectionTitle);
         const sourceSegments = segments.filter((segment) => segment?.block_type !== "links");
@@ -69,6 +157,7 @@ export function registerExportRoutes(app, deps) {
           segments: targetSegments,
           decisionsBySegment: decisionMap,
           mediaDir: getMediaDir(),
+          mediaPathRootOverride: xmlMediaRoot || null,
           fps: XML_EXPORT_FPS,
           defaultDurationSec: XML_EXPORT_DEFAULT_DURATION_SEC,
           sectionId: wantSection ? sectionId : "",

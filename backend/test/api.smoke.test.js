@@ -6,6 +6,7 @@ import path from "node:path";
 
 const testDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "vbaut-backend-test-"));
 process.env.DATA_DIR = testDataDir;
+process.env.TELEGRAM_SDVG_ENABLED = "0";
 
 const { app } = await import("../src/index.js");
 

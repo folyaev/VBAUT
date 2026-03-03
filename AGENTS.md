@@ -17,6 +17,7 @@
 
 - `frontend/` — React + Vite (`http://localhost:5173`)
 - `backend/` — Express API (`http://localhost:8787`)
+- `backend/src/services/telegram-sdvg-bot.js` — Telegram long-polling бот для `/sdvg` (опционально)
 - `HeadlessNotion/` — парсер Notion (опционально)
 - `data/` — документы и версии
 - `MediaDownloaderQt6-5.4.2/` — локальные бинарники `yt-dlp`/`ffmpeg` (если используются)
@@ -158,3 +159,19 @@ npm --prefix backend test
 ## 10) Актуальный путь XML
 
 Прод-путь — Node.js backend экспорт `XML (xmeml)` без Python-зависимостей.
+
+## 11) Telegram SDVG-бот
+
+Назначение:
+- команда `/sdvg` выдаёт один незавершенный сегмент (`is_done = false`);
+- поддержан порядок выдачи: по очереди и случайный (`/sdvg random` или кнопка режима);
+- пока не нажата кнопка `Следующий сегмент`, входящие текст/медиа в чате привязываются к текущему сегменту;
+- текст уходит в `visual_decision.description` (в этом режиме это же поле считается комментарием);
+- ссылка запускает существующий `MediaDownloader` (`yt-dlp`) с прогрессом;
+- медиа-файлы из Telegram скачиваются в папку темы и пишутся в `visual_decision.media_file_paths`.
+
+Переменные окружения:
+- `TELEGRAM_BOT_TOKEN` — токен бота;
+- `TELEGRAM_SDVG_ENABLED` — включение бота (`1/0`);
+- `TELEGRAM_SDVG_DOC_ID` — фиксированный документ для `/sdvg` (опционально);
+- `TELEGRAM_SDVG_POLL_TIMEOUT_SEC` — timeout long polling.

@@ -12,6 +12,7 @@
   - RU: `VK`, `VK Video`, `Copy and Perplexity`
   - EN: Reuters / AFP / NY Post / WTHR13 / Independent (YouTube channel search)
 - Ручная загрузка медиа (через `yt-dlp`, до 1080p) в папки тем.
+- Telegram SDVG-бот (`/sdvg`) для выдачи незавершенных сегментов и привязки описаний/медиа из чата.
 - Выбор одного или нескольких медиафайлов на сегмент.
 - Проверка версии и ручное обновление `yt-dlp` из UI.
 - Очередь загрузок, ограничение частоты, проверка дублей, прогресс (0/20/40/60/80/100), журнал событий.
@@ -134,6 +135,10 @@ restart-dev.cmd
 - `XML_EXPORT_DEFAULT_DURATION_SEC` (default: `5`)
 - `XML_SECTION_MARKER_DURATION_SEC` (default: `2`)
 - `XML_SECTION_GAP_SEC` (default: `0`)
+- `TELEGRAM_SDVG_ENABLED` (default: `0`)
+- `TELEGRAM_BOT_TOKEN` (токен Telegram-бота от BotFather)
+- `TELEGRAM_SDVG_DOC_ID` (опционально: фиксированный `doc_id` для `/sdvg`)
+- `TELEGRAM_SDVG_POLL_TIMEOUT_SEC` (default: `25`)
 
 ### Media Downloader
 
@@ -206,6 +211,26 @@ npm run dev
   - `Версия yt-dlp` (проверка текущей версии),
   - `Обновить yt-dlp` (запуск `yt-dlp -U`).
 - Обновление блокируется, если есть активные задания скачивания.
+
+## Telegram SDVG-бот
+
+- Команда `/sdvg` отправляет карточку следующего незавершенного сегмента (`is_done = false`).
+- Текст карточки содержит только цитату сегмента.
+- Кнопки в карточке показывают дополнительные поля (комментарий/описание визуала, формат, приоритет, тема).
+- Кнопка `Следующий сегмент` отправляет новый сегмент отдельным сообщением.
+- Опция случайного порядка: `/sdvg random` или кнопка `Режим: ...` в карточке.
+- Пока не нажата `Следующий сегмент`, входящие текст/медиа относятся к текущему активному сегменту.
+- Обычный текст из чата добавляется в `visual_decision.description` (в этом режиме это же поле считается комментарием).
+- Ссылка в сообщении запускает текущий `yt-dlp` пайплайн backend и показывает прогресс в Telegram.
+- Фото/видео/аудио/документы из Telegram скачиваются в папку темы и прикрепляются к `visual_decision.media_file_paths`.
+
+Пример включения (PowerShell):
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN="7686518888:AAGf1HwSavQS7lsMvzbXq-1Ti7vZ-aNes5U"
+$env:TELEGRAM_SDVG_ENABLED="1"
+npm run dev
+```
 
 ## Cookies для ограниченных источников
 
