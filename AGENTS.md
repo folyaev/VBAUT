@@ -52,7 +52,7 @@ npm --prefix HeadlessNotion install
 Ключевые поля:
 - в `segments.json`: `segment_id`, `block_type`, `text_quote`, `section_id`, `section_title`, `is_done`
 - в `decisions.json`: `visual_decision`, `search_decision`, `search_decision_en`
-- для XML-кейса: `visual_decision.media_file_path`
+- для XML-кейса: `visual_decision.media_file_path`, `visual_decision.media_file_paths`, `visual_decision.media_file_timecodes`
 
 Флаги audit:
 - `API_AUDIT_LOG_ENABLED` (default `1`)
@@ -70,14 +70,15 @@ npm --prefix HeadlessNotion install
 
 Как собирается XML:
 - формат: `xmeml` (FCP XML);
-- берутся не-`links` сегменты с валидным `media_file_path`;
+- берутся не-`links` сегменты с валидным `media_file_path`/`media_file_paths`;
 - путь проверяется через safe resolve внутри media root;
 - длительность: `duration_hint_sec`, иначе `XML_EXPORT_DEFAULT_DURATION_SEC`;
 - FPS: `XML_EXPORT_FPS`;
 - размер секвенции: `1920x960`;
 - для видео+аудио используется общий `file id` (важно для корректного relink в Premiere);
 - встроены базовые motion templates размеров (`1920x960`, `960x960` и др.).
-- для видео-сегментов поддержан `media_start_timecode` (UI: `Таймкод`, формат `HH:MM:SS`).
+- для видео-сегментов поддержан `media_start_timecode` (legacy) и `media_file_timecodes` (таймкод на каждый файл).
+- если у сегмента несколько файлов, в XML они кладутся параллельно (V1/V2/...) с общей длительностью сегмента.
 - `out` вручную не задается: рассчитывается автоматически как `in + duration_hint_sec`.
 
 Переменные окружения:
@@ -92,7 +93,7 @@ npm --prefix HeadlessNotion install
 - любые квадратные источники центрируются как `960x960` (позиция `480x480` в sequence-space).
 
 Поведение по no_visual:
-- если у сегмента нет привязанного `media_file_path`, в XML добавляется пауза по длительности сегмента (gap), чтобы тайминг не схлопывался.
+- если у сегмента нет привязанного `media_file_path`/`media_file_paths`, в XML добавляется пауза по длительности сегмента (gap), чтобы тайминг не схлопывался.
 
 Разделение тем в общем XML:
 - проставляются sequence markers на старте каждой темы (section), чтобы было удобно прыгать между темами в монтажке.

@@ -83,24 +83,41 @@ export function createMediaDownloadStateUtils(deps) {
       if (!document) return;
 
       const downloaded = normalizeDocumentMediaDownloads(document.media_downloads);
+      const normalizedUrl = normalizeLinkUrl(rawUrl) || canonicalUrl;
+      const normalizedSectionTitle = typeof job.section_title === "string" ? job.section_title : null;
+      const normalizedOutputFiles = Array.isArray(job.output_files)
+        ? job.output_files
+            .map((item) => String(item ?? "").trim())
+            .filter(Boolean)
+            .slice(0, 50)
+        : [];
+      const existing = downloaded[canonicalUrl];
+      const sameOutputFiles =
+        Array.isArray(existing?.output_files) &&
+        existing.output_files.length === normalizedOutputFiles.length &&
+        existing.output_files.every((item, index) => item === normalizedOutputFiles[index]);
+      const sameRecordedState =
+        existing &&
+        existing.status === "completed" &&
+        String(existing.url ?? canonicalUrl) === normalizedUrl &&
+        (existing.section_title ?? null) === normalizedSectionTitle &&
+        sameOutputFiles;
+      if (sameRecordedState) return;
+
+      const now = new Date().toISOString();
       downloaded[canonicalUrl] = {
-        url: normalizeLinkUrl(rawUrl) || canonicalUrl,
+        url: normalizedUrl,
         status: "completed",
-        section_title: typeof job.section_title === "string" ? job.section_title : null,
-        output_files: Array.isArray(job.output_files)
-          ? job.output_files
-              .map((item) => String(item ?? "").trim())
-              .filter(Boolean)
-              .slice(0, 50)
-          : [],
-        updated_at: new Date().toISOString()
+        section_title: normalizedSectionTitle,
+        output_files: normalizedOutputFiles,
+        updated_at: now
       };
 
       document.media_downloads = downloaded;
-      document.updated_at = new Date().toISOString();
+      document.updated_at = now;
       await writeJson(documentPath, document);
       await appendEvent(docId, {
-        timestamp: document.updated_at,
+        timestamp: now,
         event: "media_download_recorded",
         payload: {
           url: canonicalUrl,

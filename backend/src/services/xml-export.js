@@ -174,8 +174,11 @@ function detectXmlMediaCategory(filePath) {
 
 function normalizeXmlDurationSeconds(rawValue, fallbackValue, category) {
   const parsed = Number(rawValue);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
   const fallback = Number.isFinite(Number(fallbackValue)) ? Math.max(0.2, Number(fallbackValue)) : 5;
-  let duration = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  let duration = fallback;
   if (category === "image") {
     duration = Math.max(5, duration);
   }
@@ -663,16 +666,16 @@ function renderXmlVideoClipItem({ clip, fps, audioPeer }) {
   lines.push(...renderXmlLinkBlock({
     targetClipId: clip.clipId,
     mediaType: "video",
-    trackIndex: 1,
-    clipIndex: clip.clipIndex
+    trackIndex: clip.videoTrackIndex ?? 1,
+    clipIndex: clip.clipIndexInTrack ?? clip.clipIndex
   }));
 
   if (audioPeer) {
     lines.push(...renderXmlLinkBlock({
       targetClipId: audioPeer.clipId,
       mediaType: "audio",
-      trackIndex: 1,
-      clipIndex: audioPeer.clipIndex,
+      trackIndex: audioPeer.audioTrackIndex ?? 1,
+      clipIndex: audioPeer.clipIndexInTrack ?? audioPeer.clipIndex,
       groupIndex: 1
     }));
   }
@@ -716,13 +719,13 @@ function renderXmlAudioClipItem({ clip, fps, videoPeer }) {
   lines.push(
     "            <sourcetrack>",
     "              <mediatype>audio</mediatype>",
-    "              <trackindex>1</trackindex>",
+    `              <trackindex>${clip.audioTrackIndex ?? 1}</trackindex>`,
     "            </sourcetrack>",
     ...renderXmlLinkBlock({
       targetClipId: clip.clipId,
       mediaType: "audio",
-      trackIndex: 1,
-      clipIndex: clip.clipIndex
+      trackIndex: clip.audioTrackIndex ?? 1,
+      clipIndex: clip.clipIndexInTrack ?? clip.clipIndex
     })
   );
 
@@ -730,8 +733,8 @@ function renderXmlAudioClipItem({ clip, fps, videoPeer }) {
     lines.push(...renderXmlLinkBlock({
       targetClipId: videoPeer.clipId,
       mediaType: "video",
-      trackIndex: 1,
-      clipIndex: videoPeer.clipIndex,
+      trackIndex: videoPeer.videoTrackIndex ?? 1,
+      clipIndex: videoPeer.clipIndexInTrack ?? videoPeer.clipIndex,
       groupIndex: 1
     }));
   }
@@ -757,6 +760,20 @@ function renderXmlSequenceMarker({ name, inFrame, outFrame }) {
 function buildXmemlTimeline({ sequenceName, fps, totalFrames, videoClips, audioClips, sectionMarkers = [] }) {
   const audioByEntryId = new Map(audioClips.map((clip) => [clip.entry.entryId, clip]));
   const videoByEntryId = new Map(videoClips.map((clip) => [clip.entry.entryId, clip]));
+  const videoTracks = new Map();
+  videoClips.forEach((clip) => {
+    const trackIndex = Number.isFinite(Number(clip?.videoTrackIndex))
+      ? Math.max(1, Math.round(Number(clip.videoTrackIndex)))
+      : 1;
+    if (!videoTracks.has(trackIndex)) {
+      videoTracks.set(trackIndex, []);
+    }
+    videoTracks.get(trackIndex).push(clip);
+  });
+  const orderedVideoTrackIndexes = [...videoTracks.keys()].sort((a, b) => a - b);
+  if (!orderedVideoTrackIndexes.length) {
+    orderedVideoTrackIndexes.push(1);
+  }
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     "<!DOCTYPE xmeml>",
@@ -784,22 +801,31 @@ function buildXmemlTimeline({ sequenceName, fps, totalFrames, videoClips, audioC
     "            <fielddominance>none</fielddominance>",
     "            <colordepth>24</colordepth>",
     "          </samplecharacteristics>",
-    "        </format>",
-    "        <track>",
-    "          <enabled>TRUE</enabled>",
-    "          <locked>FALSE</locked>"
+    "        </format>"
   ];
 
-  videoClips.forEach((clip) => {
-    lines.push(...renderXmlVideoClipItem({
-      clip,
-      fps,
-      audioPeer: audioByEntryId.get(clip.entry.entryId) ?? null
-    }));
+  orderedVideoTrackIndexes.forEach((trackIndex) => {
+    lines.push(
+      "        <track>",
+      "          <enabled>TRUE</enabled>",
+      "          <locked>FALSE</locked>"
+    );
+    const clipsForTrack = (videoTracks.get(trackIndex) ?? []).slice().sort((left, right) => {
+      const startDiff = (Number(left?.startFrame) || 0) - (Number(right?.startFrame) || 0);
+      if (startDiff !== 0) return startDiff;
+      return (Number(left?.clipIndexInTrack) || 0) - (Number(right?.clipIndexInTrack) || 0);
+    });
+    clipsForTrack.forEach((clip) => {
+      lines.push(...renderXmlVideoClipItem({
+        clip,
+        fps,
+        audioPeer: audioByEntryId.get(clip.entry.entryId) ?? null
+      }));
+    });
+    lines.push("        </track>");
   });
 
   lines.push(
-    "        </track>",
     "      </video>",
     "      <audio>",
     "        <numOutputChannels>2</numOutputChannels>",
@@ -916,70 +942,95 @@ async function buildXmlExportPayload({
 
     const decision = segmentId ? decisionsBySegment.get(segmentId) ?? {} : {};
     const visual = normalizeVisualDecisionInput(decision.visual ?? decision.visual_decision ?? null);
-    const mediaPath = normalizeMediaFilePath(visual.media_file_path ?? null);
-    let absolutePath = "";
-    if (mediaPath) {
-      absolutePath = safeResolveMediaPath(mediaRoot, mediaPath);
-      if (absolutePath) {
-        const stats = await fs.stat(absolutePath).catch(() => null);
-        if (!stats || !stats.isFile()) {
-          absolutePath = "";
-        }
-      }
+    const visualMediaTimecodes =
+      visual?.media_file_timecodes && typeof visual.media_file_timecodes === "object"
+        ? visual.media_file_timecodes
+        : {};
+    const mediaPathCandidates = [];
+    if (Array.isArray(visual.media_file_paths)) {
+      mediaPathCandidates.push(...visual.media_file_paths);
+    } else if (visual.media_file_paths != null) {
+      mediaPathCandidates.push(visual.media_file_paths);
+    }
+    mediaPathCandidates.push(visual.media_file_path ?? null);
+
+    const uniqueMediaPaths = [];
+    const seenMediaPaths = new Set();
+    mediaPathCandidates.forEach((candidate) => {
+      const normalizedPath = normalizeMediaFilePath(candidate);
+      if (!normalizedPath || seenMediaPaths.has(normalizedPath)) return;
+      seenMediaPaths.add(normalizedPath);
+      uniqueMediaPaths.push(normalizedPath);
+    });
+
+    const resolvedMediaFiles = [];
+    for (const mediaPath of uniqueMediaPaths) {
+      const absolutePath = safeResolveMediaPath(mediaRoot, mediaPath);
+      if (!absolutePath) continue;
+      const stats = await fs.stat(absolutePath).catch(() => null);
+      if (!stats || !stats.isFile()) continue;
+      resolvedMediaFiles.push({ mediaPath, absolutePath });
     }
 
-    if (!absolutePath) {
+    if (!resolvedMediaFiles.length) {
       const gapDurationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, "video");
       const gapFrames = secondsToFrames(gapDurationSec, fpsValue);
       frameCursor += gapFrames;
       continue;
     }
 
-    const hintedCategory = detectXmlMediaCategory(absolutePath);
-    const mediaInfo = await getXmlMediaInfo(absolutePath, hintedCategory);
-    const category = mediaInfo.category;
-    const durationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, category);
+    const primaryCategory = detectXmlMediaCategory(resolvedMediaFiles[0].absolutePath);
+    const durationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, primaryCategory);
     const durationFrames = secondsToFrames(durationSec, fpsValue);
-    const sourceStartSec = category === "video"
-      ? parseXmlStartTimecodeToSeconds(visual.media_start_timecode, fpsValue)
-      : 0;
-    const sourceInFrame = secondsToFramesAllowZero(sourceStartSec, fpsValue);
-    const sourceOutFrame = sourceInFrame + durationFrames;
-    const sourceDimensions = mediaInfo.sourceDimensions;
-    const motionScale = resolveXmlMotionScale(sourceDimensions);
-    const motionCenterPx = resolveXmlMotionCenterPx({
-      category,
-      sourceDimensions,
-      scale: motionScale
-    });
-    const motionCenter = encodeXmlMotionCenter(motionCenterPx);
-    const mediaIndex = mediaEntries.length + 1;
-    const startFrame = frameCursor;
-    const endFrame = startFrame + durationFrames;
-    frameCursor = endFrame;
+    const segmentStartFrame = frameCursor;
+    const segmentEndFrame = segmentStartFrame + durationFrames;
+    frameCursor = segmentEndFrame;
 
-    mediaEntries.push({
-      entryId: `entry-${mediaIndex}`,
-      segmentId: segmentId || `segment_${index + 1}`,
-      segmentQuote: String(segment?.text_quote ?? ""),
-      fileId: `file-${mediaIndex}`,
-      masterClipId: `masterclip-${mediaIndex}`,
-      fileName: path.basename(absolutePath),
-      pathUrl: pathToFileURL(absolutePath).href,
-      durationFrames,
-      sourceInFrame,
-      sourceOutFrame,
-      startFrame,
-      endFrame,
-      category,
-      hasAudio: Boolean(mediaInfo.hasAudio),
-      hasVideo: Boolean(mediaInfo.hasVideo),
-      sourceDimensions,
-      motion: {
-        scale: motionScale,
-        center: motionCenter
-      }
-    });
+    for (let mediaOffset = 0; mediaOffset < resolvedMediaFiles.length; mediaOffset += 1) {
+      const { mediaPath, absolutePath } = resolvedMediaFiles[mediaOffset];
+      const hintedCategory = detectXmlMediaCategory(absolutePath);
+      const mediaInfo = await getXmlMediaInfo(absolutePath, hintedCategory);
+      const category = mediaInfo.category;
+      const sourceStartRaw = visualMediaTimecodes[mediaPath] ?? visual.media_start_timecode;
+      const sourceStartSec = category === "video"
+        ? parseXmlStartTimecodeToSeconds(sourceStartRaw, fpsValue)
+        : 0;
+      const sourceInFrame = secondsToFramesAllowZero(sourceStartSec, fpsValue);
+      const sourceOutFrame = sourceInFrame + durationFrames;
+      const sourceDimensions = mediaInfo.sourceDimensions;
+      const motionScale = resolveXmlMotionScale(sourceDimensions);
+      const motionCenterPx = resolveXmlMotionCenterPx({
+        category,
+        sourceDimensions,
+        scale: motionScale
+      });
+      const motionCenter = encodeXmlMotionCenter(motionCenterPx);
+      const mediaIndex = mediaEntries.length + 1;
+
+      mediaEntries.push({
+        entryId: `entry-${mediaIndex}`,
+        segmentId: segmentId || `segment_${index + 1}`,
+        segmentQuote: String(segment?.text_quote ?? ""),
+        fileId: `file-${mediaIndex}`,
+        masterClipId: `masterclip-${mediaIndex}`,
+        fileName: path.basename(absolutePath),
+        pathUrl: pathToFileURL(absolutePath).href,
+        durationFrames,
+        sourceInFrame,
+        sourceOutFrame,
+        startFrame: segmentStartFrame,
+        endFrame: segmentEndFrame,
+        category,
+        hasAudio: Boolean(mediaInfo.hasAudio),
+        hasVideo: Boolean(mediaInfo.hasVideo),
+        sourceDimensions,
+        videoTrackIndex: mediaOffset + 1,
+        motion: {
+          scale: motionScale,
+          center: motionCenter
+        }
+      });
+    }
   }
 
   if (!mediaEntries.length) {
@@ -994,15 +1045,24 @@ async function buildXmlExportPayload({
   const audioClips = [];
   let videoClipIndex = 1;
   let audioClipIndex = 1;
+  const videoTrackClipCounters = new Map();
+  const audioTrackIndex = 1;
   mediaEntries.forEach((entry) => {
     if (entry.hasVideo) {
+      const trackIndex = Number.isFinite(Number(entry.videoTrackIndex))
+        ? Math.max(1, Math.round(Number(entry.videoTrackIndex)))
+        : 1;
+      const trackClipIndex = (videoTrackClipCounters.get(trackIndex) ?? 0) + 1;
+      videoTrackClipCounters.set(trackIndex, trackClipIndex);
       videoClips.push({
         ...entry,
         entry,
         startFrame: entry.startFrame,
         endFrame: entry.endFrame,
         clipId: `vclipitem-${videoClipIndex}`,
-        clipIndex: videoClipIndex
+        clipIndex: videoClipIndex,
+        clipIndexInTrack: trackClipIndex,
+        videoTrackIndex: trackIndex
       });
       videoClipIndex += 1;
     }
@@ -1014,7 +1074,9 @@ async function buildXmlExportPayload({
         startFrame: entry.startFrame,
         endFrame: entry.endFrame,
         clipId: `aclipitem-${audioClipIndex}`,
-        clipIndex: audioClipIndex
+        clipIndex: audioClipIndex,
+        clipIndexInTrack: audioClipIndex,
+        audioTrackIndex
       });
       audioClipIndex += 1;
     }

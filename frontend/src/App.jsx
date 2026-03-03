@@ -126,6 +126,8 @@ const emptyVisualDecision = () => ({
   duration_hint_sec: null,
   priority: null,
   media_file_path: null,
+  media_file_paths: [],
+  media_file_timecodes: {},
   media_start_timecode: null
 });
 const emptySearchDecision = () => ({
@@ -151,8 +153,25 @@ const normalizeVisualDecision = (decision, config) => {
   const durationRaw = decision.duration_hint_sec ?? decision.duration_hint ?? null;
   const duration_hint_sec = typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : null;
   const priority = normalizePriority(decision.priority, config);
-  const media_file_path = normalizeMediaFilePath(decision.media_file_path ?? decision.media_path ?? null);
-  const media_start_timecode = normalizeMediaStartTimecode(decision.media_start_timecode ?? decision.media_start ?? null);
+  const mediaPathCandidates = [];
+  if (Array.isArray(decision.media_file_paths)) {
+    mediaPathCandidates.push(...decision.media_file_paths);
+  } else if (decision.media_file_paths != null) {
+    mediaPathCandidates.push(decision.media_file_paths);
+  }
+  mediaPathCandidates.push(decision.media_file_path ?? decision.media_path ?? null);
+  const media_file_paths = normalizeMediaFilePathList(mediaPathCandidates);
+  const media_file_path = media_file_paths[0] ?? null;
+  const media_file_timecodes = normalizeMediaFileTimecodes(
+    decision.media_file_timecodes ?? decision.media_start_timecodes ?? null,
+    media_file_paths
+  );
+  const legacyTimecode = normalizeMediaStartTimecode(decision.media_start_timecode ?? decision.media_start ?? null);
+  const firstVideoPath = media_file_paths.find((mediaPath) => isVideoMediaPath(mediaPath)) ?? null;
+  if (firstVideoPath && legacyTimecode && !media_file_timecodes[firstVideoPath]) {
+    media_file_timecodes[firstVideoPath] = legacyTimecode;
+  }
+  const media_start_timecode = firstVideoPath ? media_file_timecodes[firstVideoPath] ?? legacyTimecode ?? null : null;
   return {
     type,
     description,
@@ -160,6 +179,8 @@ const normalizeVisualDecision = (decision, config) => {
     duration_hint_sec,
     priority,
     media_file_path,
+    media_file_paths,
+    media_file_timecodes,
     media_start_timecode
   };
 };
@@ -254,11 +275,38 @@ const normalizeMediaFilePath = (value) => {
   if (!normalized) return null;
   return normalized.length > 512 ? normalized.slice(0, 512) : normalized;
 };
+const normalizeMediaFilePathList = (value) => {
+  const items = Array.isArray(value) ? value : value == null ? [] : [value];
+  const result = [];
+  const seen = new Set();
+  items.forEach((item) => {
+    const normalized = normalizeMediaFilePath(item);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(normalized);
+  });
+  return result.slice(0, 32);
+};
 const normalizeMediaStartTimecode = (value) => {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   if (!normalized) return null;
   return normalized.length > 32 ? normalized.slice(0, 32) : normalized;
+};
+const normalizeMediaFileTimecodes = (value, mediaPaths = []) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const allowed = new Set(
+    normalizeMediaFilePathList(mediaPaths).filter((mediaPath) => isVideoMediaPath(mediaPath))
+  );
+  const result = {};
+  Object.entries(value).forEach(([rawPath, rawTimecode]) => {
+    const normalizedPath = normalizeMediaFilePath(rawPath);
+    if (!normalizedPath || !allowed.has(normalizedPath)) return;
+    const normalizedTimecode = normalizeMediaStartTimecode(rawTimecode);
+    if (!normalizedTimecode) return;
+    result[normalizedPath] = normalizedTimecode;
+  });
+  return result;
 };
 
 const parseTimecodeToFrames = (value, fps = TIMECODE_EDIT_FPS) => {
@@ -675,6 +723,10 @@ const computeDurationHint = (text) => {
 };
 const LEADING_NUMBERED_LINE_RE = /^\s*\d{1,3}[.)]\s*\S/;
 const COMMENT_NUMBER_PREFIX_RE = /^\s*\d{1,3}[.)]\s*/;
+const COMMENT_COMMAND_RE = /^\s*\/(?:фрагмент|нарезка|нейро-видео)\b/i;
+const COMMENT_DATE_ONLY_RE = /^\s*(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\s*$/;
+const COMMENT_INLINE_NUMBER_TEST_RE = /(?:^|[\s\n])\d{1,3}[.)]\s*/;
+const COMMENT_TRAILING_NUMBER_RE = /\b\d{1,3}[.)]\s*$/;
 const normalizeCommentLineForCompare = (value) =>
   normalizeLineBreaks(value)
     .replace(COMMENT_NUMBER_PREFIX_RE, "")
@@ -765,7 +817,24 @@ const getVisualDefaultsByType = (type, config = defaultConfig) => {
 const splitLeadingCommentList = (text) => {
   const lines = normalizeLineBreaks(text).split("\n");
   const commentLines = [];
+  let numberedCount = 0;
   let index = 0;
+  let allowUpperContinuation = false;
+  const isContinuationLine = (value) => {
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed) return false;
+    if (LEADING_NUMBERED_LINE_RE.test(trimmed)) return false;
+    if (COMMENT_COMMAND_RE.test(trimmed)) return false;
+    if (COMMENT_DATE_ONLY_RE.test(trimmed)) return false;
+    if (/^#{1,}\s+/.test(trimmed)) return false;
+    if (/^\s*[-–—]\s+/.test(trimmed)) return false;
+    if (allowUpperContinuation) return true;
+    // Most continuation lines in comments start with lowercase words.
+    if (/^[a-zа-яё]/u.test(trimmed)) return true;
+    // Also keep very short tail lines like "(продолжение)" or "и т.д."
+    if (trimmed.length <= 24) return true;
+    return false;
+  };
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) {
@@ -781,15 +850,47 @@ const splitLeadingCommentList = (text) => {
       }
       break;
     }
-    if (!LEADING_NUMBERED_LINE_RE.test(line)) break;
-    commentLines.push(line);
-    index += 1;
+    if (LEADING_NUMBERED_LINE_RE.test(line)) {
+      const numberedContent = String(line).replace(COMMENT_NUMBER_PREFIX_RE, "").trim();
+      if (COMMENT_DATE_ONLY_RE.test(numberedContent)) {
+        // Notion comments may inject author date (e.g. 08/07/2025) before the actual comment text.
+        numberedCount += 1;
+        allowUpperContinuation = true;
+        index += 1;
+        continue;
+      }
+      commentLines.push(line);
+      numberedCount += 1;
+      allowUpperContinuation = false;
+      index += 1;
+      continue;
+    }
+    if (numberedCount > 0 && isContinuationLine(line)) {
+      const trimmed = String(line).trim();
+      if (!COMMENT_DATE_ONLY_RE.test(trimmed)) {
+        commentLines.push(line);
+      }
+      allowUpperContinuation = false;
+      index += 1;
+      continue;
+    }
+    allowUpperContinuation = false;
+    break;
   }
   if (commentLines.length < 1) return null;
   const commentsText = commentLines.join("\n").trim();
   const mainText = lines.slice(index).join("\n").trimStart();
   if (!commentsText) return null;
   return { commentsText, mainText };
+};
+const sanitizeSearchQueryText = (value, engineId = "") => {
+  let normalized = normalizeLineBreaks(value).replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  // Dzen often receives malformed queries with long '+' runs from copied text.
+  if (String(engineId) === "dzen_news") {
+    normalized = normalized.replace(/\+{2,}/g, " ").replace(/\s+/g, " ").trim();
+  }
+  return normalized;
 };
 const buildCommentsSegmentId = (sourceId, usedIds) => {
   const rawBase = String(sourceId ?? "news")
@@ -806,19 +907,100 @@ const buildCommentsSegmentId = (sourceId, usedIds) => {
   usedIds.add(candidate);
   return candidate;
 };
+const extractInlineNumberedCommentItems = (text) => {
+  const normalized = normalizeLineBreaks(text);
+  const markerRe = /(^|[\s\n])(\d{1,3})[.)]\s*/g;
+  const markers = [];
+  let match = markerRe.exec(normalized);
+  while (match) {
+    const markerStart = match.index + String(match[1] ?? "").length;
+    markers.push({
+      markerStart,
+      contentStart: markerRe.lastIndex
+    });
+    match = markerRe.exec(normalized);
+  }
+  if (markers.length === 0) return [];
+  const items = [];
+  for (let idx = 0; idx < markers.length; idx += 1) {
+    const start = markers[idx].contentStart;
+    const end = idx + 1 < markers.length ? markers[idx + 1].markerStart : normalized.length;
+    const content = normalized
+      .slice(start, end)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!content || COMMENT_DATE_ONLY_RE.test(content)) continue;
+    items.push(content);
+  }
+  return items;
+};
 const splitOutLeadingCommentSegments = (segments = []) => {
   if (!segments.length) return segments;
   const usedIds = new Set(segments.map((segment) => String(segment.segment_id ?? "")));
   const result = [];
-  segments.forEach((segment) => {
+  let index = 0;
+  while (index < segments.length) {
+    const segment = segments[index];
     if (normalizeSegmentBlockType(segment.block_type) === "links") {
       result.push(segment);
-      return;
+      index += 1;
+      continue;
     }
+    if (isCommentsSegment(segment)) {
+      result.push(segment);
+      index += 1;
+      continue;
+    }
+    const sectionKey = getSectionKeyFromMeta(segment);
+    const leadWindow = [segment];
+    let cursor = index + 1;
+    while (cursor < segments.length && leadWindow.length < 4) {
+      const next = segments[cursor];
+      if (normalizeSegmentBlockType(next.block_type) === "links" || isCommentsSegment(next)) break;
+      if (getSectionKeyFromMeta(next) !== sectionKey) break;
+      const windowText = leadWindow.map((item) => String(item.text_quote ?? "")).join("\n");
+      const hasNumberInWindow = COMMENT_INLINE_NUMBER_TEST_RE.test(windowText);
+      const lastText = String(leadWindow[leadWindow.length - 1].text_quote ?? "").trim();
+      const nextText = String(next.text_quote ?? "").trim();
+      const shouldAttach = COMMENT_INLINE_NUMBER_TEST_RE.test(nextText) || COMMENT_TRAILING_NUMBER_RE.test(lastText);
+      if (!hasNumberInWindow || !shouldAttach) break;
+      leadWindow.push(next);
+      cursor += 1;
+    }
+    if (leadWindow.length >= 2) {
+      const combinedLeadText = leadWindow.map((item) => String(item.text_quote ?? "")).join("\n");
+      const extractedItems = extractInlineNumberedCommentItems(combinedLeadText);
+      const combinedNorm = normalizeCommentLineForCompare(combinedLeadText);
+      const extractedNorm = normalizeCommentLineForCompare(extractedItems.join(" "));
+      const averageLen =
+        leadWindow.reduce((sum, item) => sum + String(item.text_quote ?? "").trim().length, 0) / leadWindow.length;
+      const coverage = combinedNorm ? extractedNorm.length / combinedNorm.length : 0;
+      const looksLikeCommentLead = extractedItems.length >= 2 && averageLen <= 160 && coverage >= 0.52;
+      if (looksLikeCommentLead) {
+        const commentsText = extractedItems.map((item, idx) => `${idx + 1}. ${item}`).join("\n");
+        result.push({
+          ...segment,
+          segment_id: buildCommentsSegmentId(segment.segment_id, usedIds),
+          text_quote: commentsText,
+          segment_status: "new",
+          is_done: false,
+          visual_decision: {
+            ...emptyVisualDecision(),
+            duration_hint_sec: computeDurationHint(commentsText)
+          },
+          search_decision: emptySearchDecision(),
+          search_open: false
+        });
+        index = cursor;
+        continue;
+      }
+    }
+
     const split = splitLeadingCommentList(segment.text_quote ?? "");
     if (!split) {
       result.push(segment);
-      return;
+      index += 1;
+      continue;
     }
 
     const currentVisual = normalizeVisualDecision(segment.visual_decision, defaultConfig);
@@ -850,7 +1032,8 @@ const splitOutLeadingCommentSegments = (segments = []) => {
         }
       });
     }
-  });
+    index += 1;
+  }
   return result;
 };
 const normalizeLineBreaks = (text) => String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -1547,6 +1730,8 @@ const hasVisualDecisionContent = (decision) => {
   if (decision.format_hint) return true;
   if (decision.priority) return true;
   if (decision.duration_hint_sec !== null && decision.duration_hint_sec !== undefined) return true;
+  if (normalizeMediaFilePath(decision.media_file_path ?? null)) return true;
+  if (normalizeMediaFilePathList(decision.media_file_paths).length > 0) return true;
   return decision.type && decision.type !== "no_visual";
 };
 const hasSearchDecisionContent = (decision) => {
@@ -1836,6 +2021,83 @@ const LinksCard = React.memo(function LinksCard({
     </article>
   );
 });
+const MediaTimecodeRow = React.memo(function MediaTimecodeRow({ mediaPath, value, onChange }) {
+  const [timecodeDraft, setTimecodeDraft] = React.useState(() =>
+    splitTimecodeToParts(value, TIMECODE_EDIT_FPS)
+  );
+  const [focusedTimecodePart, setFocusedTimecodePart] = React.useState(null);
+  const timecodeInputRefs = React.useRef([]);
+
+  React.useEffect(() => {
+    setTimecodeDraft(splitTimecodeToParts(value, TIMECODE_EDIT_FPS));
+  }, [mediaPath, value]);
+
+  const updateTimecodePart = React.useCallback((partName, rawValue, partIndex) => {
+    const digits = String(rawValue ?? "").replace(/\D/g, "").slice(0, 2);
+    const nextParts = { ...timecodeDraft, [partName]: digits };
+    setTimecodeDraft(nextParts);
+    onChange(partsToTimecode(nextParts, TIMECODE_EDIT_FPS));
+    if (digits.length >= 2 && partIndex < 2) {
+      window.setTimeout(() => {
+        const nextInput = timecodeInputRefs.current[partIndex + 1];
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.select();
+        }
+      }, 0);
+    }
+  }, [onChange, timecodeDraft]);
+
+  const handleTimecodePartFocus = React.useCallback((event) => {
+    event.currentTarget.select();
+  }, []);
+
+  const handleTimecodePartBlur = React.useCallback(() => {
+    setFocusedTimecodePart(null);
+  }, []);
+
+  const getTimecodeDisplayValue = React.useCallback((partName, partIndex) => {
+    const raw = String(timecodeDraft?.[partName] ?? "");
+    if (focusedTimecodePart === partIndex) return raw;
+    if (!raw) return "00";
+    return raw.padStart(2, "0").slice(-2);
+  }, [focusedTimecodePart, timecodeDraft]);
+
+  const mediaName = String(mediaPath ?? "").split("/").pop() || mediaPath;
+
+  return (
+    <div className="segment-media-timecode-row">
+      <span className="segment-media-timecode-name" title={mediaPath}>
+        {mediaName}
+      </span>
+      <div className="timecode-split-input" role="group" aria-label={`timecode-${mediaName}`}>
+        {["hh", "mm", "ss"].map((partName, partIndex) => (
+          <React.Fragment key={`${mediaPath}-${partName}`}>
+            <input
+              ref={(node) => {
+                timecodeInputRefs.current[partIndex] = node;
+              }}
+              className="timecode-part-input"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={2}
+              value={getTimecodeDisplayValue(partName, partIndex)}
+              onFocus={(event) => {
+                setFocusedTimecodePart(partIndex);
+                handleTimecodePartFocus(event);
+              }}
+              onBlur={handleTimecodePartBlur}
+              onChange={(event) => updateTimecodePart(partName, event.target.value, partIndex)}
+              aria-label={`${mediaName}-${partName.toUpperCase()}`}
+            />
+            {partIndex < 2 ? <span className="timecode-separator">:</span> : null}
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+});
 const SegmentCard = React.memo(function SegmentCard({
   segment,
   index,
@@ -1862,18 +2124,16 @@ const SegmentCard = React.memo(function SegmentCard({
     (query) => String(query ?? "").trim().length > 0
   );
   const [mediaFilter, setMediaFilter] = React.useState("");
-  const selectedMediaPath = normalizeMediaFilePath(segment.visual_decision?.media_file_path ?? "");
-  const mediaFileUrl = buildMediaFileUrl(docId, selectedMediaPath);
-  const showMediaStartTimecode = isVideoMediaPath(selectedMediaPath);
-  const mediaStartTimecodeValue = segment.visual_decision.media_start_timecode ?? "";
-  const [timecodeDraft, setTimecodeDraft] = React.useState(() =>
-    splitTimecodeToParts(mediaStartTimecodeValue, TIMECODE_EDIT_FPS)
+  const selectedMediaPaths = normalizeMediaFilePathList(
+    segment.visual_decision?.media_file_paths ?? segment.visual_decision?.media_file_path ?? null
   );
-  const [focusedTimecodePart, setFocusedTimecodePart] = React.useState(null);
-  const timecodeInputRefs = React.useRef([]);
-  React.useEffect(() => {
-    setTimecodeDraft(splitTimecodeToParts(mediaStartTimecodeValue, TIMECODE_EDIT_FPS));
-  }, [mediaStartTimecodeValue, index]);
+  const primarySelectedMediaPath = selectedMediaPaths[0] ?? null;
+  const mediaFileUrl = buildMediaFileUrl(docId, primarySelectedMediaPath);
+  const selectedVideoPaths = selectedMediaPaths.filter((mediaPath) => isVideoMediaPath(mediaPath));
+  const mediaFileTimecodes = normalizeMediaFileTimecodes(
+    segment.visual_decision?.media_file_timecodes ?? null,
+    selectedMediaPaths
+  );
   const mediaFileList = Array.isArray(mediaFiles) ? mediaFiles : [];
   const mediaTopicFolder = sanitizeMediaTopicName(segment.section_title ?? "");
   const topicMediaFiles = mediaFileList.filter((file) => getMediaFileTopicFolder(file.path) === mediaTopicFolder);
@@ -1889,6 +2149,28 @@ const SegmentCard = React.memo(function SegmentCard({
   const mediaVisibleLimit = 10;
   const visibleMediaFileOptions = filteredMediaFileOptions.slice(0, mediaVisibleLimit);
   const hasMoreMediaFiles = filteredMediaFileOptions.length > mediaVisibleLimit;
+  const selectedMediaCount = selectedMediaPaths.length;
+  const toggleMediaFileSelection = React.useCallback((mediaPath) => {
+    const normalizedPath = normalizeMediaFilePath(mediaPath);
+    if (!normalizedPath) return;
+    const alreadySelected = selectedMediaPaths.includes(normalizedPath);
+    const nextMediaPaths = alreadySelected
+      ? selectedMediaPaths.filter((item) => item !== normalizedPath)
+      : [...selectedMediaPaths, normalizedPath];
+    onVisualUpdate(index, { media_file_paths: nextMediaPaths });
+  }, [index, onVisualUpdate, selectedMediaPaths]);
+  const updateMediaFileTimecode = React.useCallback((mediaPath, rawValue) => {
+    const normalizedPath = normalizeMediaFilePath(mediaPath);
+    if (!normalizedPath || !isVideoMediaPath(normalizedPath)) return;
+    const normalizedTimecode = normalizeMediaStartTimecode(rawValue);
+    const nextTimecodes = { ...mediaFileTimecodes };
+    if (!normalizedTimecode) {
+      delete nextTimecodes[normalizedPath];
+    } else {
+      nextTimecodes[normalizedPath] = normalizedTimecode;
+    }
+    onVisualUpdate(index, { media_file_timecodes: nextTimecodes });
+  }, [index, mediaFileTimecodes, onVisualUpdate]);
   const isDone = Boolean(segment.is_done);
   const isCommentOnlySegment = isCommentsSegment(segment);
   const donePreview = isCommentOnlySegment
@@ -1898,34 +2180,6 @@ const SegmentCard = React.memo(function SegmentCard({
         return value.length > 220 ? `${value.slice(0, 220).trimEnd()}...` : value;
       })()
     : getQuotePreview(segment.text_quote, 78);
-  const updateTimecodePart = React.useCallback((partName, rawValue, partIndex) => {
-    const digits = String(rawValue ?? "").replace(/\D/g, "").slice(0, 2);
-    const partValue = digits;
-    const nextParts = { ...timecodeDraft, [partName]: partValue };
-    setTimecodeDraft(nextParts);
-    onVisualUpdate(index, { media_start_timecode: partsToTimecode(nextParts, TIMECODE_EDIT_FPS) });
-    if (digits.length >= 2 && partIndex < 2) {
-      window.setTimeout(() => {
-        const nextInput = timecodeInputRefs.current[partIndex + 1];
-        if (nextInput) {
-          nextInput.focus();
-          nextInput.select();
-        }
-      }, 0);
-    }
-  }, [index, onVisualUpdate, timecodeDraft]);
-  const handleTimecodePartFocus = React.useCallback((event) => {
-    event.currentTarget.select();
-  }, []);
-  const handleTimecodePartBlur = React.useCallback(() => {
-    setFocusedTimecodePart(null);
-  }, []);
-  const getTimecodeDisplayValue = React.useCallback((partName, partIndex) => {
-    const raw = String(timecodeDraft?.[partName] ?? "");
-    if (focusedTimecodePart === partIndex) return raw;
-    if (!raw) return "00";
-    return raw.padStart(2, "0").slice(-2);
-  }, [focusedTimecodePart, timecodeDraft]);
   const statusBadge =
     segment.segment_status === "new"
       ? { text: "NEW", className: "badge badge-new" }
@@ -2073,7 +2327,7 @@ const SegmentCard = React.memo(function SegmentCard({
           onChange={(event) => onVisualUpdate(index, { description: event.target.value })}
         />
         <div className="segment-media-picker">
-          <label>{"\u0424\u0430\u0439\u043b"}</label>
+          <label>{"\u0424\u0430\u0439\u043b\u044b"}</label>
           <div className="segment-media-picker-row">
             {hasTopicFiles ? (
               <input
@@ -2084,11 +2338,11 @@ const SegmentCard = React.memo(function SegmentCard({
                 placeholder={"\u041f\u043e\u0438\u0441\u043a \u0444\u0430\u0439\u043b\u0430..."}
               />
             ) : null}
-            {selectedMediaPath ? (
+            {selectedMediaCount > 0 ? (
               <button
                 className="btn ghost small"
                 type="button"
-                onClick={() => onVisualUpdate(index, { media_file_path: null })}
+                onClick={() => onVisualUpdate(index, { media_file_paths: [] })}
               >
                 {"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c"}
               </button>
@@ -2104,8 +2358,8 @@ const SegmentCard = React.memo(function SegmentCard({
               <div className="segment-media-options" role="listbox" aria-label="media-files">
                 <button
                   type="button"
-                  className={`segment-media-option${!selectedMediaPath ? " is-selected" : ""}`}
-                  onClick={() => onVisualUpdate(index, { media_file_path: null })}
+                  className={`segment-media-option${selectedMediaCount === 0 ? " is-selected" : ""}`}
+                  onClick={() => onVisualUpdate(index, { media_file_paths: [] })}
                 >
                   {"\u2014 \u0411\u0435\u0437 \u0444\u0430\u0439\u043b\u0430"}
                 </button>
@@ -2113,8 +2367,8 @@ const SegmentCard = React.memo(function SegmentCard({
                   <button
                     type="button"
                     key={file.path}
-                    className={`segment-media-option${selectedMediaPath === file.path ? " is-selected" : ""}`}
-                    onClick={() => onVisualUpdate(index, { media_file_path: file.path })}
+                    className={`segment-media-option${selectedMediaPaths.includes(normalizeMediaFilePath(file.path) ?? "") ? " is-selected" : ""}`}
+                    onClick={() => toggleMediaFileSelection(file.path)}
                     title={file.path}
                   >
                     <span className="segment-media-option-name">{file.name}</span>
@@ -2137,33 +2391,20 @@ const SegmentCard = React.memo(function SegmentCard({
               {`\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e ${mediaVisibleLimit} \u0438\u0437 ${filteredMediaFileOptions.length}. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u043f\u043e\u0438\u0441\u043a.`}
             </div>
           ) : null}
-          {selectedMediaPath ? <div className="muted segment-media-picked">{selectedMediaPath}</div> : null}
-          {showMediaStartTimecode ? (
+          {selectedMediaCount > 0 ? (
+            <div className="muted segment-media-picked">{selectedMediaPaths.join("\n")}</div>
+          ) : null}
+          {selectedVideoPaths.length > 0 ? (
             <>
-              <label>{"\u0422\u0430\u0439\u043c\u043a\u043e\u0434"}</label>
-              <div className="timecode-split-input" role="group" aria-label="timecode">
-                {["hh", "mm", "ss"].map((partName, partIndex) => (
-                  <React.Fragment key={partName}>
-                    <input
-                      ref={(node) => {
-                        timecodeInputRefs.current[partIndex] = node;
-                      }}
-                      className="timecode-part-input"
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={2}
-                      value={getTimecodeDisplayValue(partName, partIndex)}
-                      onFocus={(event) => {
-                        setFocusedTimecodePart(partIndex);
-                        handleTimecodePartFocus(event);
-                      }}
-                      onBlur={handleTimecodePartBlur}
-                      onChange={(event) => updateTimecodePart(partName, event.target.value, partIndex)}
-                      aria-label={partName.toUpperCase()}
-                    />
-                    {partIndex < 2 ? <span className="timecode-separator">:</span> : null}
-                  </React.Fragment>
+              <label>{"\u0422\u0430\u0439\u043c\u043a\u043e\u0434\u044b \u0432\u0438\u0434\u0435\u043e"}</label>
+              <div className="segment-media-timecodes">
+                {selectedVideoPaths.map((mediaPath) => (
+                  <MediaTimecodeRow
+                    key={mediaPath}
+                    mediaPath={mediaPath}
+                    value={mediaFileTimecodes[mediaPath] ?? ""}
+                    onChange={(nextValue) => updateMediaFileTimecode(mediaPath, nextValue)}
+                  />
                 ))}
               </div>
             </>
@@ -2917,6 +3158,14 @@ export default function App() {
       setStatus("\u0423\u043a\u0430\u0436\u0438\u0442\u0435 \u0441\u0441\u044b\u043b\u043a\u0443 \u043d\u0430 Notion.");
       return;
     }
+    if (docId && hasUnsavedChanges) {
+      try {
+        await saveSessionSnapshot(buildSessionPayload(), "pre_notion_refresh");
+      } catch (error) {
+        setStatus(`Не удалось сохранить правки перед обновлением Notion: ${error.message}`);
+        return;
+      }
+    }
     setLoading(true);
     setStatus(statusLabel);
     const progressId = `notion_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -3122,6 +3371,9 @@ export default function App() {
     setLoading(true);
     setStatus("\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u043e\u0432...");
     try {
+      if (docId && hasUnsavedChanges) {
+        await saveSessionSnapshot(buildSessionPayload(), "pre_generate");
+      }
       const { cleanText, linkSegments: extractedLinks } = extractLinksFromScript(scriptText);
       const existingLinks = segments.filter((segment) => segment.block_type === "links");
       const mergedLinks = mergeLinkSegmentsBySection(existingLinks, extractedLinks);
@@ -3418,7 +3670,12 @@ export default function App() {
         section_index: source.section_index ?? null,
         links: Array.isArray(source?.links) ? dedupeLinks(source.links) : [],
         visual_decision: {
-          ...sourceVisual
+          ...sourceVisual,
+          media_file_paths: normalizeMediaFilePathList(sourceVisual?.media_file_paths ?? sourceVisual?.media_file_path ?? null),
+          media_file_timecodes: normalizeMediaFileTimecodes(
+            sourceVisual?.media_file_timecodes ?? {},
+            sourceVisual?.media_file_paths ?? sourceVisual?.media_file_path ?? null
+          )
         },
         search_decision: {
           ...sourceSearch,
@@ -3459,24 +3716,38 @@ export default function App() {
                       ...defaults,
                       description: "",
                       media_file_path: null,
+                      media_file_paths: [],
+                      media_file_timecodes: {},
                       media_start_timecode: null
                     }
                   };
                 }
-                return {
-                  ...segment,
-                  visual_decision: {
-                    ...nextVisual,
-                    ...defaults
-                  }
-                };
               }
-              if (updates && Object.prototype.hasOwnProperty.call(updates, "media_file_path")) {
-                const nextPath = normalizeMediaFilePath(updates.media_file_path ?? null);
-                if (!isVideoMediaPath(nextPath)) {
-                  nextVisual.media_start_timecode = null;
+              let mediaPaths = normalizeMediaFilePathList(
+                nextVisual.media_file_paths ?? nextVisual.media_file_path ?? null
+              );
+              if (updates && Object.prototype.hasOwnProperty.call(updates, "media_file_paths")) {
+                mediaPaths = normalizeMediaFilePathList(updates.media_file_paths ?? []);
+              } else if (updates && Object.prototype.hasOwnProperty.call(updates, "media_file_path")) {
+                mediaPaths = normalizeMediaFilePathList(updates.media_file_path ?? null);
+              }
+              nextVisual.media_file_paths = mediaPaths;
+              nextVisual.media_file_path = mediaPaths[0] ?? null;
+              const videoMediaPaths = mediaPaths.filter((mediaPath) => isVideoMediaPath(mediaPath));
+              let mediaFileTimecodes = normalizeMediaFileTimecodes(nextVisual.media_file_timecodes ?? {}, mediaPaths);
+              if (updates && Object.prototype.hasOwnProperty.call(updates, "media_file_timecodes")) {
+                mediaFileTimecodes = normalizeMediaFileTimecodes(updates.media_file_timecodes ?? {}, mediaPaths);
+              } else if (updates && Object.prototype.hasOwnProperty.call(updates, "media_start_timecode")) {
+                const firstVideoPath = videoMediaPaths[0] ?? null;
+                const normalizedTimecode = normalizeMediaStartTimecode(updates.media_start_timecode ?? null);
+                if (firstVideoPath && normalizedTimecode) {
+                  mediaFileTimecodes[firstVideoPath] = normalizedTimecode;
+                } else if (firstVideoPath) {
+                  delete mediaFileTimecodes[firstVideoPath];
                 }
               }
+              nextVisual.media_file_timecodes = mediaFileTimecodes;
+              nextVisual.media_start_timecode = videoMediaPaths[0] ? mediaFileTimecodes[videoMediaPaths[0]] ?? null : null;
               return { ...segment, visual_decision: nextVisual };
             })()
           : segment
@@ -3643,8 +3914,10 @@ export default function App() {
   const handleSearch = React.useCallback(
     (engine, query) => {
       if (!engine || !query) return;
+      const normalizedQuery = sanitizeSearchQueryText(query, engine.id);
+      if (!normalizedQuery) return;
       if (engine.action === "copy_open") {
-        copyToClipboard(query, "Запрос скопирован и открыт Perplexity.");
+        copyToClipboard(normalizedQuery, "Запрос скопирован и открыт Perplexity.");
         if (engine.url) {
           window.open(engine.url, "_blank", "noopener,noreferrer");
         }
@@ -3652,7 +3925,7 @@ export default function App() {
       }
       if (!engine.url) return;
       const suffix = engine.suffix ?? "";
-      const url = `${engine.url}${encodeURIComponent(query)}${suffix}`;
+      const url = `${engine.url}${encodeURIComponent(normalizedQuery)}${suffix}`;
       window.open(url, "_blank", "noopener,noreferrer");
     },
     [copyToClipboard]

@@ -158,6 +158,11 @@ test("session/segments/decisions endpoints keep state consistent", async () => {
       duration_hint_sec: 5,
       priority: "обязательно",
       media_file_path: null,
+      media_file_paths: ["topic/clip-a.mp4", "topic/clip-b.mp4"],
+      media_file_timecodes: {
+        "topic/clip-a.mp4": "00:00:03",
+        "topic/clip-b.mp4": "00:00:07"
+      },
       media_start_timecode: null
     },
     search_decision: {
@@ -229,6 +234,15 @@ test("session/segments/decisions endpoints keep state consistent", async () => {
   assert.equal(decisionsUpdateResponse.status, 200);
   const decisionsUpdateData = await decisionsUpdateResponse.json();
   assert.equal(decisionsUpdateData?.decisions?.[0]?.search_decision?.keywords?.[0], "beta");
+  assert.equal(decisionsUpdateData?.decisions?.[0]?.visual_decision?.media_file_path, "topic/clip-a.mp4");
+  assert.deepEqual(decisionsUpdateData?.decisions?.[0]?.visual_decision?.media_file_paths, [
+    "topic/clip-a.mp4",
+    "topic/clip-b.mp4"
+  ]);
+  assert.deepEqual(decisionsUpdateData?.decisions?.[0]?.visual_decision?.media_file_timecodes, {
+    "topic/clip-a.mp4": "00:00:03",
+    "topic/clip-b.mp4": "00:00:07"
+  });
   assert.ok(Number(decisionsUpdateData?.version) >= 1);
 
   const datasetResponse = await fetch(`${baseUrl}/api/documents/${encodeURIComponent(docId)}/dataset`);
@@ -243,6 +257,15 @@ test("session/segments/decisions endpoints keep state consistent", async () => {
   const docData = await docResponse.json();
   assert.equal(docData?.segments?.[0]?.text_quote, "Segment text updated");
   assert.equal(docData?.decisions?.[0]?.search_decision?.keywords?.[0], "beta");
+  assert.equal(docData?.decisions?.[0]?.visual_decision?.media_file_path, "topic/clip-a.mp4");
+  assert.deepEqual(docData?.decisions?.[0]?.visual_decision?.media_file_paths, [
+    "topic/clip-a.mp4",
+    "topic/clip-b.mp4"
+  ]);
+  assert.deepEqual(docData?.decisions?.[0]?.visual_decision?.media_file_timecodes, {
+    "topic/clip-a.mp4": "00:00:03",
+    "topic/clip-b.mp4": "00:00:07"
+  });
 
   const eventsResponse = await fetch(`${baseUrl}/api/documents/${encodeURIComponent(docId)}/events`);
   assert.equal(eventsResponse.status, 200);
@@ -318,6 +341,11 @@ test("export endpoints keep expected formats and validations", async () => {
       duration_hint_sec: 5,
       priority: "обязательно",
       media_file_path: null,
+      media_file_paths: ["topic/export-a.mp4", "topic/export-b.mp4"],
+      media_file_timecodes: {
+        "topic/export-a.mp4": "00:00:01",
+        "topic/export-b.mp4": "00:00:05"
+      },
       media_start_timecode: null
     },
     search_decision: {

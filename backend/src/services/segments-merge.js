@@ -1,4 +1,4 @@
-export function createSegmentsMergeUtils(deps) {
+﻿export function createSegmentsMergeUtils(deps) {
   const {
     emptySearchDecision,
     emptyVisualDecision,
@@ -264,7 +264,7 @@ export function createSegmentsMergeUtils(deps) {
   }
 
   function isCustomSubSegmentId(segmentId) {
-    return /^[a-z][a-z0-9]*_\d{2}(?:_\d{2})+$/i.test(String(segmentId ?? "").trim());
+    return /^[a-z][a-z0-9_]*_\d{2}(?:_\d{2})+$/i.test(String(segmentId ?? "").trim());
   }
 
   function normalizedContains(haystack, needle) {
@@ -481,12 +481,14 @@ export function createSegmentsMergeUtils(deps) {
         ? new Set(scopedCandidates.map((item) => String(item.segment.segment_id ?? "")))
         : null;
       let matchedId = null;
+      let matchedSourceSegment = null;
       let status = "new";
 
       const exact = takeExactMatch(normalizedIndex, normalized, usedOldIds, scopedIds) ??
         takeExactMatch(normalizedIndex, normalized, usedOldIds);
       if (exact) {
         matchedId = exact.segment.segment_id;
+        matchedSourceSegment = exact.segment;
         status = "same";
         usedOldIds.add(matchedId);
       } else {
@@ -512,6 +514,7 @@ export function createSegmentsMergeUtils(deps) {
           });
         if (globalFuzzy) {
           matchedId = globalFuzzy.segment.segment_id;
+          matchedSourceSegment = globalFuzzy.segment;
           status = "changed";
           usedOldIds.add(matchedId);
         }
@@ -527,9 +530,10 @@ export function createSegmentsMergeUtils(deps) {
       } else {
         usedIds.add(nextId);
       }
+      const inheritedDone = matchedSourceSegment ? Boolean(matchedSourceSegment.is_done) : false;
 
       matched.push({
-        segment: { ...segment, segment_id: nextId, segment_status: status },
+        segment: { ...segment, segment_id: nextId, segment_status: status, is_done: inheritedDone },
         matchedId
       });
     });
@@ -597,3 +601,4 @@ export function createSegmentsMergeUtils(deps) {
     normalizeTextForMatch
   };
 }
+

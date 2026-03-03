@@ -28,7 +28,14 @@
   "description": "Коллаж или графика: BMW X5 — цена до и после (10 млн vs 13 млн).",
   "format_hint": "Документ",
   "priority": "рекомендуется",
-  "duration_hint_sec": null
+  "duration_hint_sec": null,
+  "media_file_path": "Интро/social.mov",
+  "media_file_paths": ["Интро/social.mov", "Интро/alt.mov"],
+  "media_file_timecodes": {
+    "Интро/social.mov": "00:00:12",
+    "Интро/alt.mov": "00:00:04"
+  },
+  "media_start_timecode": "00:00:12"
 }
 
 ## search_decision

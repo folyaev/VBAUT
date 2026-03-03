@@ -1,6 +1,7 @@
 import { config } from "../llm.js";
 
 const FALLBACK_LIMITS = { maxKeywords: 8, maxQueries: 3 };
+const VIDEO_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|avi|mpg|mpeg|mts|m2ts)(?:$|[?#])/i;
 
 function normalizeStringList(value, limit) {
   if (!value) return [];
@@ -32,6 +33,8 @@ export function emptyVisualDecision() {
     duration_hint_sec: null,
     priority: null,
     media_file_path: null,
+    media_file_paths: [],
+    media_file_timecodes: {},
     media_start_timecode: null
   };
 }
@@ -48,6 +51,37 @@ export function normalizeMediaFilePath(value) {
   const normalized = value.replace(/\\/g, "/").trim();
   if (!normalized) return null;
   return normalized.length > 512 ? normalized.slice(0, 512) : normalized;
+}
+
+function normalizeMediaFilePathList(value) {
+  const items = Array.isArray(value) ? value : value == null ? [] : [value];
+  const normalized = [];
+  const seen = new Set();
+
+  items.forEach((item) => {
+    const path = normalizeMediaFilePath(item);
+    if (!path || seen.has(path)) return;
+    seen.add(path);
+    normalized.push(path);
+  });
+
+  return normalized.slice(0, 32);
+}
+
+function normalizeMediaFileTimecodes(value, mediaPaths = []) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const allowed = new Set(
+    normalizeMediaFilePathList(mediaPaths).filter((mediaPath) => VIDEO_MEDIA_PATH_RE.test(mediaPath))
+  );
+  const normalized = {};
+  Object.entries(value).forEach(([rawPath, rawTimecode]) => {
+    const mediaPath = normalizeMediaFilePath(rawPath);
+    if (!mediaPath || !allowed.has(mediaPath)) return;
+    const timecode = normalizeMediaStartTimecode(rawTimecode);
+    if (!timecode) return;
+    normalized[mediaPath] = timecode;
+  });
+  return normalized;
 }
 
 function normalizeFormatHint(value) {
@@ -93,8 +127,27 @@ export function normalizeVisualDecisionInput(raw) {
   const durationRaw = raw.duration_hint_sec ?? raw.duration_hint ?? null;
   const durationHint = typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : null;
   const priority = normalizePriority(raw.priority);
-  const mediaFilePath = normalizeMediaFilePath(raw.media_file_path ?? raw.media_path ?? null);
-  const mediaStartTimecode = normalizeMediaStartTimecode(raw.media_start_timecode ?? raw.media_start ?? null);
+  const mediaPathCandidates = [];
+  if (Array.isArray(raw.media_file_paths)) {
+    mediaPathCandidates.push(...raw.media_file_paths);
+  } else if (raw.media_file_paths != null) {
+    mediaPathCandidates.push(raw.media_file_paths);
+  }
+  mediaPathCandidates.push(raw.media_file_path ?? raw.media_path ?? null);
+  const mediaFilePaths = normalizeMediaFilePathList(mediaPathCandidates);
+  const mediaFilePath = mediaFilePaths[0] ?? null;
+  const mediaFileTimecodes = normalizeMediaFileTimecodes(
+    raw.media_file_timecodes ?? raw.media_start_timecodes ?? null,
+    mediaFilePaths
+  );
+  const mediaStartTimecodeRaw = normalizeMediaStartTimecode(raw.media_start_timecode ?? raw.media_start ?? null);
+  const firstVideoPath = mediaFilePaths.find((mediaPath) => VIDEO_MEDIA_PATH_RE.test(mediaPath)) ?? null;
+  if (firstVideoPath && mediaStartTimecodeRaw && !mediaFileTimecodes[firstVideoPath]) {
+    mediaFileTimecodes[firstVideoPath] = mediaStartTimecodeRaw;
+  }
+  const mediaStartTimecode = firstVideoPath
+    ? mediaFileTimecodes[firstVideoPath] ?? mediaStartTimecodeRaw ?? null
+    : null;
 
   return {
     type,
@@ -103,6 +156,8 @@ export function normalizeVisualDecisionInput(raw) {
     duration_hint_sec: durationHint,
     priority,
     media_file_path: mediaFilePath,
+    media_file_paths: mediaFilePaths,
+    media_file_timecodes: mediaFileTimecodes,
     media_start_timecode: mediaStartTimecode
   };
 }

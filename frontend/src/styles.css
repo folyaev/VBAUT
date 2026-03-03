@@ -1181,11 +1181,30 @@ body::before {
 }
 
 .segment-media-picked {
+  white-space: pre-wrap;
   word-break: break-all;
 }
 
 .segment-media-empty-hint {
   font-size: 12px;
+}
+
+.segment-media-timecodes {
+  display: grid;
+  gap: 8px;
+}
+
+.segment-media-timecode-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.segment-media-timecode-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .timecode-split-input {
@@ -1549,6 +1568,10 @@ body::before {
     width: calc((100% - 16px) / 3);
     min-width: 0;
     max-width: none;
+  }
+
+  .segment-media-timecode-row {
+    grid-template-columns: 1fr;
   }
 
   .segment-media-options {

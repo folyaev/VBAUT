@@ -139,6 +139,36 @@ const {
 });
 
 const downloaderTools = await resolveDownloaderTools();
+const mediaJobAuditState = new Map();
+const MEDIA_AUDIT_STATE_MAX = 2000;
+function mediaJobAuditSignature(job) {
+  const outputFiles = Array.isArray(job?.output_files)
+    ? job.output_files.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
+  return JSON.stringify({
+    status: String(job?.status ?? ""),
+    progress: String(job?.progress ?? ""),
+    error: String(job?.error ?? ""),
+    output_files: outputFiles
+  });
+}
+function rememberMediaJobAudit(jobId, signature) {
+  const key = String(jobId ?? "").trim();
+  if (!key) return false;
+  const previous = mediaJobAuditState.get(key);
+  if (previous === signature) return false;
+  mediaJobAuditState.set(key, signature);
+  if (mediaJobAuditState.size > MEDIA_AUDIT_STATE_MAX) {
+    const overflow = mediaJobAuditState.size - MEDIA_AUDIT_STATE_MAX;
+    let removed = 0;
+    for (const id of mediaJobAuditState.keys()) {
+      mediaJobAuditState.delete(id);
+      removed += 1;
+      if (removed >= overflow) break;
+    }
+  }
+  return true;
+}
 const mediaDownloader = new MediaDownloadQueue({
   ytDlpPath: downloaderTools.ytDlpPath,
   ffmpegLocation: downloaderTools.ffmpegLocation,
@@ -146,6 +176,8 @@ const mediaDownloader = new MediaDownloadQueue({
   startDelayMs: Number(process.env.MEDIA_START_DELAY_MS ?? 2500),
   onStateChange: (job) => {
     if (!["running", "completed", "failed", "canceled"].includes(job.status)) return;
+    const signature = mediaJobAuditSignature(job);
+    if (!rememberMediaJobAudit(job.id, signature)) return;
     appendEvent(job.doc_id, {
       timestamp: new Date().toISOString(),
       event: "media_download_status",
