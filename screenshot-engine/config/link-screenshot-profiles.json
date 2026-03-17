@@ -1,0 +1,54 @@
+{
+  "defaults": {
+    "width": 1920,
+    "height": 960,
+    "zoom": 400
+  },
+  "headlines": {
+    "zoom_400": [
+      "https://ruposters.ru/",
+      "https://iphones.ru/",
+      "https://ixbt.games/",
+      "https://www.cnews.ru/",
+      "https://www.vedomosti.ru/",
+      "https://www.interfax.ru/",
+      "https://www.kommersant.ru/",
+      "https://www.mentoday.ru/",
+      "https://variety.com/",
+      "https://www.reuters.com/",
+      "https://www.bloomberg.com/",
+      "https://apnews.com/",
+      "https://moskvichmag.ru/",
+      "https://rb.ru/",
+      "https://devby.io/",
+      "https://ctv.by/",
+      "https://news.ru/",
+      "https://shazoo.ru/"
+    ],
+    "zoom_250": [
+      "https://vc.ru/",
+      "https://finance.yahoo.com/",
+      "https://www.evening-kazan.ru/",
+      "https://daily.afisha.ru/",
+      "https://www.forbes.ru/",
+      "https://www.forbes.com/",
+      "https://nypost.com/",
+      "https://wsj.com/"
+    ],
+    "zoom_150": [
+      "https://x.com/",
+      "https://youtube.com/",
+      "https://youtu.be/",
+      "https://matchtv.ru/",
+      "https://www.dp.ru/",
+      "https://www.dw.com/",
+      "https://www.ft.com/",
+      "https://www.nytimes.com/",
+      "https://banki.ru/",
+      "https://www.banki.ru/"
+    ],
+    "zoom_300": [
+      "https://www.rbc.ru/"
+    ]
+  }
+}

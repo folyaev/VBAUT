@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm run dev:frontend:wait\"",
+    "dev": "set TELEGRAM_SDVG_ENABLED=1&& set MEDIA_TIKTOK_FALLBACK=1&& set TELEGRAM_BASE_API_URL=http://127.0.0.1:8081/bot&& set TELEGRAM_BASE_FILE_URL=http://127.0.0.1:8081/file&& concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm run dev:frontend:wait\"",
     "dev:frontend:wait": "wait-on tcp:127.0.0.1:8787 && npm --prefix frontend run dev",
     "test:backend": "npm --prefix backend test",
     "guard:encoding": "node scripts/guard-encoding.mjs",

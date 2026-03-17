@@ -57,7 +57,10 @@ test("misc/media config endpoints return expected shape", async () => {
   const downloaderResponse = await fetch(`${baseUrl}/api/downloader/config`);
   assert.equal(downloaderResponse.status, 200);
   const downloaderData = await downloaderResponse.json();
-  assert.equal(downloaderData?.note, "Downloader uses yt-dlp only");
+  assert.equal(
+    downloaderData?.note,
+    "Primary downloader is yt-dlp; gallery-dl fallback is used for TikTok and can supplement X/Twitter posts"
+  );
   assert.equal(typeof downloaderData?.tools, "object");
   assert.notEqual(downloaderData?.tools, null);
 

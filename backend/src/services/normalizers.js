@@ -101,7 +101,7 @@ function normalizePriority(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return null;
-  const legacy = { high: "обязательно", medium: "рекомендуется", low: "при наличии" };
+  const legacy = { high: "Обязательно", medium: "Рекомендуется", low: "При наличии" };
   if (legacy[trimmed]) return legacy[trimmed];
   const list = config?.priorities ?? [];
   const match = list.find((priority) => priority.toLowerCase() === trimmed);

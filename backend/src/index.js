@@ -116,7 +116,6 @@ const {
   readOptionalJson,
   writeJson
 });
-const { fetchLinkPreview } = createLinkPreviewUtils();
 const { splitSegmentsAndDecisions } = createSegmentsSessionUtils({
   normalizeLinksInput,
   normalizeSearchDecisionInput,
@@ -124,12 +123,15 @@ const { splitSegmentsAndDecisions } = createSegmentsSessionUtils({
 });
 
 const {
+  applySegmentLinkHintsToSegments,
   appendLinkDecisionsOverride,
+  buildSegmentLinkHintsFromRawText,
   collapseDuplicateLinkOnlyTopics,
   getSectionMatchKey,
   mergeLinkSegmentsBySection,
   mergeSegmentsWithHistory,
   normalizeLinkSegmentsInput,
+  normalizeSegmentLinkHintsInput,
   normalizeSectionTitleForMatch
 } = createSegmentsMergeUtils({
   emptySearchDecision,
@@ -140,6 +142,9 @@ const {
 });
 
 const downloaderTools = await resolveDownloaderTools();
+const { fetchLinkPreview } = createLinkPreviewUtils({
+  ytDlpPath: downloaderTools.ytDlpPath
+});
 const mediaJobAuditState = new Map();
 const MEDIA_AUDIT_STATE_MAX = 2000;
 function mediaJobAuditSignature(job) {
@@ -173,6 +178,8 @@ function rememberMediaJobAudit(jobId, signature) {
 const mediaDownloader = new MediaDownloadQueue({
   ytDlpPath: downloaderTools.ytDlpPath,
   ffmpegLocation: downloaderTools.ffmpegLocation,
+  galleryDlPath: downloaderTools.galleryDlPath,
+  galleryDlPythonModule: downloaderTools.galleryDlPythonModule,
   maxConcurrent: Number(process.env.MEDIA_MAX_CONCURRENT ?? 1),
   startDelayMs: Number(process.env.MEDIA_START_DELAY_MS ?? 2500),
   onStateChange: (job) => {
@@ -210,6 +217,7 @@ app.use(
 registerMiscRoutes(app, {
   appendUiActionsAudit,
   config,
+  dataDir: getDataDir(),
   fetchLinkPreview,
   finishNotionProgress,
   getNotionProgress,
@@ -285,8 +293,10 @@ registerDocumentRoutes(app, {
 });
 
 registerGenerationRoutes(app, {
+  applySegmentLinkHintsToSegments,
   appendEvent,
   appendLinkDecisionsOverride,
+  buildSegmentLinkHintsFromRawText,
   collapseDuplicateLinkOnlyTopics,
   ensureMediaTopicFoldersForSegments,
   generateEnglishSearchDecisionsForSegments,
@@ -299,6 +309,7 @@ registerGenerationRoutes(app, {
   mergeSegmentsWithHistory,
   normalizeDocumentForResponse,
   normalizeLinkSegmentsInput,
+  normalizeSegmentLinkHintsInput,
   normalizeSearchDecisionInput,
   normalizeSegmentForDecision,
   normalizeSegmentWithVisual,
@@ -329,17 +340,25 @@ registerExportRoutes(app, {
 });
 
 const telegramSdvgBot = createTelegramSdvgBotService({
+  appendLinkDecisionsOverride,
   appendEvent,
+  collapseDuplicateLinkOnlyTopics,
   ensureMediaDir,
   getDocDir,
   getMediaDir,
   isHttpUrl,
+  isMediaAlreadyDownloaded,
   isYtDlpCandidateUrl,
   listDocuments,
   mediaDownloader,
+  mergeLinkSegmentsBySection,
+  normalizeDocumentMediaDownloads,
+  normalizeLinkSegmentsInput,
+  normalizeLinkUrl,
   readOptionalJson,
   sanitizeMediaTopicName,
-  saveVersioned
+  saveVersioned,
+  splitSegmentsAndDecisions
 });
 telegramSdvgBot.start();
 

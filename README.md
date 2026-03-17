@@ -17,6 +17,9 @@
 - Проверка версии и ручное обновление `yt-dlp` из UI.
 - Очередь загрузок, ограничение частоты, проверка дублей, прогресс (0/20/40/60/80/100), журнал событий.
 - Экспорт в `JSONL`, `MD` и `XML (xmeml)`.
+- Отдельная страница для теста превью/скриншотов ссылок: `http://localhost:8787/tools/screenshot-lab`.
+- Логи `Screenshot Lab`: `data/screenshot-lab-events.ndjson` и API `GET /api/tools/screenshot-lab/logs?limit=200`.
+- `Screenshot Lab` поддерживает `Manual Session` (интерактивный браузер + запись кликов + ручной capture).
 - Режим совместной сессии: автосейв + автообновление у всех подключенных клиентов.
 
 ## Как устроено
@@ -33,7 +36,7 @@
 - Node.js 18+
 - npm
 - LLM endpoint в OpenAI-compatible формате (llama.cpp/vLLM/LM Studio/Ollama-wrapper)
-- Для медиазагрузок: `yt-dlp` (и желательно `ffmpeg`)
+- Для медиазагрузок: `yt-dlp` (и желательно `ffmpeg`; для TikTok fallback опционально `gallery-dl`)
 
 ## Установка
 
@@ -43,6 +46,7 @@
 npm install
 npm --prefix backend install
 npm --prefix frontend install
+npm --prefix screenshot-engine install
 ```
 
 Если используете Notion-бота через `start-dev.cmd`:
@@ -50,6 +54,57 @@ npm --prefix frontend install
 ```powershell
 npm --prefix HeadlessNotion install
 ```
+
+## Screenshot Engine (portable)
+
+Логика скриншотов ссылок вынесена в отдельную папку: `screenshot-engine/`.
+
+Быстрый запуск вручную:
+
+```powershell
+cd screenshot-engine
+npm install
+node link-screenshot.js --url "https://www.rbc.ru/" --width 1920 --height 960 --zoom 300 > out.png
+```
+
+С cookies (JSON/Netscape):
+
+```powershell
+node link-screenshot.js --url "https://x.com/..." --cookies_path "C:\tgbotapi\VBAUT\data\cookies\x.json" > out.png
+```
+
+Для backend-роута `/api/link/screenshot` можно задать общий путь:
+
+```powershell
+$env:LINK_SCREENSHOT_COOKIES_PATH="C:\tgbotapi\VBAUT\data\cookies\x.json"
+```
+
+Для Retina (macOS) используйте большее выходное полотно, например `--width 3840 --height 1920`.
+
+## Screenshot Lab: Manual Session
+
+Откройте:
+
+```text
+http://localhost:8787/tools/screenshot-lab
+```
+
+Минимальный сценарий:
+
+1. Добавьте ссылку в список.
+2. Нажмите `🖱 Start Manual` (или `🖱` у нужной ссылки) - откроется живой браузер Puppeteer.
+3. В этом окне вручную кликните cookie-баннер/логин/нужный кадр.
+4. Нажмите `📷 Capture` в Screenshot Lab - кадр прикрепится к текущей ссылке.
+5. `Stop Manual` завершает сессию.
+
+События кликов и навигации можно посмотреть кнопкой `Events`.
+
+Cookies flow:
+
+1. В manual-окне залогиньтесь на сайт.
+2. Нажмите `Save Cookies` (домены берутся из поля `Cookie domains`).
+3. Нажмите `Use Globally`, чтобы этот файл сразу применился для `/api/link/screenshot` без перезапуска backend.
+4. Путь также сохраняется в `VBAUT/backend/.env` как `LINK_SCREENSHOT_COOKIES_PATH`, чтобы переживать рестарты.
 
 ## Защита от кракозябр (включено)
 
@@ -139,6 +194,12 @@ restart-dev.cmd
 - `TELEGRAM_BOT_TOKEN` (токен Telegram-бота от BotFather)
 - `TELEGRAM_SDVG_DOC_ID` (опционально: фиксированный `doc_id` для `/sdvg`)
 - `TELEGRAM_SDVG_POLL_TIMEOUT_SEC` (default: `25`)
+- `TELEGRAM_BASE_API_URL` (default: `https://api.telegram.org/bot`)
+- `TELEGRAM_BASE_FILE_URL` (опционально: base URL для скачивания файлов; если пусто, вычисляется автоматически)
+- `TELEGRAM_LOCAL_STORAGE_PREFIX` (default: `/var/lib/telegram-bot-api/`; префикс абсолютного `file_path` от локального Bot API, который надо отрезать)
+- `TELEGRAM_DOCKER_COPY_FALLBACK` (default: `1`; при `404` на `/file` пробует `docker cp` из контейнера локального Bot API)
+- `TELEGRAM_DOCKER_CONTAINER_NAME` (default: `tgbotapi`; имя контейнера для fallback-копирования)
+- `LINK_SCREENSHOT_COOKIES_PATH` (опционально: путь к cookie-файлу для `/api/link/screenshot`)
 
 ### Media Downloader
 
@@ -150,6 +211,12 @@ restart-dev.cmd
 - `MEDIA_FFMPEG_LOCATION` (путь к `ffmpeg` или папке `bin`)
 - `MEDIA_COOKIES_PATH` (путь к `cookies.txt`, Netscape format)
 - `MEDIA_COOKIES_FROM_BROWSER` (например: `chrome`)
+- `MEDIA_YTDLP_PROXY` (прокси для `yt-dlp`, например `socks5h://127.0.0.1:1080`)
+- `MEDIA_YTDLP_IMPERSONATE` (например `chrome`)
+- `MEDIA_YTDLP_TIKTOK_EXTRACTOR_ARGS` (по умолчанию можно оставить пустым; пример: `app_info=/musical_ly/35.1.3/2023501030/0`)
+- `MEDIA_TIKTOK_FALLBACK` (default: `1`; включает fallback на `gallery-dl` для TikTok)
+- `MEDIA_GALLERYDL_PATH` (явный путь к `gallery-dl`, опционально)
+- `MEDIA_GALLERYDL_PROXY` (прокси только для `gallery-dl`; если пусто, берется `MEDIA_YTDLP_PROXY`)
 
 Пример (PowerShell):
 
@@ -192,12 +259,14 @@ npm run dev
 2. Все загружают один и тот же `doc_id`.
 3. Включают `Collaborative Session: ON`.
 
-## Медиазагрузки (yt-dlp)
+## Медиазагрузки (yt-dlp + TikTok fallback)
 
 - Загрузка ручная, по кнопке у конкретной ссылки.
 - Фильтр URL ограничен поддерживаемыми хостами (YouTube, X/Twitter, VK, TikTok, Vimeo и др.).
 - Качество: максимально доступное до 1080p.
 - Сохранение: `MEDIA_DOWNLOAD_ROOT\<ТЕМА>\...`.
+- Основной движок: `yt-dlp`.
+- Для TikTok при ошибке `yt-dlp` backend может автоматически попробовать `gallery-dl` (если найден в системе и `MEDIA_TIKTOK_FALLBACK=1`).
 - Дубли:
   - проверка предсказанного имени файла;
   - `--download-archive` у `yt-dlp`.
@@ -217,20 +286,29 @@ npm run dev
 - Команда `/sdvg` отправляет карточку следующего незавершенного сегмента (`is_done = false`).
 - Текст карточки содержит только цитату сегмента.
 - Кнопки в карточке показывают дополнительные поля (комментарий/описание визуала, формат, приоритет, тема).
+- Кнопка `✅` отмечает текущий сегмент как готовый (`is_done = true`) и сразу присылает следующий незавершенный сегмент.
 - Кнопка `Следующий сегмент` отправляет новый сегмент отдельным сообщением.
 - Опция случайного порядка: `/sdvg random` или кнопка `Режим: ...` в карточке.
-- Пока не нажата `Следующий сегмент`, входящие текст/медиа относятся к текущему активному сегменту.
+- Пока не нажаты `Следующий сегмент` или `✅`, входящие текст/медиа относятся к текущему активному сегменту.
 - Обычный текст из чата добавляется в `visual_decision.description` (в этом режиме это же поле считается комментарием).
 - Ссылка в сообщении запускает текущий `yt-dlp` пайплайн backend и показывает прогресс в Telegram.
 - Фото/видео/аудио/документы из Telegram скачиваются в папку темы и прикрепляются к `visual_decision.media_file_paths`.
+- Для больших файлов можно переключить бота на локальный Bot API (`tgbotapi:8081`), чтобы скачивание шло через локальный `file` endpoint.
+- Если локальный `file` endpoint отвечает `404`, backend автоматически попробует достать файл напрямую из контейнера `tgbotapi` через `docker cp`.
 
 Пример включения (PowerShell):
 
 ```powershell
 $env:TELEGRAM_BOT_TOKEN="7686518888:AAGf1HwSavQS7lsMvzbXq-1Ti7vZ-aNes5U"
 $env:TELEGRAM_SDVG_ENABLED="1"
+$env:TELEGRAM_BASE_API_URL="http://127.0.0.1:8081/bot"
+$env:TELEGRAM_BASE_FILE_URL="http://127.0.0.1:8081/file"
 npm run dev
 ```
+
+Если backend запущен в Docker-сети, используйте хост контейнера:
+- `TELEGRAM_BASE_API_URL=http://tgbotapi:8081/bot`
+- `TELEGRAM_BASE_FILE_URL=http://tgbotapi:8081/file`
 
 ## Cookies для ограниченных источников
 
@@ -240,6 +318,10 @@ npm run dev
 2. `MEDIA_COOKIES_FROM_BROWSER` -> например `chrome`
 
 Это помогает скачивать приватный/ограниченный контент, где без авторизации `yt-dlp` дает 403/empty.
+
+Для `Screenshot Lab` / `/api/link/screenshot` используется отдельная переменная:
+
+- `LINK_SCREENSHOT_COOKIES_PATH` -> JSON или Netscape cookies для браузерного скриншота ссылок (X/YouTube и др.).
 
 ## Запуск через ngrok
 

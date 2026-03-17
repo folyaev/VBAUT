@@ -27,6 +27,43 @@ export function registerDocumentRoutes(app, deps) {
     writeJson
   } = deps;
 
+  function canonicalizeMergeLinkUrl(rawUrl) {
+    const normalized = String(rawUrl ?? "").trim();
+    if (!normalized) return "";
+    try {
+      const url = new URL(normalized);
+      if (url.protocol === "http:" && url.port === "80") url.port = "";
+      if (url.protocol === "https:" && url.port === "443") url.port = "";
+      return url.toString();
+    } catch {
+      return normalized;
+    }
+  }
+
+  function dedupeLinkDuplicatesAcrossSections(segments = []) {
+    if (!Array.isArray(segments) || segments.length === 0) return [];
+    const seen = new Set();
+    return segments.map((segment) => {
+      if (String(segment?.block_type ?? "").trim().toLowerCase() !== "links") return segment;
+      const links = Array.isArray(segment?.links) ? segment.links : [];
+      const dedupedLinks = [];
+      links.forEach((link) => {
+        const url = String(link?.url ?? "").trim();
+        const canonical = canonicalizeMergeLinkUrl(url);
+        if (!canonical || seen.has(canonical)) return;
+        seen.add(canonical);
+        dedupedLinks.push({
+          url,
+          raw: link?.raw == null ? null : String(link.raw)
+        });
+      });
+      return {
+        ...segment,
+        links: dedupedLinks
+      };
+    });
+  }
+
 app.get("/api/documents", async (_req, res) => {
   try {
     const docs = await listDocuments();
@@ -234,7 +271,7 @@ app.put("/api/documents/:id/session", async (req, res) => {
     if (!segments) return res.status(400).json({ error: "segments must be an array" });
     if (!decisions) return res.status(400).json({ error: "decisions must be an array" });
 
-    const normalizedSegments = normalizeSegmentsInput(segments);
+    const normalizedSegments = dedupeLinkDuplicatesAcrossSections(normalizeSegmentsInput(segments));
     const normalizedDecisions = normalizeDecisionsInput(decisions);
 
     const previousRawText = String(document.raw_text ?? "");
@@ -305,7 +342,7 @@ app.put("/api/documents/:id/segments", async (req, res) => {
     const segments = Array.isArray(req.body?.segments) ? req.body.segments : null;
     if (!segments) return res.status(400).json({ error: "segments must be an array" });
 
-    const normalized = normalizeSegmentsInput(segments);
+    const normalized = dedupeLinkDuplicatesAcrossSections(normalizeSegmentsInput(segments));
     const version = await saveVersioned(docId, "segments", normalized);
 
     await appendEvent(docId, {

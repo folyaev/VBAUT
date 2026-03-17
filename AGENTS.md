@@ -165,7 +165,8 @@ npm --prefix backend test
 Назначение:
 - команда `/sdvg` выдаёт один незавершенный сегмент (`is_done = false`);
 - поддержан порядок выдачи: по очереди и случайный (`/sdvg random` или кнопка режима);
-- пока не нажата кнопка `Следующий сегмент`, входящие текст/медиа в чате привязываются к текущему сегменту;
+- кнопка `✅` отмечает текущий сегмент как готовый (`is_done = true`) и автоматически отправляет следующий;
+- пока не нажаты кнопки `Следующий сегмент` или `✅`, входящие текст/медиа в чате привязываются к текущему сегменту;
 - текст уходит в `visual_decision.description` (в этом режиме это же поле считается комментарием);
 - ссылка запускает существующий `MediaDownloader` (`yt-dlp`) с прогрессом;
 - медиа-файлы из Telegram скачиваются в папку темы и пишутся в `visual_decision.media_file_paths`.
@@ -174,4 +175,9 @@ npm --prefix backend test
 - `TELEGRAM_BOT_TOKEN` — токен бота;
 - `TELEGRAM_SDVG_ENABLED` — включение бота (`1/0`);
 - `TELEGRAM_SDVG_DOC_ID` — фиксированный документ для `/sdvg` (опционально);
-- `TELEGRAM_SDVG_POLL_TIMEOUT_SEC` — timeout long polling.
+- `TELEGRAM_SDVG_POLL_TIMEOUT_SEC` — timeout long polling;
+- `TELEGRAM_BASE_API_URL` — base URL Bot API (по умолчанию `https://api.telegram.org/bot`, для локального сервера: `http://127.0.0.1:8081/bot`);
+- `TELEGRAM_BASE_FILE_URL` — base URL скачивания файлов (опционально; для локального сервера обычно `http://127.0.0.1:8081/file`);
+- `TELEGRAM_LOCAL_STORAGE_PREFIX` — префикс абсолютного `file_path` локального Bot API (по умолчанию `/var/lib/telegram-bot-api/`);
+- `TELEGRAM_DOCKER_COPY_FALLBACK` — fallback через `docker cp` при `404` от `/file` (по умолчанию `1`);
+- `TELEGRAM_DOCKER_CONTAINER_NAME` — имя контейнера локального Bot API для fallback (по умолчанию `tgbotapi`).

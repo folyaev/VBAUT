@@ -18,8 +18,10 @@ const DEFAULT_FORMAT = [
   "b[height<=1080]/best[height<=1080]/best"
 ].join("");
 const YTDLP_UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
+const GALLERYDL_TIMEOUT_MS = 2 * 60 * 1000;
 const VERIFYABLE_MEDIA_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 const TRACKED_OUTPUT_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus|jpg|jpeg|png|webp|gif)$/i;
+const IMAGE_OUTPUT_EXT_RE = /\.(jpg|jpeg|png|webp|gif)$/i;
 
 const YTDLP_CANDIDATE_HOSTS = [
   /(^|\.)youtube\.com$/i,
@@ -42,6 +44,7 @@ const YTDLP_CANDIDATE_HOSTS = [
   /(^|\.)streamable\.com$/i,
   /(^|\.)soundcloud\.com$/i
 ];
+const TIKTOK_SHORT_HOSTS = new Set(["vt.tiktok.com", "vm.tiktok.com"]);
 
 const DIRECT_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|m3u8|mp3|m4a|wav|flac)(?:$|[?#])/i;
 
@@ -58,6 +61,57 @@ export function isYtDlpCandidateUrl(rawUrl) {
   if (DIRECT_MEDIA_PATH_RE.test(parsed.pathname + parsed.search)) return true;
   const host = parsed.hostname.toLowerCase();
   return YTDLP_CANDIDATE_HOSTS.some((pattern) => pattern.test(host));
+}
+
+function normalizeYtDlpInputUrl(rawUrl) {
+  const value = String(rawUrl ?? "").trim();
+  if (!value) return "";
+
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return value;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (!TIKTOK_SHORT_HOSTS.has(host)) {
+    return value;
+  }
+
+  const token = parsed.pathname
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean)[0];
+  if (!token || !/^[a-z0-9_-]{6,}$/i.test(token)) {
+    return value;
+  }
+
+  return `https://www.tiktok.com/t/${token}/`;
+}
+
+function isTikTokUrl(rawUrl) {
+  const value = String(rawUrl ?? "").trim();
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return host === "tiktok.com" || host.endsWith(".tiktok.com");
+  } catch {
+    return false;
+  }
+}
+
+function isXUrl(rawUrl) {
+  const value = String(rawUrl ?? "").trim();
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return host === "x.com" || host.endsWith(".x.com") || host === "twitter.com" || host.endsWith(".twitter.com");
+  } catch {
+    return false;
+  }
 }
 
 export async function resolveDownloaderTools() {
@@ -100,9 +154,30 @@ export async function resolveDownloaderTools() {
     }
   }
 
+  const galleryCandidates = [process.env.MEDIA_GALLERYDL_PATH, "gallery-dl"];
+  let galleryDlPath = null;
+  let galleryDlPythonModule = false;
+  for (const candidate of galleryCandidates) {
+    if (!candidate) continue;
+    if (await probeExecutable(candidate, ["--version"])) {
+      galleryDlPath = candidate;
+      break;
+    }
+  }
+  if (!galleryDlPath && (await probeExecutable("python", ["-m", "gallery_dl", "--version"]))) {
+    galleryDlPath = "python";
+    galleryDlPythonModule = true;
+  }
+  if (!galleryDlPath && (await probeExecutable("py", ["-m", "gallery_dl", "--version"]))) {
+    galleryDlPath = "py";
+    galleryDlPythonModule = true;
+  }
+
   return {
     ytDlpPath,
-    ffmpegLocation
+    ffmpegLocation,
+    galleryDlPath,
+    galleryDlPythonModule
   };
 }
 
@@ -141,6 +216,20 @@ export class MediaDownloadQueue {
   constructor(options = {}) {
     this.ytDlpPath = options.ytDlpPath ?? null;
     this.ffmpegLocation = options.ffmpegLocation ?? null;
+    this.galleryDlPath = options.galleryDlPath ?? null;
+    this.galleryDlPythonModule = Boolean(options.galleryDlPythonModule);
+    this.tiktokFallbackEnabled = String(process.env.MEDIA_TIKTOK_FALLBACK ?? "1") !== "0";
+    this.xGalleryDlSupplementEnabled = String(process.env.MEDIA_X_GALLERYDL_SUPPLEMENT ?? "1") !== "0";
+    this.ytDlpProxy = process.env.MEDIA_YTDLP_PROXY ? String(process.env.MEDIA_YTDLP_PROXY).trim() : "";
+    this.ytDlpImpersonate = process.env.MEDIA_YTDLP_IMPERSONATE
+      ? String(process.env.MEDIA_YTDLP_IMPERSONATE).trim()
+      : "";
+    this.ytDlpTikTokExtractorArgs = process.env.MEDIA_YTDLP_TIKTOK_EXTRACTOR_ARGS
+      ? String(process.env.MEDIA_YTDLP_TIKTOK_EXTRACTOR_ARGS).trim()
+      : "";
+    this.galleryDlProxy = process.env.MEDIA_GALLERYDL_PROXY
+      ? String(process.env.MEDIA_GALLERYDL_PROXY).trim()
+      : this.ytDlpProxy;
     this.cookiesPath = process.env.MEDIA_COOKIES_PATH
       ? String(process.env.MEDIA_COOKIES_PATH)
       : null;
@@ -175,6 +264,14 @@ export class MediaDownloadQueue {
       available: this.isAvailable(),
       yt_dlp_path: this.ytDlpPath,
       ffmpeg_location: this.ffmpegLocation,
+      gallery_dl_path: this.galleryDlPath,
+      gallery_dl_mode: this.galleryDlPythonModule ? "python_module" : "binary",
+      tiktok_fallback_enabled: this.tiktokFallbackEnabled,
+      x_gallerydl_supplement_enabled: this.xGalleryDlSupplementEnabled,
+      yt_dlp_proxy: this.ytDlpProxy || null,
+      yt_dlp_impersonate: this.ytDlpImpersonate || null,
+      yt_dlp_tiktok_extractor_args: this.ytDlpTikTokExtractorArgs || null,
+      gallery_dl_proxy: this.galleryDlProxy || null,
       cookies_path: this.cookiesPath,
       cookies_from_browser: this.cookiesFromBrowser,
       max_concurrent: this.maxConcurrent,
@@ -202,7 +299,7 @@ export class MediaDownloadQueue {
   }
 
   enqueue({ docId, url, outputDir, sectionTitle = null }) {
-    const normalizedUrl = String(url ?? "").trim();
+    const normalizedUrl = normalizeYtDlpInputUrl(String(url ?? "").trim());
     const normalizedOutputDir = String(outputDir ?? "").trim();
     if (!docId || !normalizedUrl || !normalizedOutputDir) {
       throw new Error("docId, url and outputDir are required");
@@ -235,7 +332,13 @@ export class MediaDownloadQueue {
       started_at: null,
       finished_at: null,
       last_message: null,
-      cancel_requested: false
+      cancel_requested: false,
+      meta_title: null,
+      meta_uploader: null,
+      meta_uploader_url: null,
+      meta_webpage_url: null,
+      meta_format_note: null,
+      meta_resolution: null
     };
 
     this.jobs.set(job.id, job);
@@ -299,7 +402,13 @@ export class MediaDownloadQueue {
       updated_at: job.updated_at,
       started_at: job.started_at,
       finished_at: job.finished_at,
-      last_message: job.last_message
+      last_message: job.last_message,
+      meta_title: job.meta_title ?? null,
+      meta_uploader: job.meta_uploader ?? null,
+      meta_uploader_url: job.meta_uploader_url ?? null,
+      meta_webpage_url: job.meta_webpage_url ?? null,
+      meta_format_note: job.meta_format_note ?? null,
+      meta_resolution: job.meta_resolution ?? null
     };
   }
 
@@ -397,7 +506,16 @@ export class MediaDownloadQueue {
         this._emit(job);
         return;
       }
-      job.output_files = [toRelativeDisplayPath(job.output_dir, predictedPath)];
+      const displayFiles = new Set([toRelativeDisplayPath(job.output_dir, predictedPath)]);
+      const absoluteFiles = new Set([predictedPath]);
+      const xSupplementError = await this._tryXGallerySupplement(job, beforeSnapshot, displayFiles, absoluteFiles);
+      if (job.status === "canceled") {
+        return;
+      }
+      if (xSupplementError) {
+        job.last_message = `X gallery-dl supplement skipped: ${xSupplementError}`;
+      }
+      job.output_files = Array.from(displayFiles);
       job.status = "completed";
       job.skip_reason = "file_exists";
       this._setProgress(job, 100, true);
@@ -503,6 +621,14 @@ export class MediaDownloadQueue {
         return;
       }
 
+      const xSupplementError = await this._tryXGallerySupplement(job, beforeSnapshot, displayFiles, absoluteFiles);
+      if (job.status === "canceled") {
+        return;
+      }
+      if (xSupplementError) {
+        job.last_message = `X gallery-dl supplement skipped: ${xSupplementError}`;
+      }
+
       job.output_files = Array.from(displayFiles);
       if (!job.output_files.length && result.skippedByArchive) {
         job.skip_reason = "already_downloaded";
@@ -514,10 +640,188 @@ export class MediaDownloadQueue {
       return;
     }
 
+    const xFallbackError = await this._tryXGalleryFallback(job, beforeSnapshot);
+    if (job.status === "completed" || job.status === "canceled") {
+      return;
+    }
+
+    const fallbackError = await this._tryTikTokFallback(job, beforeSnapshot);
+    if (job.status === "completed" || job.status === "canceled") {
+      return;
+    }
+
     job.status = "failed";
-    job.error = result?.error || result?.stderrTail || `yt-dlp exited with code ${result?.exitCode ?? "unknown"}`;
+    const ytError = result?.error || result?.stderrTail || `yt-dlp exited with code ${result?.exitCode ?? "unknown"}`;
+    const fallbackErrors = [];
+    if (xFallbackError) fallbackErrors.push(`x-gallery-dl: ${xFallbackError}`);
+    if (fallbackError) fallbackErrors.push(`tiktok-gallery-dl: ${fallbackError}`);
+    job.error = fallbackErrors.length > 0 ? `${ytError} | ${fallbackErrors.join(" | ")}` : ytError;
     job.finished_at = new Date().toISOString();
     this._emit(job);
+  }
+
+  async _tryXGallerySupplement(job, beforeSnapshot, displayFiles, absoluteFiles) {
+    if (!this.xGalleryDlSupplementEnabled) return "";
+    if (!this.galleryDlPath) return "";
+    if (!isXUrl(job.url)) return "";
+    if (job.cancel_requested) return "";
+
+    job.last_message = "yt-dlp completed, trying gallery-dl for extra media in X post...";
+    this._emit(job);
+
+    const result = await this._spawnGalleryDl(job);
+    if (job.cancel_requested || result.canceled) {
+      job.status = "canceled";
+      job.finished_at = new Date().toISOString();
+      this._emit(job);
+      return "";
+    }
+
+    if (result.exitCode !== 0) {
+      return result.error || result.stderrTail || `gallery-dl exited with code ${result.exitCode ?? "unknown"}`;
+    }
+
+    const addImageCandidate = async (candidatePath) => {
+      if (!candidatePath) return;
+      const absolutePath = path.isAbsolute(candidatePath)
+        ? candidatePath
+        : path.resolve(job.output_dir, candidatePath);
+      if (!isTrackedOutputFile(absolutePath)) return;
+      if (!IMAGE_OUTPUT_EXT_RE.test(absolutePath)) return;
+      if (!(await fileExists(absolutePath))) return;
+      absoluteFiles.add(absolutePath);
+      displayFiles.add(toRelativeDisplayPath(job.output_dir, absolutePath));
+    };
+
+    for (const filePath of result.files) {
+      await addImageCandidate(filePath);
+    }
+
+    const afterSnapshot = await listOutputFileSnapshots(job.output_dir);
+    const changedFiles = diffOutputSnapshots(beforeSnapshot, afterSnapshot);
+    for (const filePath of changedFiles) {
+      await addImageCandidate(filePath);
+    }
+
+    return "";
+  }
+
+  async _tryXGalleryFallback(job, beforeSnapshot) {
+    if (!this.xGalleryDlSupplementEnabled) return "";
+    if (!this.galleryDlPath) return "";
+    if (!isXUrl(job.url)) return "";
+    if (job.cancel_requested) return "";
+
+    job.last_message = "yt-dlp failed for X, trying gallery-dl fallback...";
+    this._emit(job);
+
+    const result = await this._spawnGalleryDl(job);
+    if (job.cancel_requested || result.canceled) {
+      job.status = "canceled";
+      job.finished_at = new Date().toISOString();
+      this._emit(job);
+      return "";
+    }
+
+    if (result.exitCode !== 0) {
+      return result.error || result.stderrTail || `gallery-dl exited with code ${result.exitCode ?? "unknown"}`;
+    }
+
+    const absoluteFiles = new Set();
+    const displayFiles = new Set();
+
+    for (const filePath of result.files) {
+      const absolutePath = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(job.output_dir, filePath);
+      if (!isTrackedOutputFile(absolutePath)) continue;
+      if (!(await fileExists(absolutePath))) continue;
+      absoluteFiles.add(absolutePath);
+      displayFiles.add(toRelativeDisplayPath(job.output_dir, absolutePath));
+    }
+
+    const afterSnapshot = await listOutputFileSnapshots(job.output_dir);
+    const changedFiles = diffOutputSnapshots(beforeSnapshot, afterSnapshot);
+    for (const filePath of changedFiles) {
+      if (!isTrackedOutputFile(filePath)) continue;
+      absoluteFiles.add(filePath);
+      displayFiles.add(toRelativeDisplayPath(job.output_dir, filePath));
+    }
+
+    if (displayFiles.size === 0) {
+      return result.stderrTail || "gallery-dl completed but produced no output files";
+    }
+
+    const verifyDownloaded = await verifyMediaOutputs(Array.from(absoluteFiles), this.ffmpegLocation);
+    if (!verifyDownloaded.ok) {
+      return `downloaded file failed integrity check: ${verifyDownloaded.message}`;
+    }
+
+    job.output_files = Array.from(displayFiles);
+    job.status = "completed";
+    this._setProgress(job, 100, true);
+    job.finished_at = new Date().toISOString();
+    this._emit(job);
+    return "";
+  }
+
+  async _tryTikTokFallback(job, beforeSnapshot) {
+    if (!this.tiktokFallbackEnabled) return "";
+    if (!this.galleryDlPath) return "";
+    if (!isTikTokUrl(job.url)) return "";
+    if (job.cancel_requested) return "";
+
+    job.last_message = "yt-dlp failed for TikTok, trying gallery-dl fallback...";
+    this._emit(job);
+
+    const result = await this._spawnGalleryDl(job);
+    if (job.cancel_requested || result.canceled) {
+      job.status = "canceled";
+      job.finished_at = new Date().toISOString();
+      this._emit(job);
+      return "";
+    }
+
+    if (result.exitCode !== 0) {
+      return result.error || result.stderrTail || `gallery-dl exited with code ${result.exitCode ?? "unknown"}`;
+    }
+
+    const absoluteFiles = new Set();
+    const displayFiles = new Set();
+
+    for (const filePath of result.files) {
+      const absolutePath = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(job.output_dir, filePath);
+      if (!isTrackedOutputFile(absolutePath)) continue;
+      if (!(await fileExists(absolutePath))) continue;
+      absoluteFiles.add(absolutePath);
+      displayFiles.add(toRelativeDisplayPath(job.output_dir, absolutePath));
+    }
+
+    const afterSnapshot = await listOutputFileSnapshots(job.output_dir);
+    const changedFiles = diffOutputSnapshots(beforeSnapshot, afterSnapshot);
+    for (const filePath of changedFiles) {
+      if (!isTrackedOutputFile(filePath)) continue;
+      absoluteFiles.add(filePath);
+      displayFiles.add(toRelativeDisplayPath(job.output_dir, filePath));
+    }
+
+    if (displayFiles.size === 0) {
+      return result.stderrTail || "gallery-dl completed but produced no output files";
+    }
+
+    const verifyDownloaded = await verifyMediaOutputs(Array.from(absoluteFiles), this.ffmpegLocation);
+    if (!verifyDownloaded.ok) {
+      return `downloaded file failed integrity check: ${verifyDownloaded.message}`;
+    }
+
+    job.output_files = Array.from(displayFiles);
+    job.status = "completed";
+    this._setProgress(job, 100, true);
+    job.finished_at = new Date().toISOString();
+    this._emit(job);
+    return "";
   }
 
   async _resolveMediaId(url) {
@@ -626,6 +930,18 @@ export class MediaDownloadQueue {
       "--progress-template",
       "download:__PROGRESS__%(progress._percent_str)s",
       "--print",
+      "before_dl:__META_TITLE__%(title)s",
+      "--print",
+      "before_dl:__META_UPLOADER__%(uploader)s",
+      "--print",
+      "before_dl:__META_UPLOADER_URL__%(uploader_url)s",
+      "--print",
+      "before_dl:__META_WEBPAGE_URL__%(webpage_url)s",
+      "--print",
+      "before_dl:__META_FORMAT_NOTE__%(format_note)s",
+      "--print",
+      "before_dl:__META_RESOLUTION__%(resolution)s",
+      "--print",
       "after_move:__FILE__%(filepath)s",
       "-f",
       DEFAULT_FORMAT,
@@ -635,10 +951,16 @@ export class MediaDownloadQueue {
       "1",
       "--retries",
       "8",
+      "--extractor-retries",
+      "6",
       "--fragment-retries",
       "8",
       "--retry-sleep",
       "exp=1:30",
+      "--retry-sleep",
+      "extractor:exp=1:20",
+      "--retry-sleep",
+      "http:exp=1:20",
       "--sleep-requests",
       "1",
       "--sleep-interval",
@@ -653,6 +975,18 @@ export class MediaDownloadQueue {
       context.outputTemplate,
       job.url
     ];
+
+    if (isTikTokUrl(job.url) && this.ytDlpTikTokExtractorArgs) {
+      args.unshift("--extractor-args", `tiktok:${this.ytDlpTikTokExtractorArgs}`);
+    }
+
+    if (this.ytDlpImpersonate) {
+      args.unshift("--impersonate", this.ytDlpImpersonate);
+    }
+
+    if (this.ytDlpProxy) {
+      args.unshift("--proxy", this.ytDlpProxy);
+    }
 
     if (this.ffmpegLocation) {
       args.unshift("--ffmpeg-location", this.ffmpegLocation);
@@ -673,7 +1007,8 @@ export class MediaDownloadQueue {
 
       const child = spawn(this.ytDlpPath, args, {
         cwd: job.output_dir,
-        windowsHide: true
+        windowsHide: true,
+        env: buildSubprocessEnv()
       });
       this.runningProcs.set(job.id, child);
 
@@ -681,6 +1016,22 @@ export class MediaDownloadQueue {
         const text = String(line ?? "").trim();
         if (!text) return;
         job.last_message = text.slice(0, 500);
+
+        const assignMeta = (prefix, key) => {
+          if (!text.startsWith(prefix)) return false;
+          const rawValue = text.slice(prefix.length).trim();
+          const value = normalizeYtDlpMetaValue(rawValue);
+          if (value) {
+            job[key] = value;
+          }
+          return true;
+        };
+        if (assignMeta("__META_TITLE__", "meta_title")) return;
+        if (assignMeta("__META_UPLOADER__", "meta_uploader")) return;
+        if (assignMeta("__META_UPLOADER_URL__", "meta_uploader_url")) return;
+        if (assignMeta("__META_WEBPAGE_URL__", "meta_webpage_url")) return;
+        if (assignMeta("__META_FORMAT_NOTE__", "meta_format_note")) return;
+        if (assignMeta("__META_RESOLUTION__", "meta_resolution")) return;
 
         const percent = parsePercent(text);
         if (percent !== null) {
@@ -720,6 +1071,75 @@ export class MediaDownloadQueue {
           exitCode: Number.isInteger(code) ? code : 1,
           canceled,
           skippedByArchive,
+          files: Array.from(files),
+          error: spawnError,
+          stderrTail: stderrTail.join(" | ")
+        });
+      });
+    });
+  }
+
+  _spawnGalleryDl(job) {
+    const args = [];
+    if (this.galleryDlPythonModule) {
+      args.push("-m", "gallery_dl");
+    }
+    args.push("--directory", job.output_dir);
+    if (this.galleryDlProxy) {
+      args.push("--proxy", this.galleryDlProxy);
+    }
+    args.push(job.url);
+
+    return new Promise((resolve) => {
+      let canceled = false;
+      let spawnError = null;
+      let timedOut = false;
+      const files = new Set();
+      const stderrTail = [];
+
+      const child = spawn(this.galleryDlPath, args, {
+        cwd: job.output_dir,
+        windowsHide: true,
+        env: buildSubprocessEnv()
+      });
+      this.runningProcs.set(job.id, child);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill();
+        } catch {
+          // noop
+        }
+      }, GALLERYDL_TIMEOUT_MS);
+
+      const handleLine = (line) => {
+        const text = String(line ?? "").trim();
+        if (!text) return;
+        job.last_message = text.slice(0, 500);
+        if (stderrTail.length >= 12) stderrTail.shift();
+        stderrTail.push(text);
+
+        const fileMatch = text.match(/(?:^|[\s:"])([A-Za-z]:\\[^"]+\.(?:mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus|jpg|jpeg|png|webp|gif)|\/[^"]+\.(?:mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus|jpg|jpeg|png|webp|gif))/i);
+        if (fileMatch?.[1]) files.add(fileMatch[1]);
+      };
+
+      pipeLines(child.stdout, handleLine);
+      pipeLines(child.stderr, handleLine);
+
+      child.on("error", (error) => {
+        spawnError = error?.message ?? "Failed to start gallery-dl";
+      });
+
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        this.runningProcs.delete(job.id);
+        if (signal) canceled = true;
+        if (timedOut && !spawnError) {
+          spawnError = `gallery-dl timeout after ${Math.round(GALLERYDL_TIMEOUT_MS / 1000)}s`;
+        }
+        resolve({
+          exitCode: Number.isInteger(code) ? code : 1,
+          canceled,
           files: Array.from(files),
           error: spawnError,
           stderrTail: stderrTail.join(" | ")
@@ -913,6 +1333,22 @@ function parsePercent(line) {
   return Math.max(0, Math.min(100, value));
 }
 
+function normalizeYtDlpMetaValue(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (/^(na|n\/a|null|none|unknown)$/i.test(text)) return "";
+  return text.length > 220 ? text.slice(0, 220).trim() : text;
+}
+
+function buildSubprocessEnv(extra = null) {
+  return {
+    ...process.env,
+    PYTHONUTF8: "1",
+    PYTHONIOENCODING: "utf-8",
+    ...(extra && typeof extra === "object" ? extra : {})
+  };
+}
+
 function pipeLines(stream, onLine) {
   if (!stream) return;
   let buffer = "";
@@ -970,7 +1406,7 @@ async function runCommandCaptureFirstLine(command, args, timeoutMs = 10000) {
     let stdout = "";
     let stderr = "";
     let done = false;
-    const child = spawn(command, args, { windowsHide: true });
+    const child = spawn(command, args, { windowsHide: true, env: buildSubprocessEnv() });
 
     const timer = setTimeout(() => {
       if (done) return;
@@ -1023,7 +1459,7 @@ async function runCommandCaptureOutput(command, args, timeoutMs = 10000) {
     let stdout = "";
     let stderr = "";
     let done = false;
-    const child = spawn(command, args, { windowsHide: true });
+    const child = spawn(command, args, { windowsHide: true, env: buildSubprocessEnv() });
 
     const timer = setTimeout(() => {
       if (done) return;
@@ -1071,7 +1507,7 @@ async function runCommandCaptureOutput(command, args, timeoutMs = 10000) {
 async function runCommandExitZero(command, args, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let done = false;
-    const child = spawn(command, args, { windowsHide: true });
+    const child = spawn(command, args, { windowsHide: true, env: buildSubprocessEnv() });
 
     const timer = setTimeout(() => {
       if (done) return;

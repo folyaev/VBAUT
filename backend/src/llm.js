@@ -52,7 +52,7 @@ const VISUAL_TYPES = [
   "no_visual"
 ];
 const FORMAT_HINTS = ["2:1", "1:1", "Заголовок/Цитата", "Документ"];
-const PRIORITIES = ["обязательно", "рекомендуется", "при наличии"];
+const PRIORITIES = ["Обязательно", "Рекомендуется", "При наличии"];
 const SEARCH_LIMITS = { maxKeywords: 8, maxQueries: 3 };
 const MAX_QUERY_SIMILARITY = 0.7;
 const SEARCH_ENGINES = [
@@ -1172,16 +1172,14 @@ function normalizeVisualDecision(raw) {
   const type = config.visualTypes.includes(mappedType) ? mappedType : "no_visual";
   const description = typeof raw.description === "string" ? raw.description.trim() : "";
   const formatHint = normalizeFormatHint(raw.format_hint);
-  const durationRaw = raw.duration_hint_sec ?? raw.duration_hint ?? null;
-  const durationHint =
-    typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : durationRaw === null ? null : null;
   const priority = normalizePriority(raw.priority);
 
   return {
     type,
     description,
     format_hint: formatHint,
-    duration_hint_sec: durationHint,
+    // Ignore LLM-provided duration; we always apply local auto-formula.
+    duration_hint_sec: null,
     priority
   };
 }
@@ -1202,7 +1200,7 @@ function normalizePriority(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return null;
-  const legacy = { high: "обязательно", medium: "рекомендуется", low: "при наличии" };
+  const legacy = { high: "Обязательно", medium: "Рекомендуется", low: "При наличии" };
   if (legacy[trimmed]) return legacy[trimmed];
   const match = config.priorities.find((priority) => priority.toLowerCase() === trimmed);
   return match ?? null;
@@ -1333,6 +1331,9 @@ const SEGMENT_TARGET_MAX_CHARS = 210;
 const SEGMENT_HARD_MAX_CHARS = 280;
 const SEGMENT_MIN_SPLIT_PART_CHARS = 28;
 const SEGMENT_MIN_CHARS = 20;
+const AUTO_DURATION_SYLLABLES_PER_SEC = Number.isFinite(Number(process.env.AUTO_DURATION_SYLLABLES_PER_SEC))
+  ? Math.max(1, Number(process.env.AUTO_DURATION_SYLLABLES_PER_SEC))
+  : 6;
 const NARRATIVE_SPLIT_RE = /(?<=[.!?…])\s+/u;
 const CLAUSE_PIVOT_RE =
   /,\s+(если|но|а|и|однако|зато|при этом|чтобы|когда|где|так как|потому что|котор(?:ый|ая|ое|ые|ого|ому|ым|ых)?)\b/iu;
@@ -1542,7 +1543,6 @@ function inferBlockType(heading) {
 
 function withDuration(decision, textQuote) {
   if (!decision) return decision;
-  if (decision.duration_hint_sec !== null && decision.duration_hint_sec !== undefined) return decision;
   const computed = computeDurationHint(textQuote);
   return { ...decision, duration_hint_sec: computed };
 }
@@ -1550,7 +1550,7 @@ function withDuration(decision, textQuote) {
 function computeDurationHint(textQuote) {
   const syllables = countSyllables(textQuote);
   if (!syllables) return null;
-  return Math.ceil(syllables / 4.5);
+  return Math.ceil(syllables / AUTO_DURATION_SYLLABLES_PER_SEC);
 }
 
 const VOWELS_RU = new Set(["а", "е", "ё", "и", "о", "у", "ы", "э", "ю", "я"]);

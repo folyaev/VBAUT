@@ -27,7 +27,7 @@ export function registerMediaRoutes(app, deps) {
     res.json({
       tools: mediaDownloader.getToolsInfo(),
       download_root: mediaDownloadRoot,
-      note: "Downloader uses yt-dlp only"
+      note: "Primary downloader is yt-dlp; gallery-dl fallback is used for TikTok and can supplement X/Twitter posts"
     });
   });
 

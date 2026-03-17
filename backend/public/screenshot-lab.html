@@ -1,0 +1,1038 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Screenshot Lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d12;
+        --card: #151922;
+        --ink: #e7ecf4;
+        --muted: #9aa6bb;
+        --line: #2a3242;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+        background: radial-gradient(circle at 15% 10%, #1a2130 0%, #0b0d12 45%, #07080c 100%);
+        color: var(--ink);
+      }
+      .wrap {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 24px 16px 40px;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 28px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .toolbar {
+        display: grid;
+        gap: 10px;
+        margin: 16px 0;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      input,
+      textarea,
+      button {
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #0f131c;
+        color: var(--ink);
+        font: inherit;
+      }
+      input,
+      textarea {
+        width: 100%;
+        padding: 10px 12px;
+      }
+      textarea {
+        min-height: 78px;
+        resize: vertical;
+      }
+      button {
+        cursor: pointer;
+        padding: 10px 14px;
+        background: #172338;
+      }
+      button:hover {
+        border-color: #4f6287;
+      }
+      .btn-main {
+        background: #274477;
+      }
+      .manual-box {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+        background: #121926;
+        display: grid;
+        gap: 8px;
+      }
+      .manual-status {
+        font-size: 13px;
+        color: #b3c5e8;
+      }
+      .list {
+        display: grid;
+        gap: 14px;
+      }
+      .item {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--card);
+        padding: 10px;
+      }
+      .item-head {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .url {
+        flex: 1;
+        min-width: 0;
+        font-size: 14px;
+        text-decoration: none;
+        color: var(--ink);
+        overflow-wrap: anywhere;
+      }
+      .actions {
+        display: flex;
+        gap: 6px;
+      }
+      .action {
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 13px;
+      }
+      .action.active {
+        border-color: #7a9fff;
+        background: #263a68;
+      }
+      .preview {
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+        display: grid;
+        gap: 8px;
+      }
+      .preview strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .preview p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .preview img {
+        width: 100%;
+        max-height: 540px;
+        object-fit: contain;
+        border-radius: 10px;
+        border: 1px solid #34405a;
+        background: #0b101a;
+      }
+      .empty {
+        border: 1px dashed var(--line);
+        border-radius: 14px;
+        padding: 20px;
+        color: var(--muted);
+        text-align: center;
+      }
+      .events {
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 8px;
+        font-family: Consolas, Menlo, monospace;
+        font-size: 12px;
+        max-height: 200px;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+      @media (max-width: 820px) {
+        .item-head {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .actions {
+          justify-content: flex-end;
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Screenshot Lab</h1>
+      <div class="muted">Add links, test preview, switch to screenshot mode, and use Manual Session for interactive capture.</div>
+      <div class="toolbar">
+        <div class="row">
+          <input id="urlInput" placeholder="https://example.com/article" />
+          <button id="addOneBtn" class="btn-main" type="button">Add</button>
+        </div>
+        <textarea id="bulkInput" placeholder="One URL per line"></textarea>
+        <div class="row">
+          <button id="addManyBtn" type="button">Add lines</button>
+          <button id="clearBtn" type="button">Clear</button>
+          <button id="logsBtn" type="button">Logs</button>
+        </div>
+        <div class="manual-box">
+          <div class="row">
+            <input id="cookiesPathInput" placeholder="Cookies path (optional), e.g. C:\\tgbotapi\\VBAUT\\data\\cookies\\x.json" />
+          </div>
+          <div class="row">
+            <button id="useGlobalCookiesBtn" type="button">Use Globally</button>
+            <button id="clearGlobalCookiesBtn" type="button">Clear Global</button>
+            <div id="globalCookiesStatus" class="manual-status">Global cookies: loading...</div>
+          </div>
+          <div class="row">
+            <input
+              id="cookieDomainsInput"
+              placeholder="Cookie domains (comma-separated), e.g. x.com, youtube.com, matchtv.ru"
+              value="x.com, youtube.com, matchtv.ru, dp.ru, dw.com, ft.com, nytimes.com"
+            />
+            <button id="manualSaveCookiesBtn" type="button">Save Cookies</button>
+          </div>
+          <div class="row">
+            <input id="manualWidthInput" type="number" min="480" max="3840" step="10" value="1920" placeholder="Width" />
+            <input id="manualHeightInput" type="number" min="320" max="2160" step="10" value="960" placeholder="Height" />
+            <input id="manualZoomInput" type="number" min="50" max="800" step="10" value="400" placeholder="Zoom %" />
+          </div>
+          <div class="row">
+            <button id="manualStartBtn" type="button">&#128433; Start Manual</button>
+            <button id="manualCaptureBtn" type="button">&#128247; Capture</button>
+            <button id="manualStopBtn" type="button">Stop Manual</button>
+            <button id="manualEventsBtn" type="button">Events</button>
+          </div>
+          <div id="manualStatus" class="manual-status">Manual session: inactive</div>
+        </div>
+      </div>
+      <div id="linksList" class="list"></div>
+      <div id="manualEvents" class="events" style="display:none;"></div>
+    </div>
+    <script>
+      const listNode = document.getElementById("linksList");
+      const urlInput = document.getElementById("urlInput");
+      const bulkInput = document.getElementById("bulkInput");
+      const addOneBtn = document.getElementById("addOneBtn");
+      const addManyBtn = document.getElementById("addManyBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const logsBtn = document.getElementById("logsBtn");
+      const cookiesPathInput = document.getElementById("cookiesPathInput");
+      const useGlobalCookiesBtn = document.getElementById("useGlobalCookiesBtn");
+      const clearGlobalCookiesBtn = document.getElementById("clearGlobalCookiesBtn");
+      const globalCookiesStatus = document.getElementById("globalCookiesStatus");
+      const cookieDomainsInput = document.getElementById("cookieDomainsInput");
+      const manualSaveCookiesBtn = document.getElementById("manualSaveCookiesBtn");
+      const manualWidthInput = document.getElementById("manualWidthInput");
+      const manualHeightInput = document.getElementById("manualHeightInput");
+      const manualZoomInput = document.getElementById("manualZoomInput");
+      const manualStartBtn = document.getElementById("manualStartBtn");
+      const manualCaptureBtn = document.getElementById("manualCaptureBtn");
+      const manualStopBtn = document.getElementById("manualStopBtn");
+      const manualEventsBtn = document.getElementById("manualEventsBtn");
+      const manualStatusNode = document.getElementById("manualStatus");
+      const manualEventsNode = document.getElementById("manualEvents");
+
+      const items = [];
+      const sessionId = `lab_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+      let auditQueue = [];
+      let auditTimer = null;
+      let manualSessionId = "";
+      let manualTargetKey = "";
+      let manualSessionCaptured = false;
+      let manualActionBusy = false;
+      const searchParams = new URLSearchParams(window.location.search);
+      const initialMode = String(searchParams.get("mode") || "").trim().toLowerCase() === "screenshot"
+        ? "screenshot"
+        : "preview";
+      const MANUAL_HOST_PROFILE_STORAGE_KEY = "vbaut_screenshot_lab_manual_host_profiles_v1";
+      let manualHostProfiles = loadManualHostProfiles();
+
+      function queueAudit(type, payload = {}) {
+        const event = {
+          type: String(type || "").trim(),
+          session_id: sessionId,
+          timestamp_client: new Date().toISOString(),
+          ...payload
+        };
+        if (!event.type) return;
+        auditQueue.push(event);
+        if (auditQueue.length >= 10) {
+          flushAudit();
+          return;
+        }
+        if (!auditTimer) {
+          auditTimer = window.setTimeout(() => {
+            auditTimer = null;
+            flushAudit();
+          }, 1200);
+        }
+      }
+
+      function loadManualHostProfiles() {
+        try {
+          const raw = localStorage.getItem(MANUAL_HOST_PROFILE_STORAGE_KEY);
+          if (!raw) return {};
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+          return parsed;
+        } catch {
+          return {};
+        }
+      }
+
+      function saveManualHostProfiles(nextProfiles) {
+        try {
+          const safeValue =
+            nextProfiles && typeof nextProfiles === "object" && !Array.isArray(nextProfiles) ? nextProfiles : {};
+          localStorage.setItem(MANUAL_HOST_PROFILE_STORAGE_KEY, JSON.stringify(safeValue));
+        } catch {
+          // noop
+        }
+      }
+
+      async function flushAudit() {
+        if (!auditQueue.length) return;
+        const batch = auditQueue.slice(0, 50);
+        auditQueue = auditQueue.slice(batch.length);
+        try {
+          await fetch("/api/tools/screenshot-lab/audit", {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json", "ngrok-skip-browser-warning": "1" },
+            body: JSON.stringify({ events: batch })
+          });
+        } catch {
+          auditQueue = [...batch, ...auditQueue].slice(0, 500);
+        }
+      }
+
+      function normalizeUrl(value) {
+        const raw = String(value || "").trim();
+        if (!raw) return "";
+        try {
+          const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+          return new URL(withProto).toString();
+        } catch {
+          return "";
+        }
+      }
+
+      function canonicalUrl(value) {
+        const normalized = normalizeUrl(value);
+        if (!normalized) return "";
+        try {
+          const parsed = new URL(normalized);
+          parsed.hash = "";
+          if (parsed.protocol === "http:" && parsed.port === "80") parsed.port = "";
+          if (parsed.protocol === "https:" && parsed.port === "443") parsed.port = "";
+          return parsed.toString();
+        } catch {
+          return normalized;
+        }
+      }
+
+      function screenshotSrc(url) {
+        const normalized = normalizeUrl(url);
+        if (!normalized) return "";
+        return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=10`;
+      }
+
+      function hostOf(url) {
+        try {
+          return new URL(normalizeUrl(url)).host.replace(/^www\./i, "");
+        } catch {
+          return "";
+        }
+      }
+
+      function hostKeyOf(url) {
+        return String(hostOf(url) || "").toLowerCase();
+      }
+
+      function setManualStatus(text) {
+        manualStatusNode.textContent = text;
+      }
+
+      function setGlobalCookiesStatus(text) {
+        if (!globalCookiesStatus) return;
+        globalCookiesStatus.textContent = text;
+      }
+
+      function readManualCaptureSettings() {
+        const clamp = (value, fallback, min, max) => {
+          const parsed = Number.parseInt(String(value || ""), 10);
+          if (!Number.isFinite(parsed)) return fallback;
+          return Math.max(min, Math.min(max, parsed));
+        };
+        return {
+          width: clamp(manualWidthInput?.value, 1920, 480, 3840),
+          height: clamp(manualHeightInput?.value, 960, 320, 2160),
+          zoom: clamp(manualZoomInput?.value, 400, 50, 800)
+        };
+      }
+
+      function applyManualCaptureSettings(settings = {}) {
+        const fallback = readManualCaptureSettings();
+        const clamp = (value, defaultValue, min, max) => {
+          const parsed = Number.parseInt(String(value ?? ""), 10);
+          if (!Number.isFinite(parsed)) return defaultValue;
+          return Math.max(min, Math.min(max, parsed));
+        };
+        const next = {
+          width: clamp(settings.width, fallback.width, 480, 3840),
+          height: clamp(settings.height, fallback.height, 320, 2160),
+          zoom: clamp(settings.zoom, fallback.zoom, 50, 800)
+        };
+        if (manualWidthInput) manualWidthInput.value = String(next.width);
+        if (manualHeightInput) manualHeightInput.value = String(next.height);
+        if (manualZoomInput) manualZoomInput.value = String(next.zoom);
+        return next;
+      }
+
+      function saveManualProfileForHost(rawUrl, settings = {}) {
+        const hostKey = hostKeyOf(rawUrl);
+        if (!hostKey) return null;
+        const applied = applyManualCaptureSettings(settings);
+        manualHostProfiles = {
+          ...manualHostProfiles,
+          [hostKey]: {
+            width: applied.width,
+            height: applied.height,
+            zoom: applied.zoom
+          }
+        };
+        saveManualHostProfiles(manualHostProfiles);
+        queueAudit("manual_profile_saved", {
+          url: rawUrl,
+          detail: `${applied.width}x${applied.height}@${applied.zoom}`
+        });
+        return applied;
+      }
+
+      function getManualProfileForHost(rawUrl) {
+        const hostKey = hostKeyOf(rawUrl);
+        if (!hostKey) return null;
+        const profile = manualHostProfiles?.[hostKey];
+        if (!profile || typeof profile !== "object") return null;
+        return applyManualCaptureSettings(profile);
+      }
+
+      function readCookieDomains() {
+        return String(cookieDomainsInput?.value || "")
+          .split(/[\s,;]+/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      function getItemByKey(key) {
+        return items.find((item) => item.key === key) || null;
+      }
+
+      function getManualTargetItem() {
+        const selected = getItemByKey(manualTargetKey);
+        if (selected) return selected;
+        if (items.length === 1) return items[0];
+        return null;
+      }
+
+      async function resolveManualProfileForUrl(rawUrl) {
+        const normalized = normalizeUrl(rawUrl);
+        if (!normalized) return null;
+        const response = await fetch(`/api/tools/screenshot-lab/profile?url=${encodeURIComponent(normalized)}`, {
+          headers: { accept: "application/json", "ngrok-skip-browser-warning": "1" }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(String(data?.error || "manual_profile_failed"));
+        }
+        const profile = data?.profile;
+        if (!profile || typeof profile !== "object") {
+          return null;
+        }
+        return applyManualCaptureSettings(profile);
+      }
+
+      async function applyManualProfileForItem(item) {
+        if (!item) return null;
+        const hostProfile = getManualProfileForHost(item.url);
+        if (hostProfile) {
+          queueAudit("manual_profile_host", {
+            url: item.url,
+            detail: `${hostProfile.width}x${hostProfile.height}@${hostProfile.zoom}`
+          });
+          return hostProfile;
+        }
+        try {
+          const applied = await resolveManualProfileForUrl(item.url);
+          if (!applied) return null;
+          queueAudit("manual_profile_auto", {
+            url: item.url,
+            detail: `${applied.width}x${applied.height}@${applied.zoom}`
+          });
+          return applied;
+        } catch (error) {
+          queueAudit("manual_profile_error", {
+            url: item.url,
+            status: "error",
+            message: String(error?.message || "manual_profile_failed")
+          });
+          return null;
+        }
+      }
+
+      function ensureUniquePush(url) {
+        const normalized = normalizeUrl(url);
+        if (!normalized) return;
+        const key = canonicalUrl(normalized);
+        if (!key) return;
+        if (items.some((item) => item.key === key)) return;
+        const item = {
+          id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          key,
+          url: normalized,
+          mode: initialMode,
+          loading: false,
+          loaded: false,
+          error: false,
+          title: "",
+          description: "",
+          image: "",
+          siteName: "",
+          manualImage: ""
+        };
+        items.push(item);
+        queueAudit("add_link", { url: normalized, status: "queued" });
+        if (item.mode === "preview") {
+          fetchPreview(item);
+        }
+      }
+
+      async function fetchPreview(item) {
+        if (!item || item.mode !== "preview") return;
+        item.loading = true;
+        item.error = false;
+        queueAudit("preview_fetch_start", { url: item.url, mode: item.mode });
+        render();
+        try {
+          const response = await fetch(`/api/link/preview?url=${encodeURIComponent(item.url)}`, {
+            headers: { accept: "application/json", "ngrok-skip-browser-warning": "1" }
+          });
+          if (!response.ok) throw new Error("preview_failed");
+          const data = await response.json();
+          item.title = String(data?.title || "");
+          item.description = String(data?.description || "");
+          item.image = String(data?.image || "");
+          item.siteName = String(data?.siteName || "");
+          item.loaded = true;
+          item.loading = false;
+          item.error = false;
+          queueAudit("preview_fetch_success", {
+            url: item.url,
+            status: "ok",
+            detail: item.image ? "has_image" : "no_image"
+          });
+          render();
+        } catch {
+          item.loading = false;
+          item.loaded = true;
+          item.error = true;
+          queueAudit("preview_fetch_error", { url: item.url, status: "error" });
+          render();
+        }
+      }
+
+      function switchMode(item, mode) {
+        if (!item) return;
+        item.mode = mode === "screenshot" ? "screenshot" : "preview";
+        item.error = false;
+        queueAudit("switch_mode", { url: item.url, mode: item.mode });
+        if (item.mode === "preview" && !item.loaded) {
+          fetchPreview(item);
+        }
+        render();
+      }
+
+      function removeItem(id) {
+        const index = items.findIndex((item) => item.id === id);
+        if (index >= 0) {
+          queueAudit("remove_link", { url: items[index].url });
+          items.splice(index, 1);
+          render();
+        }
+      }
+
+      function addFromInput() {
+        const raw = urlInput.value;
+        ensureUniquePush(urlInput.value);
+        queueAudit("add_one_click", { detail: raw ? "with_value" : "empty" });
+        urlInput.value = "";
+        render();
+      }
+
+      function addFromLines() {
+        const lines = String(bulkInput.value || "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        lines.forEach((line) => ensureUniquePush(line));
+        queueAudit("add_many_click", { detail: `count=${lines.length}` });
+        bulkInput.value = "";
+        render();
+      }
+
+      async function startManualForItem(item) {
+        if (!item) return;
+        manualSessionCaptured = false;
+        manualTargetKey = item.key;
+        setManualStatus(`Manual session: starting for ${hostOf(item.url) || item.url}`);
+        queueAudit("manual_start_click", { url: item.url });
+        try {
+          await applyManualProfileForItem(item);
+          const settings = readManualCaptureSettings();
+          saveManualProfileForHost(item.url, settings);
+          const response = await fetch("/api/tools/screenshot-lab/manual/start", {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json", "ngrok-skip-browser-warning": "1" },
+            body: JSON.stringify({
+              url: item.url,
+              width: settings.width,
+              height: settings.height,
+              zoom: settings.zoom,
+              cookies_path: String(cookiesPathInput.value || "").trim()
+            })
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(String(data?.error || "manual_start_failed"));
+          manualSessionId = String(data.session_id || "");
+          manualSessionCaptured = false;
+          setManualStatus(
+            `Manual session active: ${manualSessionId} | output ${data?.width || settings.width}x${data?.height || settings.height} | zoom ${data?.zoom || settings.zoom}%`
+          );
+          queueAudit("manual_start_ok", { url: item.url, detail: `session=${manualSessionId}` });
+        } catch (error) {
+          setManualStatus(`Manual session error: ${String(error?.message || "failed")}`);
+          queueAudit("manual_start_error", { url: item.url, status: "error", message: String(error?.message || "failed") });
+        }
+      }
+
+      async function captureManualForCurrent(targetKey = "") {
+        if (!manualSessionId) {
+          setManualStatus("Manual session: start it first.");
+          return;
+        }
+        const key = String(targetKey || manualTargetKey || "").trim();
+        const targetItem = key ? getItemByKey(key) : null;
+        if (!targetItem) {
+          setManualStatus("Manual session active, but target card is not selected.");
+          queueAudit("manual_capture_error", { status: "error", message: "target_not_selected" });
+          return;
+        }
+        manualTargetKey = targetItem.key;
+        setManualStatus(`Capturing from manual session ${manualSessionId}...`);
+        queueAudit("manual_capture_click", { url: targetItem.url, detail: `session=${manualSessionId}` });
+        try {
+          const response = await fetch("/api/tools/screenshot-lab/manual/capture", {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "image/png", "ngrok-skip-browser-warning": "1" },
+            body: JSON.stringify({ session_id: manualSessionId })
+          });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(String(data?.error || "manual_capture_failed"));
+          }
+          const blob = await response.blob();
+          if (targetItem.manualImage) {
+            try {
+              URL.revokeObjectURL(targetItem.manualImage);
+            } catch {
+              // noop
+            }
+          }
+          targetItem.manualImage = URL.createObjectURL(blob);
+          targetItem.mode = "screenshot";
+          targetItem.loaded = true;
+          targetItem.error = false;
+          manualSessionCaptured = true;
+          setManualStatus(`Captured for ${hostOf(targetItem.url) || targetItem.url}`);
+          queueAudit("manual_capture_ok", { url: targetItem.url, detail: `session=${manualSessionId}` });
+          render();
+        } catch (error) {
+          setManualStatus(`Manual capture error: ${String(error?.message || "failed")}`);
+          queueAudit("manual_capture_error", { status: "error", message: String(error?.message || "failed") });
+        }
+      }
+
+      async function stopManualSession() {
+        if (!manualSessionId) {
+          setManualStatus("Manual session: already inactive.");
+          return;
+        }
+        const sessionToStop = manualSessionId;
+        queueAudit("manual_stop_click", { detail: `session=${sessionToStop}` });
+        try {
+          await fetch("/api/tools/screenshot-lab/manual/stop", {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json", "ngrok-skip-browser-warning": "1" },
+            body: JSON.stringify({ session_id: sessionToStop })
+          });
+        } catch {
+          // noop
+        }
+        manualSessionId = "";
+        manualTargetKey = "";
+        manualSessionCaptured = false;
+        setManualStatus("Manual session: inactive");
+      }
+
+      async function saveManualCookies() {
+        if (!manualSessionId) {
+          setManualStatus("Manual session: start it first.");
+          return;
+        }
+        const domains = readCookieDomains();
+        setManualStatus(`Exporting cookies for ${domains.join(", ") || "all domains in session"}...`);
+        queueAudit("manual_save_cookies_click", { detail: `session=${manualSessionId};domains=${domains.join(",")}` });
+        try {
+          const response = await fetch("/api/tools/screenshot-lab/manual/cookies/export", {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json", "ngrok-skip-browser-warning": "1" },
+            body: JSON.stringify({
+              session_id: manualSessionId,
+              domains,
+              target_path: String(cookiesPathInput?.value || "").trim()
+            })
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(String(data?.error || "manual_cookies_export_failed"));
+          }
+          if (data?.path) {
+            cookiesPathInput.value = String(data.path);
+          }
+          setManualStatus(`Cookies exported: ${Number(data?.count || 0)} -> ${String(data?.path || "")}`);
+          queueAudit("manual_save_cookies_ok", {
+            detail: `session=${manualSessionId};count=${Number(data?.count || 0)};path=${String(data?.path || "")}`
+          });
+        } catch (error) {
+          const message = String(error?.message || "failed");
+          setManualStatus(`Save cookies error: ${message}`);
+          queueAudit("manual_save_cookies_error", { status: "error", message });
+        }
+      }
+
+      async function refreshGlobalCookiesPath() {
+        try {
+          const response = await fetch("/api/tools/screenshot-lab/cookies/path", {
+            headers: { accept: "application/json", "ngrok-skip-browser-warning": "1" }
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            setGlobalCookiesStatus("Global cookies: read failed");
+            return;
+          }
+          const currentPath = String(data?.path || "");
+          const enabled = Boolean(data?.enabled);
+          if (currentPath && !String(cookiesPathInput.value || "").trim()) {
+            cookiesPathInput.value = currentPath;
+          }
+          if (!currentPath) {
+            setGlobalCookiesStatus("Global cookies: not set");
+          } else if (enabled) {
+            setGlobalCookiesStatus(`Global cookies: ${currentPath}`);
+          } else {
+            setGlobalCookiesStatus(`Global cookies: ${currentPath} (file not found yet)`);
+          }
+        } catch {
+          setGlobalCookiesStatus("Global cookies: read failed");
+        }
+      }
+
+      async function setGlobalCookiesPath(pathValue) {
+        try {
+          const response = await fetch("/api/tools/screenshot-lab/cookies/path", {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json", "ngrok-skip-browser-warning": "1" },
+            body: JSON.stringify({ path: String(pathValue || "").trim() })
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(String(data?.error || "set_global_cookies_failed"));
+          }
+          const resolved = String(data?.path || "");
+          if (resolved) {
+            cookiesPathInput.value = resolved;
+            setGlobalCookiesStatus(`Global cookies: ${resolved}`);
+            queueAudit("cookies_global_set", { detail: resolved, status: "ok" });
+          } else {
+            setGlobalCookiesStatus("Global cookies: not set");
+            queueAudit("cookies_global_cleared", { status: "ok" });
+          }
+        } catch (error) {
+          const message = String(error?.message || "failed");
+          setGlobalCookiesStatus(`Global cookies error: ${message}`);
+          queueAudit("cookies_global_error", { status: "error", message });
+        }
+      }
+
+      async function refreshManualState() {
+        if (!manualSessionId) return;
+        try {
+          const response = await fetch(`/api/tools/screenshot-lab/manual/state?session_id=${encodeURIComponent(manualSessionId)}`, {
+            headers: { accept: "application/json", "ngrok-skip-browser-warning": "1" }
+          });
+          if (!response.ok) return;
+          const data = await response.json();
+          if (!data?.active || !data?.session) {
+            manualSessionId = "";
+            manualTargetKey = "";
+            manualSessionCaptured = false;
+            setManualStatus("Manual session: inactive");
+            return;
+          }
+          const currentUrl = String(data.session.current_url || "");
+          const eventsCount = Number(data.session.events_count || 0);
+          const outputWidth = Number(data.session.width || 0);
+          const outputHeight = Number(data.session.height || 0);
+          const zoom = Number(data.session.zoom || 0);
+          setManualStatus(
+            `Manual session active: ${manualSessionId} | ${outputWidth}x${outputHeight} @ ${zoom}% | events: ${eventsCount} | ${currentUrl}`
+          );
+        } catch {
+          // noop
+        }
+      }
+
+      async function showManualEvents() {
+        if (!manualSessionId) {
+          manualEventsNode.style.display = "none";
+          return;
+        }
+        try {
+          const response = await fetch(`/api/tools/screenshot-lab/manual/events?session_id=${encodeURIComponent(manualSessionId)}&limit=120`, {
+            headers: { accept: "application/json", "ngrok-skip-browser-warning": "1" }
+          });
+          if (!response.ok) {
+            manualEventsNode.style.display = "block";
+            manualEventsNode.textContent = "Failed to load manual events.";
+            return;
+          }
+          const data = await response.json();
+          const lines = Array.isArray(data?.events)
+            ? data.events.map((event) => `[${event.ts}] ${event.type} ${event.selector || ""} ${event.text || ""} ${event.url || event.href || ""}`)
+            : [];
+          manualEventsNode.style.display = "block";
+          manualEventsNode.textContent = lines.join("\n") || "No events yet.";
+          queueAudit("manual_events_view", { detail: `session=${manualSessionId}` });
+        } catch {
+          manualEventsNode.style.display = "block";
+          manualEventsNode.textContent = "Failed to load manual events.";
+        }
+      }
+
+      function getManualActionForItem(item) {
+        if (!item) return "start";
+        if (!manualSessionId) return "start";
+        if (manualTargetKey !== item.key) return "start";
+        if (!manualSessionCaptured) return "capture";
+        return "stop";
+      }
+
+      function manualActionIcon(action) {
+        if (action === "capture") return "&#128247;";
+        if (action === "stop") return "&#9209;";
+        return "&#128433;";
+      }
+
+      function manualActionTitle(action) {
+        if (action === "capture") return "Capture";
+        if (action === "stop") return "Stop";
+        return "Start Manual";
+      }
+
+      async function handleManualButtonClick(item) {
+        if (!item || manualActionBusy) return;
+        const action = getManualActionForItem(item);
+        queueAudit("manual_cycle_click", { url: item.url, detail: action });
+        manualActionBusy = true;
+        try {
+          if (action === "capture") {
+            await captureManualForCurrent(item.key);
+            return;
+          }
+          if (action === "stop") {
+            await stopManualSession();
+            return;
+          }
+          await startManualForItem(item);
+        } finally {
+          manualActionBusy = false;
+          render();
+        }
+      }
+
+      function render() {
+        if (!items.length) {
+          listNode.innerHTML = '<div class="empty">No links yet.</div>';
+          return;
+        }
+        listNode.innerHTML = "";
+        for (const item of items) {
+          const manualAction = getManualActionForItem(item);
+          const card = document.createElement("div");
+          card.className = "item";
+          const host = hostOf(item.url);
+          const screenshot = screenshotSrc(item.url);
+          const imageSrc = item.mode === "screenshot" ? item.manualImage || screenshot : item.image;
+          const hasPreviewText = Boolean(item.title || item.description || item.siteName);
+          const title = item.title || host || item.url;
+          const subtitle = item.siteName || host || item.url;
+
+          card.innerHTML = `
+            <div class="item-head">
+              <a class="url" href="${item.url}" target="_blank" rel="noopener noreferrer">${item.url}</a>
+              <div class="actions">
+                <button class="action ${item.mode === "screenshot" ? "active" : ""}" data-action="screenshot">&#128248;</button>
+                <button class="action ${item.mode === "preview" ? "active" : ""}" data-action="preview">&#128240;</button>
+                <button class="action ${manualTargetKey === item.key && manualSessionId ? "active" : ""}" data-action="manual" title="${manualActionTitle(
+                  manualAction
+                )}">${manualActionIcon(manualAction)}</button>
+                <button class="action" data-action="open">&#8599;</button>
+                <button class="action" data-action="remove">&#8722;</button>
+              </div>
+            </div>
+            <div class="preview">
+              ${item.loading ? '<div class="muted">Loading preview...</div>' : ""}
+              ${item.error ? '<div class="muted">Preview failed. Try screenshot/manual mode.</div>' : ""}
+              ${
+                !item.loading && !item.error
+                  ? `
+                    <div>
+                      <strong>${title}</strong>
+                      ${hasPreviewText && item.description ? `<p>${item.description}</p>` : ""}
+                      <p>${subtitle}</p>
+                    </div>
+                    ${imageSrc ? `<img src="${imageSrc}" alt="preview" />` : ""}
+                  `
+                  : ""
+              }
+            </div>
+          `;
+
+          card.querySelector('[data-action="screenshot"]').addEventListener("click", () => switchMode(item, "screenshot"));
+          card.querySelector('[data-action="preview"]').addEventListener("click", () => switchMode(item, "preview"));
+          card.querySelector('[data-action="manual"]').addEventListener("click", () => {
+            void handleManualButtonClick(item);
+          });
+          card.querySelector('[data-action="open"]').addEventListener("click", () => {
+            queueAudit("open_url", { url: item.url });
+            window.open(item.url, "_blank", "noopener,noreferrer");
+          });
+          card.querySelector('[data-action="remove"]').addEventListener("click", () => removeItem(item.id));
+
+          const image = card.querySelector("img");
+          if (image) {
+            image.addEventListener("error", () => {
+              image.style.display = "none";
+              queueAudit("image_error", { url: item.url, mode: item.mode, status: "error" });
+            });
+          }
+
+          listNode.appendChild(card);
+        }
+      }
+
+      addOneBtn.addEventListener("click", addFromInput);
+      addManyBtn.addEventListener("click", addFromLines);
+      clearBtn.addEventListener("click", () => {
+        queueAudit("clear_all", { detail: `count=${items.length}` });
+        items.splice(0, items.length);
+        render();
+      });
+      logsBtn.addEventListener("click", () => {
+        queueAudit("open_logs", { detail: "manual" });
+        window.open("/api/tools/screenshot-lab/logs?limit=300", "_blank", "noopener,noreferrer");
+      });
+      useGlobalCookiesBtn.addEventListener("click", () => {
+        const pathValue = String(cookiesPathInput.value || "").trim();
+        if (!pathValue) {
+          setGlobalCookiesStatus("Global cookies: specify path first.");
+          return;
+        }
+        setGlobalCookiesPath(pathValue);
+      });
+      clearGlobalCookiesBtn.addEventListener("click", () => {
+        setGlobalCookiesPath("");
+      });
+      manualStartBtn.addEventListener("click", () => {
+        const target = getManualTargetItem();
+        if (!target) {
+          setManualStatus("Manual session: choose a target card first.");
+          return;
+        }
+        startManualForItem(target);
+      });
+      manualCaptureBtn.addEventListener("click", () => {
+        captureManualForCurrent(manualTargetKey);
+      });
+      manualSaveCookiesBtn.addEventListener("click", saveManualCookies);
+      manualStopBtn.addEventListener("click", stopManualSession);
+      manualEventsBtn.addEventListener("click", showManualEvents);
+
+      urlInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addFromInput();
+        }
+      });
+
+      window.addEventListener("beforeunload", () => {
+        if (auditTimer) {
+          clearTimeout(auditTimer);
+          auditTimer = null;
+        }
+        if (!auditQueue.length) return;
+        try {
+          const body = JSON.stringify({ events: auditQueue.slice(0, 50) });
+          navigator.sendBeacon(
+            "/api/tools/screenshot-lab/audit",
+            new Blob([body], { type: "application/json" })
+          );
+          auditQueue = [];
+        } catch {
+          // noop
+        }
+      });
+
+      const initialUrls = searchParams.get("urls");
+      if (initialUrls) {
+        String(initialUrls)
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .forEach((line) => ensureUniquePush(line));
+      }
+      queueAudit("page_open", {
+        detail: initialUrls ? "with_initial_urls" : "blank",
+        mode: initialMode
+      });
+      render();
+      refreshGlobalCookiesPath();
+      setInterval(refreshManualState, 3000);
+    </script>
+  </body>
+</html>

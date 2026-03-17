@@ -13,7 +13,7 @@ const defaultConfig = {
     "no_visual"
   ],
   formatHints: ["2:1", "1:1", "\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a/\u0426\u0438\u0442\u0430\u0442\u0430", "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442"],
-  priorities: ["\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e", "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f", "\u043f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438"],
+  priorities: ["Обязательно", "Рекомендуется", "При наличии"],
   searchLimits: { maxKeywords: 8, maxQueries: 3 },
   searchEngines: [
     { id: "youtube", label: "YouTube", url: "https://www.youtube.com/results?search_query=" },
@@ -104,19 +104,19 @@ const FORMAT_HINT_LABELS = {
   "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442": "\u{1F4DD} \u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442"
 };
 const PRIORITY_LABELS = {
-  "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e": "\u{1F534} \u041e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e",
-  "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f": "\u{1F7E1} \u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f",
-  "\u043f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438": "\u{1F7E2} \u041f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438"
+  Обязательно: "\u{1F534} Обязательно",
+  Рекомендуется: "\u{1F7E1} Рекомендуется",
+  "При наличии": "\u{1F7E2} При наличии"
 };
 const VISUAL_TYPE_DEFAULTS = {
-  video: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
-  portrait: { format_hint: "1:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
-  image: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
-  infographic: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
-  map: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
-  interface: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
-  generation_collage: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
-  graphic_element: { format_hint: "2:1", priority: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e" },
+  video: { format_hint: "2:1", priority: "Обязательно" },
+  portrait: { format_hint: "1:1", priority: "Обязательно" },
+  image: { format_hint: "2:1", priority: "Обязательно" },
+  infographic: { format_hint: "2:1", priority: "Обязательно" },
+  map: { format_hint: "2:1", priority: "Обязательно" },
+  interface: { format_hint: "2:1", priority: "Обязательно" },
+  generation_collage: { format_hint: "2:1", priority: "Обязательно" },
+  graphic_element: { format_hint: "2:1", priority: "Обязательно" },
   no_visual: { format_hint: null, priority: null }
 };
 const emptyVisualDecision = () => ({
@@ -198,16 +198,17 @@ const normalizeFormatHint = (value, config) => {
 };
 const normalizePriority = (value, config) => {
   if (typeof value !== "string") return null;
-  const trimmed = value.trim().toLowerCase();
+  const trimmed = value.trim();
   if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase();
   const legacy = {
-    high: "\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e",
-    medium: "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0443\u0435\u0442\u0441\u044f",
-    low: "\u043f\u0440\u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0438"
+    high: "Обязательно",
+    medium: "Рекомендуется",
+    low: "При наличии"
   };
-  if (legacy[trimmed]) return legacy[trimmed];
+  if (legacy[normalized]) return legacy[normalized];
   const list = config?.priorities ?? defaultConfig.priorities;
-  const match = list.find((priority) => priority.toLowerCase() === trimmed);
+  const match = list.find((priority) => priority.toLowerCase() === normalized);
   return match ?? null;
 };
 const normalizeKeywordList = (value, limit) => {
@@ -499,6 +500,15 @@ const safeUrlHint = (value) => {
   if (!text) return "";
   try {
     const parsed = new URL(text, window.location.origin);
+    const nestedPath = String(parsed.pathname ?? "").replace(/^\/+/, "");
+    if (/^https?:\/\//i.test(nestedPath)) {
+      try {
+        const nested = new URL(nestedPath);
+        return `${nested.origin}${nested.pathname}`;
+      } catch {
+        // fallback to parsed url below
+      }
+    }
     return `${parsed.origin}${parsed.pathname}`;
   } catch {
     return truncateText(text, 200);
@@ -719,7 +729,7 @@ const countSyllables = (text) => {
 const computeDurationHint = (text) => {
   const syllables = countSyllables(text);
   if (!syllables) return null;
-  return Math.ceil(syllables / 4.5);
+  return Math.ceil(syllables / 6);
 };
 const LEADING_NUMBERED_LINE_RE = /^\s*\d{1,3}[.)]\s*\S/;
 const COMMENT_NUMBER_PREFIX_RE = /^\s*\d{1,3}[.)]\s*/;
@@ -1213,9 +1223,18 @@ const getReadableLinkLabel = (value, maxLength = 240) => {
   return `${decoded.slice(0, maxLength).trimEnd()}...`;
 };
 const getPreviewImageSrc = (value) => {
-  const normalized = normalizeLinkUrl(value);
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/api/link/")) return raw;
+  if (raw.startsWith("data:")) return raw;
+  const normalized = normalizeLinkUrl(raw);
   if (!normalized) return "";
   return `/api/link/image?url=${encodeURIComponent(normalized)}`;
+};
+const buildScreenshotPreviewImageSrc = (pageUrl) => {
+  const normalized = normalizeLinkUrl(pageUrl);
+  if (!normalized) return "";
+  return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=10`;
 };
 const getUrlHost = (value) => {
   try {
@@ -1230,9 +1249,49 @@ const parseLinkLine = (line) => {
   if (!trimmed) return null;
   const match = trimmed.match(/^(?:\d+\.\s*)?(\S+)$/);
   if (!match) return null;
-  let token = match[1].replace(/[)\],.]+$/g, "");
+  let token = match[1]
+    .replace(/^[|│┃¦❘>]+\s*/g, "")
+    .replace(/[)\],.]+$/g, "");
   if (!isLikelyUrlToken(token)) return null;
   return { url: normalizeLinkUrl(token), raw: trimmed };
+};
+const parseIndexedReferenceLine = (line) => {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d+)\.\s*(.+)$/);
+  if (!match) return null;
+  const index = Number.parseInt(match[1], 10);
+  const value = String(match[2] ?? "")
+    .replace(/^[|│┃¦❘>]+\s*/g, "")
+    .trim();
+  if (!value) return null;
+  return {
+    index: Number.isFinite(index) ? index : null,
+    value,
+    raw: trimmed
+  };
+};
+const takeReferenceHint = (hints = [], refIndex = null) => {
+  if (!Array.isArray(hints) || hints.length === 0) return null;
+  let bestPos = -1;
+  if (Number.isFinite(refIndex)) {
+    let bestDelta = Number.POSITIVE_INFINITY;
+    hints.forEach((item, idx) => {
+      if (!item || !Number.isFinite(item.index) || item.index > refIndex) return;
+      const delta = refIndex - item.index;
+      if (delta <= bestDelta) {
+        bestDelta = delta;
+        bestPos = idx;
+      }
+    });
+  }
+  if (bestPos === -1) {
+    bestPos = hints.length - 1;
+  }
+  const [picked] = hints.splice(bestPos, 1);
+  const text = String(picked?.text ?? "").trim();
+  if (!text) return null;
+  return text;
 };
 const dedupeLinks = (links = []) => {
   const seen = new Set();
@@ -1257,13 +1316,67 @@ const getSectionKeyFromMeta = (section) => {
   if (sectionId) return `id:${sectionId}`;
   return "untitled";
 };
+const getLooseSectionKeyFromMeta = (section) => {
+  const sectionId = String(section?.section_id ?? "").trim();
+  if (sectionId && !isLegacySectionId(sectionId)) return `id:${sectionId}`;
+  const titleKey = normalizeSectionTitleForMerge(section?.section_title ?? "");
+  if (titleKey) return `title:${titleKey}`;
+  if (sectionId) return `id:${sectionId}`;
+  return "untitled";
+};
+const normalizeTextForHintMatch = (text) =>
+  String(text ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+const tokenizeTextForHintMatch = (text) => {
+  const normalized = normalizeTextForHintMatch(text);
+  if (!normalized) return [];
+  return normalized.split(" ").filter(Boolean);
+};
+const scoreHintAgainstSegment = (segmentText, hintText, hintTokens = null) => {
+  const hintNorm = normalizeTextForHintMatch(hintText);
+  const segmentNorm = normalizeTextForHintMatch(segmentText);
+  if (!hintNorm || !segmentNorm) return 0;
+  if (segmentNorm === hintNorm) return 1.25;
+  if (segmentNorm.includes(hintNorm)) return 1.1;
+  if (hintNorm.length >= 20 && hintNorm.includes(segmentNorm)) return 0.95;
+  const left = tokenizeTextForHintMatch(segmentNorm);
+  const right = Array.isArray(hintTokens) ? hintTokens : tokenizeTextForHintMatch(hintNorm);
+  if (!left.length || !right.length) return 0;
+  const leftSet = new Set(left);
+  let overlap = 0;
+  right.forEach((token) => {
+    if (leftSet.has(token)) overlap += 1;
+  });
+  if (overlap === 0) return 0;
+  const union = new Set([...left, ...right]).size;
+  const jaccard = union > 0 ? overlap / union : 0;
+  const coverage = right.length > 0 ? overlap / right.length : 0;
+  return Math.max(jaccard, coverage * 0.92);
+};
 const extractLinksFromScript = (text) => {
   const { blocks } = splitScriptIntoHeadingBlocks(text);
   const linkGroups = new Map();
+  const segmentLinkHints = [];
   const cleanLines = [];
   let sectionIndex = 0;
   const sectionTitleCounts = new Map();
   let currentSection = null;
+  const addLinkToGroup = (section, link) => {
+    if (!link) return;
+    const key = getSectionKeyFromMeta(section);
+    if (!linkGroups.has(key)) {
+      linkGroups.set(key, {
+        section_id: section?.section_id ?? null,
+        section_title: section?.section_title ?? null,
+        section_index: section?.section_index ?? null,
+        links: []
+      });
+    }
+    linkGroups.get(key).links.push(link);
+  };
   for (const block of blocks) {
     if (block.heading) {
       const hasContent = block.lines.some((line) => {
@@ -1290,19 +1403,71 @@ const extractLinksFromScript = (text) => {
       }
       cleanLines.push(block.headingLine ?? `### ${block.heading}`);
     }
-    for (const line of block.lines) {
-      const link = parseLinkLine(line);
-      if (link) {
-        const key = getSectionKeyFromMeta(currentSection);
-        if (!linkGroups.has(key)) {
-          linkGroups.set(key, {
-            section_id: currentSection?.section_id ?? null,
-            section_title: currentSection?.section_title ?? null,
-            section_index: currentSection?.section_index ?? null,
-            links: []
+    let refsConsumed = 0;
+    const prefixRefs = [];
+    for (let idx = 0; idx < block.lines.length; idx += 1) {
+      const line = block.lines[idx];
+      const trimmed = String(line ?? "").trim();
+      if (!trimmed) {
+        if (prefixRefs.length === 0) continue;
+        break;
+      }
+      const indexedRef = parseIndexedReferenceLine(trimmed);
+      if (indexedRef) {
+        prefixRefs.push(indexedRef);
+        refsConsumed = idx + 1;
+        continue;
+      }
+      const plainLink = parseLinkLine(trimmed);
+      if (plainLink && prefixRefs.length > 0) {
+        prefixRefs.push({ index: null, value: trimmed, raw: trimmed });
+        refsConsumed = idx + 1;
+        continue;
+      }
+      break;
+    }
+    const hasReferencePrefix =
+      prefixRefs.length > 0 &&
+      prefixRefs.some((item) => Number.isFinite(item.index)) &&
+      prefixRefs.some((item) => Boolean(parseLinkLine(item.value)));
+    if (hasReferencePrefix) {
+      const pendingHints = [];
+      prefixRefs.forEach((entry) => {
+        const content = String(entry?.value ?? "").trim();
+        if (!content) return;
+        const link = parseLinkLine(content);
+        if (link) {
+          addLinkToGroup(currentSection, link);
+          const hintText = takeReferenceHint(pendingHints, entry.index);
+          if (hintText) {
+            segmentLinkHints.push({
+              section_id: currentSection?.section_id ?? null,
+              section_title: currentSection?.section_title ?? null,
+              section_index: currentSection?.section_index ?? null,
+              url: link.url,
+              raw: link.raw ?? content,
+              quote_hint: hintText
+            });
+          }
+          return;
+        }
+        if (content.length >= 8) {
+          pendingHints.push({
+            index: Number.isFinite(entry.index) ? entry.index : null,
+            text: content
           });
         }
-        linkGroups.get(key).links.push(link);
+      });
+    }
+    const skipUntil = hasReferencePrefix ? refsConsumed : 0;
+    for (let lineIndex = 0; lineIndex < block.lines.length; lineIndex += 1) {
+      const line = block.lines[lineIndex];
+      if (skipUntil > 0 && lineIndex < skipUntil) {
+        continue;
+      }
+      const link = parseLinkLine(line);
+      if (link) {
+        addLinkToGroup(currentSection, link);
         cleanLines.push("");
         continue;
       }
@@ -1323,16 +1488,63 @@ const extractLinksFromScript = (text) => {
     search_decision: emptySearchDecision(),
     search_open: false,
   }));
-  return { cleanText, linkSegments };
+  const dedupedSegmentHints = [];
+  const seenSegmentHints = new Set();
+  segmentLinkHints.forEach((item) => {
+    const url = normalizeLinkUrl(item?.url ?? "");
+    if (!url) return;
+    const sectionKey = getLooseSectionKeyFromMeta(item);
+    const canonical = canonicalizeLinkUrl(url);
+    const hintNorm = normalizeTextForHintMatch(item?.quote_hint ?? "");
+    const dedupeKey = `${sectionKey}|${canonical}|${hintNorm}`;
+    if (seenSegmentHints.has(dedupeKey)) return;
+    seenSegmentHints.add(dedupeKey);
+    dedupedSegmentHints.push({
+      ...item,
+      url
+    });
+  });
+  return { cleanText, linkSegments, segmentLinkHints: dedupedSegmentHints };
 };
 const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
   const map = new Map();
   const order = [];
   const looseTitleToStrictKey = new Map();
+  const linkOwnerByCanonicalUrl = new Map();
+  const historyOwnerByCanonicalUrl = new Map();
 
-  const upsert = (segment, targetKey, mode = "merge") => {
+  existing.forEach((segment) => {
+    const key = getSectionKeyFromMeta(segment);
+    dedupeLinks(segment.links ?? []).forEach((link) => {
+      const canonical = canonicalizeLinkUrl(link?.url ?? "");
+      if (!canonical) return;
+      const currentOwner = historyOwnerByCanonicalUrl.get(canonical);
+      if (!currentOwner || key.localeCompare(currentOwner) < 0) {
+        historyOwnerByCanonicalUrl.set(canonical, key);
+      }
+    });
+  });
+
+  const pickOwnedLinks = (links = [], key, source = "history") => {
+    const accepted = [];
+    dedupeLinks(links).forEach((link) => {
+      const canonical = canonicalizeLinkUrl(link?.url ?? "");
+      if (!canonical) return;
+      const owner = linkOwnerByCanonicalUrl.get(canonical);
+      if (owner && owner !== key) return;
+      if (!owner && source === "history") {
+        const preferred = historyOwnerByCanonicalUrl.get(canonical);
+        if (preferred && preferred !== key) return;
+      }
+      if (!owner) linkOwnerByCanonicalUrl.set(canonical, key);
+      accepted.push(link);
+    });
+    return accepted;
+  };
+
+  const upsert = (segment, targetKey, mode = "merge", source = "history") => {
     const key = targetKey || getSectionKeyFromMeta(segment);
-    const links = dedupeLinks(segment.links ?? []);
+    const links = pickOwnedLinks(segment.links ?? [], key, source);
     const current = map.get(key);
     if (!current) {
       map.set(key, { segment: { ...segment }, links });
@@ -1362,7 +1574,7 @@ const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
 
   extracted.forEach((segment) => {
     const strictKey = getSectionKeyFromMeta(segment);
-    upsert(segment, strictKey, "replace_meta");
+    upsert(segment, strictKey, "replace_meta", "incoming");
     const looseTitle = normalizeSectionTitleForMerge(segment.section_title ?? "");
     if (looseTitle && !looseTitleToStrictKey.has(looseTitle)) {
       looseTitleToStrictKey.set(looseTitle, strictKey);
@@ -1372,16 +1584,16 @@ const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
   existing.forEach((segment) => {
     const strictKey = getSectionKeyFromMeta(segment);
     if (map.has(strictKey)) {
-      upsert(segment, strictKey, "merge");
+      upsert(segment, strictKey, "merge", "history");
       return;
     }
     const looseTitle = normalizeSectionTitleForMerge(segment.section_title ?? "");
     const mappedKey = looseTitle ? looseTitleToStrictKey.get(looseTitle) : "";
     if (mappedKey) {
-      upsert(segment, mappedKey, "merge");
+      upsert(segment, mappedKey, "merge", "history");
       return;
     }
-    upsert(segment, strictKey, "merge");
+    upsert(segment, strictKey, "merge", "history");
   });
 
   return order.map((key) => {
@@ -1408,6 +1620,92 @@ const mergeLinkSegmentsIntoSegments = (segments, linkSegments) => {
     }
   });
   return result;
+};
+const applySegmentLinkHints = (segments = [], segmentLinkHints = []) => {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return { segments, appliedCount: 0 };
+  }
+  if (!Array.isArray(segmentLinkHints) || segmentLinkHints.length === 0) {
+    return { segments, appliedCount: 0 };
+  }
+
+  const nextSegments = segments.map((segment) => ({
+    ...segment,
+    links: Array.isArray(segment.links) ? dedupeLinks(segment.links) : []
+  }));
+
+  const candidatesBySection = new Map();
+  nextSegments.forEach((segment, index) => {
+    if (normalizeSegmentBlockType(segment?.block_type) === "links") return;
+    const strictKey = getSectionKeyFromMeta(segment);
+    const looseKey = getLooseSectionKeyFromMeta(segment);
+    const keys = new Set([strictKey, looseKey].filter(Boolean));
+    keys.forEach((key) => {
+      if (!candidatesBySection.has(key)) candidatesBySection.set(key, []);
+      candidatesBySection.get(key).push({ index, segment });
+    });
+  });
+
+  let appliedCount = 0;
+  const seenAssignments = new Set();
+  segmentLinkHints.forEach((hint) => {
+    const url = normalizeLinkUrl(hint?.url ?? "");
+    const canonical = canonicalizeLinkUrl(url);
+    if (!url || !canonical) return;
+
+    const strictKey = getSectionKeyFromMeta(hint);
+    const looseKey = getLooseSectionKeyFromMeta(hint);
+    const rawCandidates = [];
+    [strictKey, looseKey].forEach((key) => {
+      if (!key) return;
+      const entries = candidatesBySection.get(key);
+      if (!entries?.length) return;
+      rawCandidates.push(...entries);
+    });
+    if (!rawCandidates.length) return;
+
+    const uniqueCandidates = [];
+    const seenIndexes = new Set();
+    rawCandidates.forEach((item) => {
+      if (seenIndexes.has(item.index)) return;
+      seenIndexes.add(item.index);
+      uniqueCandidates.push(item);
+    });
+    if (!uniqueCandidates.length) return;
+
+    const hintText = String(hint?.quote_hint ?? "").trim();
+    const hintTokens = tokenizeTextForHintMatch(hintText);
+    let bestCandidate = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    uniqueCandidates.forEach((candidate) => {
+      const score = hintText
+        ? scoreHintAgainstSegment(candidate.segment?.text_quote ?? "", hintText, hintTokens)
+        : 0.01;
+      if (!bestCandidate || score > bestScore) {
+        bestCandidate = candidate;
+        bestScore = score;
+      }
+    });
+
+    if (!bestCandidate) return;
+    if (hintText && bestScore < 0.2) return;
+
+    const assignmentKey = `${bestCandidate.segment.segment_id}|${canonical}`;
+    if (seenAssignments.has(assignmentKey)) return;
+
+    const nextLinks = dedupeLinks([
+      ...(Array.isArray(bestCandidate.segment.links) ? bestCandidate.segment.links : []),
+      { url, raw: hint?.raw ?? null }
+    ]);
+    if (nextLinks.length === (bestCandidate.segment.links ?? []).length) return;
+
+    bestCandidate.segment.links = nextLinks;
+    seenAssignments.add(assignmentKey);
+    appliedCount += 1;
+  });
+
+  return { segments: nextSegments, appliedCount };
 };
 const collapseDuplicateLinkOnlyTopics = (segments = []) => {
   if (!Array.isArray(segments) || segments.length === 0) return segments;
@@ -1774,6 +2072,57 @@ const LinksCard = React.memo(function LinksCard({
   const [open, setOpen] = useState(false);
   const [previews, setPreviews] = useState({});
   const [editing, setEditing] = useState({});
+  const [screenshotMode, setScreenshotMode] = useState({});
+
+  const setScreenshotPreviewState = React.useCallback((url) => {
+    const normalizedUrl = normalizeLinkUrl(url);
+    if (!normalizedUrl) return;
+    const key = canonicalizeLinkUrl(normalizedUrl) || normalizedUrl;
+    const host = getUrlHost(normalizedUrl);
+    setPreviews((prev) => ({
+      ...prev,
+      [key]: {
+        loading: false,
+        loaded: true,
+        title: getReadableLinkLabel(normalizedUrl) || host || normalizedUrl,
+        description: "",
+        image: buildScreenshotPreviewImageSrc(normalizedUrl),
+        siteName: host || normalizedUrl
+      }
+    }));
+  }, []);
+
+  const toggleScreenshotMode = React.useCallback((url) => {
+    const normalizedUrl = normalizeLinkUrl(url);
+    if (!normalizedUrl) return;
+    const key = canonicalizeLinkUrl(normalizedUrl) || normalizedUrl;
+    const currentlyEnabled = Boolean(screenshotMode[key]);
+    if (currentlyEnabled) {
+      setScreenshotMode((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setPreviews((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    setScreenshotMode((prev) => ({ ...prev, [key]: true }));
+    setScreenshotPreviewState(normalizedUrl);
+  }, [screenshotMode, setScreenshotPreviewState]);
+
+  const openScreenshotLab = React.useCallback(() => {
+    const urls = (segment.links ?? [])
+      .map((item) => normalizeLinkUrl(item?.url ?? ""))
+      .filter(Boolean)
+      .join("\n");
+    const query = urls ? `?urls=${encodeURIComponent(urls)}` : "";
+    window.open(`/tools/screenshot-lab${query}`, "_blank", "noopener,noreferrer");
+  }, [segment.links]);
+
   useEffect(() => {
     if (!open) return;
     const links = segment.links ?? [];
@@ -1781,6 +2130,12 @@ const LinksCard = React.memo(function LinksCard({
       const url = normalizeLinkUrl(link?.url ?? "");
       if (!url) return;
       const key = canonicalizeLinkUrl(url) || url;
+      if (screenshotMode[key]) {
+        if (!previews[key]?.image) {
+          setScreenshotPreviewState(url);
+        }
+        return;
+      }
       if (previews[key]?.loading || previews[key]?.loaded || previews[key]?.error) return;
       setPreviews((prev) => ({ ...prev, [key]: { loading: true } }));
       fetchJsonSafe(`/api/link/preview?url=${encodeURIComponent(url)}`)
@@ -1802,7 +2157,7 @@ const LinksCard = React.memo(function LinksCard({
           setPreviews((prev) => ({ ...prev, [key]: { loading: false, loaded: true, error: true } }));
         });
     });
-  }, [open, segment.links, previews]);
+  }, [open, previews, screenshotMode, segment.links, setScreenshotPreviewState]);
   return (
     <article className="segment-card links-card">
       <div className="segment-head">
@@ -1815,6 +2170,15 @@ const LinksCard = React.memo(function LinksCard({
           </div>
         </div>
         <div className="segment-head-actions">
+          <button
+            className="btn ghost icon-round"
+            type="button"
+            onClick={openScreenshotLab}
+            title="Screenshot Lab"
+            aria-label="Screenshot Lab"
+          >
+            📸
+          </button>
           <button
             className="btn ghost icon-round"
             type="button"
@@ -1867,6 +2231,7 @@ const LinksCard = React.memo(function LinksCard({
             const sectionTitle = getSegmentGroupTitle(segment);
             const previewKey = canonicalizeLinkUrl(url) || url;
             const preview = url ? previews[previewKey] : null;
+            const isScreenshotPreview = Boolean(url && screenshotMode[previewKey]);
             const host = getUrlHost(url);
             const linkLabel = getReadableLinkLabel(url);
             const isEditing = Boolean(editing[linkIndex]);
@@ -1946,6 +2311,20 @@ const LinksCard = React.memo(function LinksCard({
                     <button
                       className="btn small ghost"
                       type="button"
+                      onClick={() => toggleScreenshotMode(url)}
+                      title={
+                        isScreenshotPreview
+                          ? "\u0412\u0435\u0440\u043d\u0443\u0442\u044c \u043e\u0431\u044b\u0447\u043d\u043e\u0435 \u043f\u0440\u0435\u0432\u044c\u044e"
+                          : "\u0421\u0434\u0435\u043b\u0430\u0442\u044c \u0441\u043a\u0440\u0438\u043d\u0448\u043e\u0442 \u0432\u043c\u0435\u0441\u0442\u043e \u043f\u0440\u0435\u0432\u044c\u044e"
+                      }
+                      aria-label="\u0421\u043a\u0440\u0438\u043d\u0448\u043e\u0442"
+                      disabled={!url}
+                    >
+                      📸
+                    </button>
+                    <button
+                      className="btn small ghost"
+                      type="button"
                       onClick={() => onLinkRemove(index, linkIndex)}
                       title={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443"}
                       aria-label={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443"}
@@ -1997,9 +2376,21 @@ const LinksCard = React.memo(function LinksCard({
                               alt={preview.title || "preview"}
                               onError={(event) => {
                                 const img = event.currentTarget;
-                                if (img.dataset.fallbackApplied === "1") return;
+                                if (isScreenshotPreview) {
+                                  img.style.display = "none";
+                                  return;
+                                }
+                                if (img.dataset.fallbackApplied === "1") {
+                                  img.style.display = "none";
+                                  return;
+                                }
                                 img.dataset.fallbackApplied = "1";
-                                img.src = preview.image;
+                                const screenshotFallback = buildScreenshotPreviewImageSrc(url);
+                                if (screenshotFallback) {
+                                  img.src = screenshotFallback;
+                                  return;
+                                }
+                                img.style.display = "none";
                               }}
                             />
                           </div>
@@ -3374,7 +3765,7 @@ export default function App() {
       if (docId && hasUnsavedChanges) {
         await saveSessionSnapshot(buildSessionPayload(), "pre_generate");
       }
-      const { cleanText, linkSegments: extractedLinks } = extractLinksFromScript(scriptText);
+      const { cleanText, linkSegments: extractedLinks, segmentLinkHints } = extractLinksFromScript(scriptText);
       const existingLinks = segments.filter((segment) => segment.block_type === "links");
       const mergedLinks = mergeLinkSegmentsBySection(existingLinks, extractedLinks);
       if (cleanText !== scriptText) {
@@ -3405,15 +3796,19 @@ export default function App() {
       const mergedWithComments = splitOutLeadingCommentSegments(mergedBase);
       const normalizedComments = removeDuplicateCommentSegments(mergedWithComments);
       const merged = ensureEmptySectionTopics(normalizedComments, cleanText);
-      const linksFromMerged = merged.filter((segment) => segment.block_type === "links");
+      const {
+        segments: mergedWithSegmentLinks,
+        appliedCount: segmentLinkHintsApplied
+      } = applySegmentLinkHints(merged, segmentLinkHints);
+      const linksFromMerged = mergedWithSegmentLinks.filter((segment) => segment.block_type === "links");
       const orderedSegments = collapseDuplicateLinkOnlyTopics(
-        mergeLinkSegmentsIntoSegments(merged, linksFromMerged)
+        mergeLinkSegmentsIntoSegments(mergedWithSegmentLinks, linksFromMerged)
       );
       setSegments(orderedSegments);
       setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
 
-      const visualCount = merged.filter((segment) => hasVisualDecisionContent(segment.visual_decision)).length;
-      const searchCount = merged.filter((segment) => hasSearchDecisionContent(segment.search_decision)).length;
+      const visualCount = mergedWithSegmentLinks.filter((segment) => hasVisualDecisionContent(segment.visual_decision)).length;
+      const searchCount = mergedWithSegmentLinks.filter((segment) => hasSearchDecisionContent(segment.search_decision)).length;
       const diff = data?.segmentation_diff ?? null;
       if (diff && typeof diff === "object") {
         const added = Number(diff.added ?? 0);
@@ -3423,14 +3818,17 @@ export default function App() {
         const preservedManual = Number(diff.preserved_manual ?? 0);
         const collapsedLinks = Number(diff.link_topics_collapsed ?? 0);
         setStatus(
-          `Сегменты готовы: ${merged.length}. NEW +${added}, ~${changed}, =${same}, -${removed}. ` +
+          `Сегменты готовы: ${mergedWithSegmentLinks.length}. NEW +${added}, ~${changed}, =${same}, -${removed}. ` +
             `Ручные сохранены: ${preservedManual}. Схлопнуто дублей ссылок: ${collapsedLinks}. ` +
-            `Визуал: ${visualCount}. Поиск: ${searchCount}.`
+            `Ссылки к сегментам: ${segmentLinkHintsApplied}. Визуал: ${visualCount}. Поиск: ${searchCount}.`
         );
       } else if (visualCount === 0 && searchCount === 0) {
-        setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${merged.length}. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 AI Help \u0443 \u043d\u0443\u0436\u043d\u043e\u0439 \u0442\u0435\u043c\u044b, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0432\u0438\u0437\u0443\u0430\u043b \u0438 \u043f\u043e\u0438\u0441\u043a.`);
+        setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${mergedWithSegmentLinks.length}. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 AI Help \u0443 \u043d\u0443\u0436\u043d\u043e\u0439 \u0442\u0435\u043c\u044b, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0432\u0438\u0437\u0443\u0430\u043b \u0438 \u043f\u043e\u0438\u0441\u043a.`);
       } else {
-        setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${merged.length}. \u0412\u0438\u0437\u0443\u0430\u043b: ${visualCount}. \u041f\u043e\u0438\u0441\u043a: ${searchCount}.`);
+        setStatus(
+          `\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${mergedWithSegmentLinks.length}. ` +
+            `Ссылки к сегментам: ${segmentLinkHintsApplied}. Визуал: ${visualCount}. Поиск: ${searchCount}.`
+        );
       }
     } catch (error) {
       setStatus(error.message);
@@ -3786,6 +4184,10 @@ export default function App() {
               if (updates && Object.prototype.hasOwnProperty.call(updates, "type")) {
                 const nextType = String(updates.type ?? "").trim().toLowerCase();
                 const defaults = getVisualDefaultsByType(nextType, config);
+                const hasFormatOverride = Object.prototype.hasOwnProperty.call(updates, "format_hint");
+                const hasPriorityOverride = Object.prototype.hasOwnProperty.call(updates, "priority");
+                if (!hasFormatOverride) nextVisual.format_hint = defaults.format_hint;
+                if (!hasPriorityOverride) nextVisual.priority = defaults.priority;
                 if (nextType === "no_visual") {
                   return {
                     ...segment,
@@ -4147,6 +4549,21 @@ export default function App() {
     }
     copyToClipboard(topics.join("\n"), `For Figma: скопировано тем (${topics.length}).`);
   }, [copyToClipboard, scriptText]);
+  const handleOpenAllLinksScreenshotMode = React.useCallback(() => {
+    const urls = allScenarioLinks
+      .map((item) => normalizeLinkUrl(item?.url ?? ""))
+      .filter(Boolean)
+      .join("\n");
+    if (!urls) {
+      setStatus("Ссылок для screenshot mode пока нет.");
+      return;
+    }
+    const query = new URLSearchParams({
+      urls,
+      mode: "screenshot"
+    });
+    window.open(`/tools/screenshot-lab?${query.toString()}`, "_blank", "noopener,noreferrer");
+  }, [allScenarioLinks]);
   const handleThemeToggle = React.useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
@@ -4339,8 +4756,20 @@ export default function App() {
         {linksPanelOpen ? (
           <div className="all-links-panel">
             <div className="all-links-panel-head">
-              <strong>Все ссылки сценария</strong>
-              <span>{allScenarioLinks.length}</span>
+              <div className="all-links-panel-title">
+                <strong>Все ссылки сценария</strong>
+                <span>{allScenarioLinks.length}</span>
+              </div>
+              <div className="query-actions">
+                <button
+                  className="btn ghost small"
+                  type="button"
+                  onClick={handleOpenAllLinksScreenshotMode}
+                  disabled={allScenarioLinks.length === 0}
+                >
+                  {"📸 Screenshot mode"}
+                </button>
+              </div>
             </div>
             {allScenarioLinks.length === 0 ? (
               <div className="links-empty">Ссылок пока нет.</div>

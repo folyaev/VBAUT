@@ -1,9 +1,12 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 
 export function registerGenerationRoutes(app, deps) {
   const {
+    applySegmentLinkHintsToSegments,
     appendEvent,
     appendLinkDecisionsOverride,
+    buildSegmentLinkHintsFromRawText,
     collapseDuplicateLinkOnlyTopics,
     ensureMediaTopicFoldersForSegments,
     generateEnglishSearchDecisionsForSegments,
@@ -16,6 +19,7 @@ export function registerGenerationRoutes(app, deps) {
     mergeSegmentsWithHistory,
     normalizeDocumentForResponse,
     normalizeLinkSegmentsInput,
+    normalizeSegmentLinkHintsInput,
     normalizeSearchDecisionInput,
     normalizeSegmentForDecision,
     normalizeSegmentWithVisual,
@@ -26,6 +30,31 @@ export function registerGenerationRoutes(app, deps) {
     syncDocumentSegmentationState,
     writeJson
   } = deps;
+
+  async function listVersions(dir, baseName) {
+    const entries = await fs.readdir(dir).catch(() => []);
+    const prefix = `${baseName}.v`;
+    return entries
+      .filter((name) => name.startsWith(prefix) && name.endsWith(".json"))
+      .map((name) => {
+        const match = name.match(/\.v(\d+)\.json$/);
+        return match ? Number(match[1]) : 0;
+      })
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b);
+  }
+
+  async function resolveSourceVersion(dir, baseName, requested) {
+    const versions = await listVersions(dir, baseName);
+    if (versions.length === 0) return null;
+    if (Number.isFinite(requested) && requested > 0) {
+      return versions.includes(requested) ? requested : null;
+    }
+    if (versions.length >= 2) {
+      return versions[versions.length - 2];
+    }
+    return versions[versions.length - 1];
+  }
 
   app.post("/api/documents/:id/segments:generate", async (req, res) => {
     try {
@@ -65,6 +94,7 @@ export function registerGenerationRoutes(app, deps) {
       );
       const incomingLinkSegments = normalizeLinkSegmentsInput(req.body?.link_segments);
       const mergedLinkSegments = mergeLinkSegmentsBySection(existingLinkSegments, incomingLinkSegments);
+      const explicitSegmentHints = normalizeSegmentLinkHintsInput(req.body?.segment_link_hints);
       const collapsedLinkTopicsResult = collapseDuplicateLinkOnlyTopics(
         mergedLinkSegments.length > 0 ? [...mergedSegments, ...mergedLinkSegments] : mergedSegments
       );
@@ -73,11 +103,21 @@ export function registerGenerationRoutes(app, deps) {
       const finalLinkSegments = mergedWithLinks.filter(
         (segment) => String(segment?.block_type ?? "").trim().toLowerCase() === "links"
       );
+      const fallbackSegmentHints =
+        explicitSegmentHints.length > 0 ? [] : buildSegmentLinkHintsFromRawText(text, finalLinkSegments);
+      const segmentHints = explicitSegmentHints.length > 0 ? explicitSegmentHints : fallbackSegmentHints;
+      const { segments: mergedWithSegmentLinks, appliedCount: segmentLinksApplied } = applySegmentLinkHintsToSegments(
+        mergedWithLinks,
+        segmentHints
+      );
+      const finalLinkSegmentsWithHints = mergedWithSegmentLinks.filter(
+        (segment) => String(segment?.block_type ?? "").trim().toLowerCase() === "links"
+      );
       const decisionsOverrideWithLinks = Array.isArray(decisionsOverride)
-        ? appendLinkDecisionsOverride(decisionsOverride, finalLinkSegments)
+        ? appendLinkDecisionsOverride(decisionsOverride, finalLinkSegmentsWithHints)
         : null;
       const { segmentsData, decisionsData } = splitSegmentsAndDecisions(
-        mergedWithLinks,
+        mergedWithSegmentLinks,
         decisionsOverrideWithLinks
       );
       const ensuredMediaTopics = await ensureMediaTopicFoldersForSegments(segmentsData);
@@ -98,7 +138,9 @@ export function registerGenerationRoutes(app, deps) {
           media_topic_folders_ensured: ensuredMediaTopics.length,
           segmentation_diff: {
             ...(diff ?? {}),
-            link_topics_collapsed: mergedLinkTopicsCollapsed
+            link_topics_collapsed: mergedLinkTopicsCollapsed,
+            segment_link_hints: segmentHints.length,
+            segment_links_applied: segmentLinksApplied
           }
         }
       });
@@ -110,8 +152,110 @@ export function registerGenerationRoutes(app, deps) {
         media_topic_folders_ensured: ensuredMediaTopics.length,
         segmentation_diff: {
           ...(diff ?? {}),
-          link_topics_collapsed: mergedLinkTopicsCollapsed
+          link_topics_collapsed: mergedLinkTopicsCollapsed,
+          segment_link_hints: segmentHints.length,
+          segment_links_applied: segmentLinksApplied
         }
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents/:id/decisions-realign", async (req, res) => {
+    try {
+      const docId = req.params.id;
+      const dir = getDocDir(docId);
+      const document = await readOptionalJson(path.join(dir, "document.json"));
+      if (!document) return res.status(404).json({ error: "Document not found" });
+
+      const currentSegments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
+      const currentDecisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      if (!Array.isArray(currentSegments) || currentSegments.length === 0) {
+        return res.status(400).json({ error: "Current segments not found" });
+      }
+
+      const requestedSegmentsVersionRaw = Number(req.body?.source_segments_version);
+      const requestedDecisionsVersionRaw = Number(req.body?.source_decisions_version);
+      const requestedSegmentsVersion = Number.isFinite(requestedSegmentsVersionRaw) ? requestedSegmentsVersionRaw : null;
+      const requestedDecisionsVersion = Number.isFinite(requestedDecisionsVersionRaw) ? requestedDecisionsVersionRaw : null;
+
+      const sourceSegmentsVersion = await resolveSourceVersion(dir, "segments", requestedSegmentsVersion);
+      const sourceDecisionsVersion = await resolveSourceVersion(dir, "decisions", requestedDecisionsVersion);
+      if (!sourceSegmentsVersion || !sourceDecisionsVersion) {
+        return res.status(400).json({ error: "Source segments/decisions versions not found" });
+      }
+
+      const sourceSegments = (await readOptionalJson(path.join(dir, `segments.v${sourceSegmentsVersion}.json`))) ?? [];
+      const sourceDecisions = (await readOptionalJson(path.join(dir, `decisions.v${sourceDecisionsVersion}.json`))) ?? [];
+      if (!Array.isArray(sourceSegments) || sourceSegments.length === 0) {
+        return res.status(400).json({ error: "Source segments are empty" });
+      }
+      if (!Array.isArray(sourceDecisions) || sourceDecisions.length === 0) {
+        return res.status(400).json({ error: "Source decisions are empty" });
+      }
+
+      const currentNonLinks = currentSegments.filter(
+        (segment) => String(segment?.block_type ?? "").trim().toLowerCase() !== "links"
+      );
+      const { decisionsOverride, diff } = mergeSegmentsWithHistory(
+        currentNonLinks,
+        sourceSegments,
+        sourceDecisions
+      );
+
+      const overrideMap = new Map(
+        (Array.isArray(decisionsOverride) ? decisionsOverride : [])
+          .map((item) => [String(item?.segment_id ?? "").trim(), item])
+          .filter(([id]) => Boolean(id))
+      );
+      const currentDecisionMap = new Map(
+        (Array.isArray(currentDecisions) ? currentDecisions : [])
+          .map((item) => [String(item?.segment_id ?? "").trim(), item])
+          .filter(([id]) => Boolean(id))
+      );
+
+      const nextDecisions = currentSegments.map((segment) => {
+        const segmentId = String(segment?.segment_id ?? "").trim();
+        const isLinks = String(segment?.block_type ?? "").trim().toLowerCase() === "links";
+        if (isLinks) {
+          const existing = currentDecisionMap.get(segmentId);
+          return {
+            segment_id: segmentId,
+            visual_decision: normalizeVisualDecisionInput(existing?.visual_decision),
+            search_decision: normalizeSearchDecisionInput(existing?.search_decision),
+            search_decision_en: normalizeSearchDecisionInput(existing?.search_decision_en),
+            version: 1
+          };
+        }
+        const mapped = overrideMap.get(segmentId);
+        return {
+          segment_id: segmentId,
+          visual_decision: normalizeVisualDecisionInput(mapped?.visual_decision),
+          search_decision: normalizeSearchDecisionInput(mapped?.search_decision),
+          search_decision_en: normalizeSearchDecisionInput(mapped?.search_decision_en),
+          version: 1
+        };
+      });
+
+      const version = await saveVersioned(docId, "decisions", nextDecisions);
+      await appendEvent(docId, {
+        timestamp: new Date().toISOString(),
+        event: "decisions_realigned",
+        payload: {
+          version,
+          source_segments_version: sourceSegmentsVersion,
+          source_decisions_version: sourceDecisionsVersion,
+          realign_diff: diff ?? null
+        }
+      });
+
+      res.json({
+        decisions: nextDecisions,
+        version,
+        source_segments_version: sourceSegmentsVersion,
+        source_decisions_version: sourceDecisionsVersion,
+        realign_diff: diff ?? null
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
