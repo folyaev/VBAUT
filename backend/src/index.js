@@ -59,6 +59,7 @@ import { createSegmentsSessionUtils } from "./services/segments-session.js";
 import { createRequestAuditLogger } from "./services/request-audit.js";
 import { createUiActionsAuditStore } from "./services/ui-actions-audit.js";
 import { createTelegramSdvgBotService } from "./services/telegram-sdvg-bot.js";
+import { createPersistentScreenshotBrowserService } from "./services/screenshot-browser.js";
 
 const app = express();
 export const DEFAULT_PORT = Number(process.env.PORT ?? 8787);
@@ -120,6 +121,10 @@ const { splitSegmentsAndDecisions } = createSegmentsSessionUtils({
   normalizeLinksInput,
   normalizeSearchDecisionInput,
   normalizeVisualDecisionInput
+});
+const screenshotBrowserService = createPersistentScreenshotBrowserService({
+  dataDir: getDataDir(),
+  env: process.env
 });
 
 const {
@@ -229,6 +234,7 @@ registerMiscRoutes(app, {
   normalizeNotionUrl,
   pruneNotionProgressStore,
   pushNotionProgress,
+  screenshotBrowserService,
   scrapeNotionPage,
   translateHeadingToEnglishQuery
 });
@@ -361,12 +367,14 @@ const telegramSdvgBot = createTelegramSdvgBotService({
   splitSegmentsAndDecisions
 });
 telegramSdvgBot.start();
+screenshotBrowserService.startBackground().catch(() => null);
 
 export function getServerRuntimeInfo() {
   return {
     mediaRoot: MEDIA_DOWNLOAD_ROOT,
     tools: mediaDownloader.getToolsInfo(),
-    telegram: telegramSdvgBot.getRuntimeInfo()
+    telegram: telegramSdvgBot.getRuntimeInfo(),
+    screenshot_browser: screenshotBrowserService.getRuntimeInfo()
   };
 }
 

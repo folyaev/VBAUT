@@ -64,7 +64,7 @@ npm --prefix HeadlessNotion install
 ```powershell
 cd screenshot-engine
 npm install
-node link-screenshot.js --url "https://www.rbc.ru/" --width 1920 --height 960 --zoom 300 > out.png
+node link-screenshot.js --url "https://www.rbc.ru/" --width 2560 --height 1280 --zoom 300 > out.png
 ```
 
 С cookies (JSON/Netscape):
@@ -79,7 +79,7 @@ node link-screenshot.js --url "https://x.com/..." --cookies_path "C:\tgbotapi\VB
 $env:LINK_SCREENSHOT_COOKIES_PATH="C:\tgbotapi\VBAUT\data\cookies\x.json"
 ```
 
-Для Retina (macOS) используйте большее выходное полотно, например `--width 3840 --height 1920`.
+Для Retina (macOS) используйте большее выходное полотно, например `--width 5120 --height 2560`.
 
 ## Screenshot Lab: Manual Session
 
@@ -92,7 +92,7 @@ http://localhost:8787/tools/screenshot-lab
 Минимальный сценарий:
 
 1. Добавьте ссылку в список.
-2. Нажмите `🖱 Start Manual` (или `🖱` у нужной ссылки) - откроется живой браузер Puppeteer.
+2. Нажмите `🖱 Start Manual` (или `🖱` у нужной ссылки) - откроется браузер с persistent-профилем (если включен), иначе fallback на обычную сессию.
 3. В этом окне вручную кликните cookie-баннер/логин/нужный кадр.
 4. Нажмите `📷 Capture` в Screenshot Lab - кадр прикрепится к текущей ссылке.
 5. `Stop Manual` завершает сессию.
@@ -105,6 +105,10 @@ Cookies flow:
 2. Нажмите `Save Cookies` (домены берутся из поля `Cookie domains`).
 3. Нажмите `Use Globally`, чтобы этот файл сразу применился для `/api/link/screenshot` без перезапуска backend.
 4. Путь также сохраняется в `VBAUT/backend/.env` как `LINK_SCREENSHOT_COOKIES_PATH`, чтобы переживать рестарты.
+
+Статус persistent-браузера:
+
+- `GET /api/tools/screenshot-lab/browser/status`
 
 ## Защита от кракозябр (включено)
 
@@ -156,6 +160,12 @@ npm run hooks:install
 npm run dev
 ```
 
+### Только Screenshot Lab (standalone)
+
+```powershell
+npm run dev:screenshot-lab
+```
+
 ### Windows-скрипт (3 окна: backend + frontend + HeadlessNotion)
 
 ```bat
@@ -200,6 +210,18 @@ restart-dev.cmd
 - `TELEGRAM_DOCKER_COPY_FALLBACK` (default: `1`; при `404` на `/file` пробует `docker cp` из контейнера локального Bot API)
 - `TELEGRAM_DOCKER_CONTAINER_NAME` (default: `tgbotapi`; имя контейнера для fallback-копирования)
 - `LINK_SCREENSHOT_COOKIES_PATH` (опционально: путь к cookie-файлу для `/api/link/screenshot`)
+- `SCREENSHOT_BROWSER_ENABLED` (default: `1`; включает persistent браузер для manual-mode)
+- `SCREENSHOT_BROWSER_AUTOSTART` (default: `1`; стартовать браузер вместе с backend)
+- `SCREENSHOT_BROWSER_HEADLESS` (default: `0`; для manual обычно `0`)
+- `SCREENSHOT_BROWSER_MODE` (default: `launch`; `launch` = backend запускает Chrome, `connect` = подключается к уже запущенному Chrome по CDP)
+- `SCREENSHOT_BROWSER_PROFILE_DIR` (путь к профилю Chromium с cookies/login/extensions)
+- `SCREENSHOT_BROWSER_DEBUG_PORT` (default: `9223`; remote debugging port)
+- `SCREENSHOT_BROWSER_CONNECT_HOST` (default: `127.0.0.1`; host для `connect` mode)
+- `SCREENSHOT_BROWSER_CONNECT_PORT` (default: `9223`; порт для `connect` mode)
+- `SCREENSHOT_BROWSER_EXECUTABLE_PATH` (опционально: путь к вашему Chrome/Chromium)
+- `SCREENSHOT_BROWSER_EXTENSIONS` (опционально: список папок расширений через `;`/`,`/newline)
+- `SCREENSHOT_BROWSER_EXTRA_ARGS` (опционально: дополнительные аргументы запуска Chromium)
+- `SCREENSHOT_LAB_PORT` (default: `8790`; порт standalone режима `npm run dev:screenshot-lab`)
 
 ### Media Downloader
 

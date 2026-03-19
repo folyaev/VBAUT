@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js",
+    "screenshot-lab": "node src/screenshot-lab-standalone.js",
     "test": "node --test"
   },
   "dependencies": {

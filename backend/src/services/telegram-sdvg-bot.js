@@ -19,6 +19,8 @@ const TELEGRAM_MESSAGE_MAX = 4096;
 const CALLBACK_ALERT_MAX = 190;
 const TELEGRAM_CAPTION_MAX = 1024;
 const CARD_CONTEXT_MAX = 80;
+const FILE_PICKER_CONTEXT_MAX = 80;
+const FILE_PICKER_PAGE_SIZE = 8;
 const JOB_WATCH_INTERVAL_MS = 1600;
 const POLL_RETRY_DELAY_MS = 2500;
 const DOWNLOAD_TRACK_TIMEOUT_MS = 30 * 60 * 1000;
@@ -415,6 +417,7 @@ export function createTelegramSdvgBotService(deps) {
         active_segment_id: null,
         random_mode: false,
         card_contexts: new Map(),
+        file_picker_contexts: new Map(),
         card_action_locks: new Set()
       });
     }
@@ -463,7 +466,39 @@ export function createTelegramSdvgBotService(deps) {
 
   function forgetCardContext(session, messageId) {
     if (!session || messageId == null) return;
-    session.card_contexts.delete(String(messageId));
+    const key = String(messageId);
+    session.card_contexts.delete(key);
+    session.file_picker_contexts.delete(key);
+  }
+
+  function rememberFilePickerContext(session, messageId, context) {
+    if (!session || messageId == null || !context) return;
+    const key = String(messageId);
+    session.file_picker_contexts.set(key, {
+      ...context,
+      created_at: Date.now()
+    });
+    if (session.file_picker_contexts.size <= FILE_PICKER_CONTEXT_MAX) return;
+    const items = Array.from(session.file_picker_contexts.entries()).sort((a, b) => {
+      const left = Number(a?.[1]?.created_at ?? 0);
+      const right = Number(b?.[1]?.created_at ?? 0);
+      return left - right;
+    });
+    while (items.length > FILE_PICKER_CONTEXT_MAX) {
+      const item = items.shift();
+      if (!item) break;
+      session.file_picker_contexts.delete(item[0]);
+    }
+  }
+
+  function getFilePickerContext(session, messageId) {
+    if (!session || messageId == null) return null;
+    return session.file_picker_contexts.get(String(messageId)) ?? null;
+  }
+
+  function forgetFilePickerContext(session, messageId) {
+    if (!session || messageId == null) return;
+    session.file_picker_contexts.delete(String(messageId));
   }
 
   async function withDocumentLock(docId, fn) {
@@ -849,6 +884,66 @@ export function createTelegramSdvgBotService(deps) {
     return normalized;
   }
 
+  function createPickerToken() {
+    return Math.random().toString(36).slice(2, 10);
+  }
+
+  function formatPickedFileButtonText(relativePath) {
+    const normalized = normalizeRelativeMediaPath(relativePath);
+    const base = path.basename(normalized || String(relativePath ?? "").trim());
+    const parent = path.posix.basename(path.posix.dirname(normalized || ""));
+    const label = parent && parent !== "." ? `${base} · ${parent}` : base;
+    return clipText(label || "file", 40);
+  }
+
+  function buildPickFromDownloadedKeyboard(context) {
+    const files = Array.isArray(context?.files) ? context.files : [];
+    const token = String(context?.token ?? "").trim();
+    const total = files.length;
+    const maxPage = total > 0 ? Math.max(0, Math.ceil(total / FILE_PICKER_PAGE_SIZE) - 1) : 0;
+    const page = Math.max(0, Math.min(maxPage, Number(context?.page ?? 0)));
+    const from = page * FILE_PICKER_PAGE_SIZE;
+    const to = Math.min(total, from + FILE_PICKER_PAGE_SIZE);
+    const rows = [];
+
+    for (let index = from; index < to; index += 1) {
+      const item = files[index];
+      if (!item?.path) continue;
+      rows.push([
+        {
+          text: formatPickedFileButtonText(item.path),
+          callback_data: `sdvg_pick:sel:${token}:${index}`
+        }
+      ]);
+    }
+
+    if (total === 0) {
+      rows.push([{ text: "Файлов нет", callback_data: "sdvg_pick:noop" }]);
+    }
+
+    if (maxPage > 0) {
+      const prevPage = page > 0 ? page - 1 : null;
+      const nextPage = page < maxPage ? page + 1 : null;
+      rows.push([
+        {
+          text: "⬅️",
+          callback_data: prevPage == null ? "sdvg_pick:noop" : `sdvg_pick:page:${token}:${prevPage}`
+        },
+        {
+          text: `${page + 1}/${maxPage + 1}`,
+          callback_data: "sdvg_pick:noop"
+        },
+        {
+          text: "➡️",
+          callback_data: nextPage == null ? "sdvg_pick:noop" : `sdvg_pick:page:${token}:${nextPage}`
+        }
+      ]);
+    }
+
+    rows.push([{ text: "↩️ Назад", callback_data: "sdvg_pick:close" }]);
+    return { inline_keyboard: rows };
+  }
+
   function buildCardKeyboard(segment, decision, session) {
     const visual = normalizeVisualDecisionInput(decision?.visual_decision);
     const metaButtons = [];
@@ -877,6 +972,7 @@ export function createTelegramSdvgBotService(deps) {
         text: session?.random_mode ? "\uD83C\uDFB2" : "\uD83D\uDCDA",
         callback_data: "sdvg_mode:toggle"
       },
+      { text: "Выбрать", callback_data: "sdvg_pick:open" },
       { text: "\u2705", callback_data: "sdvg_done" },
       { text: "\u23ED\uFE0F", callback_data: "sdvg_next" }
     ]);
@@ -1378,6 +1474,70 @@ export function createTelegramSdvgBotService(deps) {
     }
 
     return result;
+  }
+
+  async function collectDownloadedFilesForPicker(docId, segment) {
+    if (!docId || typeof normalizeDocumentMediaDownloads !== "function") return [];
+    const dir = getDocDir(docId);
+    const document = await readOptionalJson(path.join(dir, "document.json"));
+    if (!document) return [];
+
+    const mediaRoot = path.resolve(getMediaDir());
+    const map = normalizeDocumentMediaDownloads(document.media_downloads);
+    const segmentSection = sanitizeMediaTopicName(segment?.section_title ?? "");
+    const seen = new Set();
+    const preferred = [];
+    const other = [];
+
+    for (const entry of Object.values(map)) {
+      const sectionName = sanitizeMediaTopicName(entry?.section_title ?? "");
+      const files = Array.isArray(entry?.output_files) ? entry.output_files : [];
+      for (const fileItem of files) {
+        const normalizedOutput = normalizeRelativeMediaPath(fileItem);
+        if (!normalizedOutput) continue;
+        const candidates = [normalizedOutput];
+        if (sectionName && !normalizedOutput.startsWith(`${sectionName}/`)) {
+          candidates.unshift(normalizeRelativeMediaPath(path.posix.join(sectionName, normalizedOutput)));
+        }
+        for (const candidate of candidates) {
+          if (!candidate || seen.has(candidate)) continue;
+          const absolutePath = path.resolve(mediaRoot, candidate.replace(/\//g, path.sep));
+          const insideMediaRoot = absolutePath === mediaRoot || absolutePath.startsWith(`${mediaRoot}${path.sep}`);
+          if (!insideMediaRoot) continue;
+          if (!(await fileExists(absolutePath))) continue;
+          const stat = await fs.stat(absolutePath).catch(() => null);
+          const item = {
+            path: candidate,
+            section: sectionName || null,
+            mtime: Number(stat?.mtimeMs ?? 0)
+          };
+          seen.add(candidate);
+          if (segmentSection && sectionName && sectionName === segmentSection) {
+            preferred.push(item);
+          } else {
+            other.push(item);
+          }
+          break;
+        }
+      }
+    }
+
+    const sortByMtimeDesc = (a, b) => Number(b?.mtime ?? 0) - Number(a?.mtime ?? 0);
+    preferred.sort(sortByMtimeDesc);
+    other.sort(sortByMtimeDesc);
+    return [...preferred, ...other];
+  }
+
+  async function restoreCardKeyboard(chatId, callbackMessageId, session, context) {
+    if (!context?.doc_id || !context?.segment_id) return false;
+    const payload = await readDocPayload(context.doc_id);
+    if (!payload) return false;
+    const segment = payload.segments.find((item) => item.segment_id === context.segment_id);
+    if (!segment) return false;
+    const decision = buildDecisionMap(payload.decisions).get(segment.segment_id) ?? null;
+    const keyboard = buildCardKeyboard(segment, decision, session);
+    await editMessageReplyMarkup(chatId, callbackMessageId, keyboard).catch(() => null);
+    return true;
   }
 
   async function downloadTelegramFileToTopic(fileId, sectionTitle, preferredName) {
@@ -1936,6 +2096,134 @@ export function createTelegramSdvgBotService(deps) {
     const keyboard = buildCardKeyboard(segment, decision, session);
     await editMessageReplyMarkup(chatId, callbackMessageId, keyboard).catch(() => null);
   }
+
+  async function handlePickFromDownloadedCallback(chatId, callbackId, callbackMessageId, session, data) {
+    const actionLock = acquireCardActionLock(session, callbackMessageId, "pick");
+    if (!actionLock) {
+      await answerCallback(callbackId, "", false).catch(() => null);
+      return;
+    }
+    try {
+      const context = getCardContext(session, callbackMessageId);
+      if (!context?.doc_id || !context?.segment_id) {
+        await answerCallback(callbackId, "Карточка устарела. Запусти /sdvg заново.", true).catch(() => null);
+        return;
+      }
+
+      if (data === "sdvg_pick:noop") {
+        await answerCallback(callbackId, "", false).catch(() => null);
+        return;
+      }
+
+      if (data === "sdvg_pick:close") {
+        forgetFilePickerContext(session, callbackMessageId);
+        await restoreCardKeyboard(chatId, callbackMessageId, session, context);
+        await answerCallback(callbackId, "", false).catch(() => null);
+        return;
+      }
+
+      if (data === "sdvg_pick:open") {
+        const payload = await readDocPayload(context.doc_id);
+        if (!payload) {
+          await answerCallback(callbackId, "Документ недоступен.", true).catch(() => null);
+          return;
+        }
+        const segment = payload.segments.find((item) => item.segment_id === context.segment_id);
+        if (!segment) {
+          await answerCallback(callbackId, "Сегмент не найден.", true).catch(() => null);
+          return;
+        }
+        const files = await collectDownloadedFilesForPicker(context.doc_id, segment);
+        if (files.length === 0) {
+          await answerCallback(callbackId, "Скачанных файлов пока нет.", true).catch(() => null);
+          return;
+        }
+        const pickerContext = {
+          token: createPickerToken(),
+          doc_id: context.doc_id,
+          segment_id: context.segment_id,
+          files,
+          page: 0
+        };
+        rememberFilePickerContext(session, callbackMessageId, pickerContext);
+        await editMessageReplyMarkup(
+          chatId,
+          callbackMessageId,
+          buildPickFromDownloadedKeyboard(pickerContext)
+        ).catch(() => null);
+        await answerCallback(callbackId, `Файлов: ${files.length}`, false).catch(() => null);
+        return;
+      }
+
+      if (data.startsWith("sdvg_pick:page:")) {
+        const picker = getFilePickerContext(session, callbackMessageId);
+        if (!picker) {
+          await answerCallback(callbackId, "Список устарел. Нажми 📂 снова.", true).catch(() => null);
+          return;
+        }
+        const parts = data.split(":");
+        const token = String(parts[2] ?? "").trim();
+        const nextPage = Number.parseInt(String(parts[3] ?? ""), 10);
+        if (!token || picker.token !== token || !Number.isFinite(nextPage)) {
+          await answerCallback(callbackId, "", false).catch(() => null);
+          return;
+        }
+        const maxPage = Math.max(0, Math.ceil((picker.files?.length ?? 0) / FILE_PICKER_PAGE_SIZE) - 1);
+        picker.page = Math.max(0, Math.min(maxPage, nextPage));
+        rememberFilePickerContext(session, callbackMessageId, picker);
+        await editMessageReplyMarkup(chatId, callbackMessageId, buildPickFromDownloadedKeyboard(picker)).catch(
+          () => null
+        );
+        await answerCallback(callbackId, "", false).catch(() => null);
+        return;
+      }
+
+      if (data.startsWith("sdvg_pick:sel:")) {
+        const picker = getFilePickerContext(session, callbackMessageId);
+        if (!picker) {
+          await answerCallback(callbackId, "Список устарел. Нажми 📂 снова.", true).catch(() => null);
+          return;
+        }
+        const parts = data.split(":");
+        const token = String(parts[2] ?? "").trim();
+        const index = Number.parseInt(String(parts[3] ?? ""), 10);
+        if (!token || picker.token !== token || !Number.isFinite(index)) {
+          await answerCallback(callbackId, "", false).catch(() => null);
+          return;
+        }
+        const picked = Array.isArray(picker.files) ? picker.files[index] : null;
+        if (!picked?.path) {
+          await answerCallback(callbackId, "Файл не найден в списке.", true).catch(() => null);
+          return;
+        }
+        await appendSegmentMediaPaths(
+          context.doc_id,
+          context.segment_id,
+          [picked.path],
+          chatId,
+          "sdvg_pick_existing"
+        );
+        forgetFilePickerContext(session, callbackMessageId);
+        await restoreCardKeyboard(chatId, callbackMessageId, session, context);
+        await answerCallback(
+          callbackId,
+          clipText(`Добавил в ${context.segment_id}: ${path.basename(picked.path)}`, CALLBACK_ALERT_MAX),
+          false
+        ).catch(() => null);
+        return;
+      }
+
+      await answerCallback(callbackId, "", false).catch(() => null);
+    } catch (error) {
+      await answerCallback(
+        callbackId,
+        clipText(`Не удалось выбрать файл: ${error?.message ?? error}`, CALLBACK_ALERT_MAX),
+        true
+      ).catch(() => null);
+    } finally {
+      releaseCardActionLock(session, actionLock);
+    }
+  }
   async function handleCallbackQuery(update) {
     const callback = update?.callback_query;
     if (!callback) return;
@@ -1945,6 +2233,11 @@ export function createTelegramSdvgBotService(deps) {
     const callbackId = callback?.id;
     if (!chatId || !callbackId) return;
     const session = getSession(chatId);
+
+    if (data.startsWith("sdvg_pick:")) {
+      await handlePickFromDownloadedCallback(chatId, callbackId, messageId, session, data);
+      return;
+    }
 
     if (data === "sdvg_next") {
       await handleNextSegmentCallback(chatId, callbackId, messageId, session);

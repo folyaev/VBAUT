@@ -16,6 +16,24 @@ const SCREENSHOT_LAB_HTML_PATH = path.resolve(__dirname, "../../public/screensho
 const SCREENSHOT_LAB_LOG_FILE_NAME = "screenshot-lab-events.ndjson";
 const LINK_SCREENSHOT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LINK_SCREENSHOT_CACHE_MAX = 80;
+const SCREENSHOT_PERSISTENT_CAPTURE_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.SCREENSHOT_PERSISTENT_CAPTURE_ENABLED ?? "1").trim().toLowerCase()
+);
+const SCREENSHOT_PERSISTENT_CAPTURE_DOMAINS = parseDomainList(
+  process.env.SCREENSHOT_PERSISTENT_CAPTURE_DOMAINS ?? "*"
+);
+const SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS = clampNumber(
+  process.env.SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS,
+  1400,
+  0,
+  12000
+);
+const SCREENSHOT_LAB_MANUAL_FORCE_HEADED = !["0", "false", "off", "no"].includes(
+  String(process.env.SCREENSHOT_LAB_MANUAL_FORCE_HEADED ?? "1").trim().toLowerCase()
+);
+const SCREENSHOT_LAB_MANUAL_ALLOW_EPHEMERAL_FALLBACK = !["0", "false", "off", "no"].includes(
+  String(process.env.SCREENSHOT_LAB_MANUAL_ALLOW_EPHEMERAL_FALLBACK ?? "0").trim().toLowerCase()
+);
 let linkScreenshotCookiesPath = String(process.env.LINK_SCREENSHOT_COOKIES_PATH ?? "").trim() || DEFAULT_LINK_SCREENSHOT_COOKIES_PATH;
 const MANUAL_LAB_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const MANUAL_LAB_MAX_EVENTS = 600;
@@ -24,6 +42,7 @@ const manualLabSessions = new Map();
 let linkScreenshotProfilesMemo = null;
 let linkScreenshotProfilesLoadedAt = 0;
 let manualLabPuppeteerMemo = null;
+let screenshotBrowserServiceRef = null;
 
 function clampNumber(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -114,6 +133,10 @@ async function readScreenshotLabAuditEvents(dataDir, limit = 200) {
 
 function normalizeHost(value) {
   return String(value ?? "").trim().toLowerCase().replace(/^www\./i, "");
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
 function parseDomainList(value) {
@@ -285,8 +308,8 @@ function resolveLinkScreenshotProfile(rawUrl, profiles) {
   const host = getHostFromUrl(rawUrl);
   const defaultsRaw = profiles?.defaults ?? {};
   const profile = {
-    width: clampNumber(defaultsRaw.width, 1920, 320, 3840),
-    height: clampNumber(defaultsRaw.height, 960, 240, 2160),
+    width: clampNumber(defaultsRaw.width, 2560, 320, 3840),
+    height: clampNumber(defaultsRaw.height, 1280, 240, 2160),
     zoom: clampNumber(defaultsRaw.zoom, 400, 50, 800)
   };
   if (!host || !profiles || typeof profiles !== "object") return profile;
@@ -391,6 +414,57 @@ async function captureLinkScreenshotBuffer({ url, width, height, zoom, cookiesPa
   });
 }
 
+function shouldUsePersistentBrowserCapture(rawUrl) {
+  if (!SCREENSHOT_PERSISTENT_CAPTURE_ENABLED) return false;
+  const host = getHostFromUrl(rawUrl);
+  if (!host) return false;
+  if (!SCREENSHOT_PERSISTENT_CAPTURE_DOMAINS.length) return false;
+  if (
+    SCREENSHOT_PERSISTENT_CAPTURE_DOMAINS.includes("*") ||
+    SCREENSHOT_PERSISTENT_CAPTURE_DOMAINS.includes("all")
+  ) {
+    return true;
+  }
+  return SCREENSHOT_PERSISTENT_CAPTURE_DOMAINS.some(
+    (domain) => host === domain || host.endsWith(`.${domain}`)
+  );
+}
+
+async function captureLinkScreenshotViaPersistentBrowser({ url, width, height }) {
+  if (!screenshotBrowserServiceRef?.enabled || !screenshotBrowserServiceRef?.openPage) {
+    throw new Error("persistent browser is unavailable");
+  }
+  const opened = await screenshotBrowserServiceRef.openPage({
+    url,
+    width,
+    height,
+    emulateViewport: true
+  });
+  const page = opened?.page;
+  if (!page) throw new Error("persistent page not created");
+  try {
+    if (SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS > 0) {
+      await waitMs(SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS);
+    }
+    await hideScrollbarsForCapture(page);
+    const buffer = await page.screenshot({
+      type: "png",
+      fullPage: false,
+      captureBeyondViewport: false
+    });
+    if (!buffer || !buffer.length) {
+      throw new Error("empty screenshot result");
+    }
+    return buffer;
+  } finally {
+    try {
+      await screenshotBrowserServiceRef.closePage(page);
+    } catch {
+      // noop
+    }
+  }
+}
+
 function getCachedLinkScreenshot(cacheKey) {
   const item = linkScreenshotCache.get(cacheKey);
   if (!item) return null;
@@ -414,8 +488,8 @@ function putCachedLinkScreenshot(cacheKey, buffer) {
 }
 
 function buildThumIoScreenshotUrl(url, profile) {
-  const width = clampNumber(profile?.width, 1920, 320, 3840);
-  const height = clampNumber(profile?.height, 960, 240, 2160);
+  const width = clampNumber(profile?.width, 2560, 320, 3840);
+  const height = clampNumber(profile?.height, 1280, 240, 2160);
   return `https://image.thum.io/get/width/${width}/crop/${height}/noanimate/${encodeURI(url)}`;
 }
 
@@ -492,10 +566,23 @@ async function closeManualSession(sessionId, reason = "stopped") {
   if (!session) return;
   manualLabSessions.delete(sessionId);
   pushManualSessionEvent(session, "session_closed", { reason: clipString(reason, 120) || "stopped" });
+  const shouldRestorePersistentHeadless = Boolean(session?.restorePersistentHeadless);
   try {
-    await session.browser?.close();
+    if (session?.persistent && screenshotBrowserServiceRef?.closePage) {
+      await screenshotBrowserServiceRef.closePage(session.page);
+    } else {
+      await session.browser?.close();
+    }
   } catch {
     // noop
+  } finally {
+    if (shouldRestorePersistentHeadless && screenshotBrowserServiceRef?.restart) {
+      try {
+        await screenshotBrowserServiceRef.restart({ headless: true });
+      } catch {
+        // noop
+      }
+    }
   }
 }
 
@@ -528,20 +615,9 @@ async function loadManualPuppeteer() {
 }
 
 async function applyManualPageScale(session) {
-  const active = session && typeof session === "object" ? session : null;
-  if (!active?.page) return;
-  const zoom = clampNumber(active.zoom, 100, 50, 800);
-  const scale = Math.max(0.5, Math.min(8, zoom / 100));
-  try {
-    await active.page.evaluate((ratio) => {
-      const root = document.documentElement;
-      if (!root) return;
-      root.style.zoom = String(ratio);
-      root.style.transformOrigin = "top left";
-    }, scale);
-  } catch {
-    // noop
-  }
+  void session;
+  // Keep native browser zoom behavior in manual mode.
+  // We intentionally do not force CSS zoom here.
 }
 
 async function loadCookiesForUrl(cookiesPath, targetUrl) {
@@ -690,9 +766,11 @@ export function registerMiscRoutes(app, deps) {
     normalizeNotionUrl,
     pruneNotionProgressStore,
     pushNotionProgress,
+    screenshotBrowserService,
     scrapeNotionPage,
     translateHeadingToEnglishQuery
   } = deps;
+  screenshotBrowserServiceRef = screenshotBrowserService ?? null;
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
@@ -798,13 +876,29 @@ export function registerMiscRoutes(app, deps) {
         url: normalizedUrl,
         host: getHostFromUrl(normalizedUrl),
         profile: {
-          width: clampNumber(profile?.width, 1920, 320, 3840),
-          height: clampNumber(profile?.height, 960, 240, 2160),
+          width: clampNumber(profile?.width, 2560, 320, 3840),
+          height: clampNumber(profile?.height, 1280, 240, 2160),
           zoom: clampNumber(profile?.zoom, 400, 50, 800)
         }
       });
     } catch (error) {
       return res.status(500).json({ error: String(error?.message ?? "profile resolve failed") });
+    }
+  });
+
+  app.get("/api/tools/screenshot-lab/browser/status", async (_req, res) => {
+    try {
+      const runtime = screenshotBrowserServiceRef?.getRuntimeInfo
+        ? screenshotBrowserServiceRef.getRuntimeInfo()
+        : {
+            enabled: false,
+            running: false,
+            mode: "none",
+            profile_dir: null
+          };
+      return res.json({ ok: true, browser: runtime });
+    } catch (error) {
+      return res.status(500).json({ error: String(error?.message ?? "browser status failed") });
     }
   });
 
@@ -820,10 +914,10 @@ export function registerMiscRoutes(app, deps) {
       const profilePreset = resolveLinkScreenshotProfile(normalizedUrl, await loadLinkScreenshotProfiles());
       const outputWidth =
         readOptionalClampedNumber(req.body?.width, 480, 3840) ??
-        clampNumber(profilePreset?.width, 1920, 480, 3840);
+        clampNumber(profilePreset?.width, 2560, 480, 3840);
       const outputHeight =
         readOptionalClampedNumber(req.body?.height, 320, 2160) ??
-        clampNumber(profilePreset?.height, 960, 320, 2160);
+        clampNumber(profilePreset?.height, 1280, 320, 2160);
       const zoom =
         readOptionalClampedNumber(req.body?.zoom, 50, 800) ??
         clampNumber(profilePreset?.zoom, 400, 50, 800);
@@ -833,36 +927,91 @@ export function registerMiscRoutes(app, deps) {
       const cookies = cookiesPath ? await loadCookiesForUrl(cookiesPath, normalizedUrl) : [];
 
       await closeAllManualSessions("manual_restarted");
-      const puppeteer = await loadManualPuppeteer();
-      const browser = await puppeteer.launch({
-        headless: false,
-        defaultViewport: null,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          `--window-size=${outputWidth},${outputHeight}`
-        ]
-      });
+      let browser = null;
+      let page = null;
+      let persistentMode = false;
+      let persistentOpenError = null;
+      let browserRuntime = screenshotBrowserServiceRef?.getRuntimeInfo
+        ? screenshotBrowserServiceRef.getRuntimeInfo()
+        : null;
+      let restorePersistentHeadless = false;
+      if (
+        SCREENSHOT_LAB_MANUAL_FORCE_HEADED &&
+        Boolean(browserRuntime?.headless) &&
+        screenshotBrowserServiceRef?.restart
+      ) {
+        try {
+          browserRuntime = await screenshotBrowserServiceRef.restart({ headless: false });
+          restorePersistentHeadless = true;
+        } catch {
+          // fallback below
+        }
+      }
+      if (screenshotBrowserServiceRef?.enabled && screenshotBrowserServiceRef?.openPage) {
+        try {
+          const opened = await screenshotBrowserServiceRef.openPage({
+            url: normalizedUrl,
+            width: outputWidth,
+            height: outputHeight
+          });
+          browser = opened?.browser ?? null;
+          page = opened?.page ?? null;
+          persistentMode = Boolean(opened?.persistent);
+        } catch (error) {
+          persistentOpenError = error;
+        }
+      }
+      if (!browser || !page) {
+        if (screenshotBrowserServiceRef?.enabled && !SCREENSHOT_LAB_MANUAL_ALLOW_EPHEMERAL_FALLBACK) {
+          const runtime = screenshotBrowserServiceRef?.getRuntimeInfo ? screenshotBrowserServiceRef.getRuntimeInfo() : null;
+          const runtimeError = String(runtime?.last_error ?? "").trim();
+          const openError = String(persistentOpenError?.message ?? "").trim();
+          const reason = runtimeError || openError || "persistent browser is unavailable";
+          return res.status(503).json({
+            error: `persistent profile is unavailable: ${reason}`,
+            hint:
+              "Set SCREENSHOT_LAB_MANUAL_ALLOW_EPHEMERAL_FALLBACK=1 for temporary fallback, or fix persistent browser profile settings."
+          });
+        }
+        const puppeteer = await loadManualPuppeteer();
+        browser = await puppeteer.launch({
+          headless: false,
+          defaultViewport: null,
+          ignoreDefaultArgs: ["--enable-automation"],
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            `--window-size=${outputWidth},${outputHeight}`
+          ]
+        });
 
-      const page = await browser.newPage();
-      await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-      );
-      await page.setExtraHTTPHeaders({ "accept-language": "ru-RU,ru;q=0.9,en;q=0.8" });
+        page = await browser.newPage();
+        await page.evaluateOnNewDocument(() => {
+          try {
+            Object.defineProperty(navigator, "webdriver", { get: () => false });
+          } catch {
+            // noop
+          }
+        });
+      }
+
       let cdp = null;
+      const lockWindowBounds = String(req.body?.lock_window ?? "0").trim() === "1";
       try {
         cdp = await page.createCDPSession();
-        const windowInfo = await cdp.send("Browser.getWindowForTarget");
-        const windowId = Number(windowInfo?.windowId ?? 0);
-        if (Number.isFinite(windowId) && windowId > 0) {
-          await cdp.send("Browser.setWindowBounds", {
-            windowId,
-            bounds: {
-              width: outputWidth,
-              height: outputHeight
-            }
-          });
+        if (lockWindowBounds) {
+          const windowInfo = await cdp.send("Browser.getWindowForTarget");
+          const windowId = Number(windowInfo?.windowId ?? 0);
+          if (Number.isFinite(windowId) && windowId > 0) {
+            await cdp.send("Browser.setWindowBounds", {
+              windowId,
+              bounds: {
+                width: outputWidth,
+                height: outputHeight
+              }
+            });
+          }
         }
       } catch {
         // noop
@@ -882,6 +1031,8 @@ export function registerMiscRoutes(app, deps) {
         baseUrl: normalizedUrl,
         cookiesPath,
         cdp,
+        persistent: persistentMode,
+        restorePersistentHeadless,
         events: []
       };
       manualLabSessions.set(sessionId, session);
@@ -891,6 +1042,7 @@ export function registerMiscRoutes(app, deps) {
         height: outputHeight,
         scale_factor: null,
         zoom,
+        mode: persistentMode ? "persistent-profile" : "ephemeral",
         cookies: cookies.length ? "loaded" : cookiesPath ? "empty" : "none"
       });
 
@@ -908,13 +1060,11 @@ export function registerMiscRoutes(app, deps) {
         const active = manualLabSessions.get(sessionId);
         if (!active) return;
         pushManualSessionEvent(active, "navigate", { url: frame.url() });
-        applyManualPageScale(active).catch(() => null);
       });
       page.on("load", () => {
         const active = manualLabSessions.get(sessionId);
         if (!active) return;
         pushManualSessionEvent(active, "load", { url: page.url() });
-        applyManualPageScale(active).catch(() => null);
       });
       page.on("close", () => {
         closeManualSession(sessionId, "page_closed").catch(() => null);
@@ -924,8 +1074,9 @@ export function registerMiscRoutes(app, deps) {
         await page.setCookie(...cookies);
       }
 
-      await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
-      await applyManualPageScale(session);
+      if (!persistentMode) {
+        await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
+      }
       pushManualSessionEvent(session, "ready", { url: page.url() || normalizedUrl });
       await appendScreenshotLabAuditEvents(dataDir, [
         { type: "manual_start", url: normalizedUrl, detail: `session=${sessionId}` }
@@ -940,7 +1091,10 @@ export function registerMiscRoutes(app, deps) {
         device_scale_factor: null,
         zoom,
         cookies_loaded: cookies.length,
-        note: "Browser opened in manual mode. Interact with it, then call capture."
+        mode: persistentMode ? "persistent-profile" : "ephemeral",
+        note: persistentMode
+          ? "Tab opened in persistent browser profile. Logins/cookies/extensions are reused."
+          : "Browser opened in manual mode. Interact with it, then call capture."
       });
     } catch (error) {
       return res.status(500).json({ error: String(error?.message ?? "manual start failed") });
@@ -966,6 +1120,7 @@ export function registerMiscRoutes(app, deps) {
           height: session.height,
           device_scale_factor: session.deviceScaleFactor ?? null,
           zoom: session.zoom,
+          mode: session.persistent ? "persistent-profile" : "ephemeral",
           base_url: session.baseUrl,
           current_url: session.page?.url?.() || session.baseUrl,
           cookies_path: session.cookiesPath || null,
@@ -1330,14 +1485,21 @@ export function registerMiscRoutes(app, deps) {
 
       const profiles = await loadLinkScreenshotProfiles();
       const profile = resolveLinkScreenshotProfile(captureUrl, profiles);
-      const cacheKey = `${captureUrl}|${profile.width}|${profile.height}|${profile.zoom}|cookies=${cookiesPath ? "1" : "0"}|v=${cacheVersion}`;
+      const usePersistentCapture = shouldUsePersistentBrowserCapture(captureUrl);
+      const cacheKey = `${captureUrl}|${profile.width}|${profile.height}|${profile.zoom}|mode=${usePersistentCapture ? "persistent" : "local"}|cookies=${cookiesPath ? "1" : "0"}|v=${cacheVersion}`;
       const cached = getCachedLinkScreenshot(cacheKey);
       if (cached) {
         res.setHeader("x-link-screenshot-width", String(profile.width));
         res.setHeader("x-link-screenshot-height", String(profile.height));
         res.setHeader("x-link-screenshot-zoom", String(profile.zoom));
-        res.setHeader("x-link-screenshot-source", "cache");
-        res.setHeader("x-link-screenshot-cookies", cookiesPath ? "on" : "off");
+        res.setHeader(
+          "x-link-screenshot-source",
+          usePersistentCapture ? "cache:persistent-browser" : "cache"
+        );
+        res.setHeader(
+          "x-link-screenshot-cookies",
+          usePersistentCapture ? "profile" : cookiesPath ? "on" : "off"
+        );
         res.setHeader("content-type", "image/png");
         res.setHeader("cache-control", "public, max-age=86400, stale-while-revalidate=604800");
         return res.send(cached);
@@ -1347,20 +1509,44 @@ export function registerMiscRoutes(app, deps) {
       let contentType = "image/png";
       let screenshotSource = "local";
       try {
-        buffer = await captureLinkScreenshotBuffer({
-          url: captureUrl,
-          width: profile.width,
-          height: profile.height,
-          zoom: profile.zoom,
-          cookiesPath
-        });
+        if (usePersistentCapture) {
+          buffer = await captureLinkScreenshotViaPersistentBrowser({
+            url: captureUrl,
+            width: profile.width,
+            height: profile.height
+          });
+          screenshotSource = "persistent-browser";
+        } else {
+          buffer = await captureLinkScreenshotBuffer({
+            url: captureUrl,
+            width: profile.width,
+            height: profile.height,
+            zoom: profile.zoom,
+            cookiesPath
+          });
+        }
       } catch (error) {
         const message = String(error?.message ?? "").toLowerCase();
         const localAntiBotBlocked =
           message.includes("anti-bot-page") && isHostInDomain(host, "tass.ru");
-        if (localAntiBotBlocked) {
+        if (localAntiBotBlocked && screenshotSource !== "persistent-browser") {
           return res.status(502).json({ error: "screenshot blocked by anti-bot" });
         }
+        if (screenshotSource === "persistent-browser") {
+          try {
+            buffer = await captureLinkScreenshotBuffer({
+              url: captureUrl,
+              width: profile.width,
+              height: profile.height,
+              zoom: profile.zoom,
+              cookiesPath
+            });
+            screenshotSource = "local";
+          } catch {
+            // fallback to remote below
+          }
+        }
+        if (!buffer) {
         const thumIoUrl = buildThumIoScreenshotUrl(captureUrl, profile);
         const fallback = await fetchRemoteImageBuffer(thumIoUrl, imageProxyMaxBytes, 28000);
         if (!fallback?.buffer) {
@@ -1369,6 +1555,7 @@ export function registerMiscRoutes(app, deps) {
         buffer = fallback.buffer;
         contentType = String(fallback.contentType ?? "image/png");
         screenshotSource = "thum.io";
+        }
       }
 
       if (!buffer || buffer.length > imageProxyMaxBytes) {
@@ -1380,7 +1567,10 @@ export function registerMiscRoutes(app, deps) {
       res.setHeader("x-link-screenshot-height", String(profile.height));
       res.setHeader("x-link-screenshot-zoom", String(profile.zoom));
       res.setHeader("x-link-screenshot-source", screenshotSource);
-      res.setHeader("x-link-screenshot-cookies", cookiesPath ? "on" : "off");
+      res.setHeader(
+        "x-link-screenshot-cookies",
+        screenshotSource === "persistent-browser" ? "profile" : cookiesPath ? "on" : "off"
+      );
       res.setHeader("content-type", contentType);
       res.setHeader("cache-control", "public, max-age=86400, stale-while-revalidate=604800");
       return res.send(buffer);

@@ -55,4 +55,8 @@ app.listen(DEFAULT_PORT, () => {
   console.log(
     `Telegram SDVG API: mode=${telegram.official_api ? "cloud" : "local/custom"} api_base=${telegram.api_base || "N/A"} file_base=${telegram.file_base || "N/A"}`
   );
+  const screenshotBrowser = runtime.screenshot_browser ?? {};
+  console.log(
+    `Screenshot Browser: enabled=${screenshotBrowser.enabled ? "1" : "0"} running=${screenshotBrowser.running ? "1" : "0"} profile=${screenshotBrowser.profile_dir || "N/A"} port=${screenshotBrowser.debug_port || "N/A"}`
+  );
 });

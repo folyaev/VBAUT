@@ -40,8 +40,8 @@ if (!isHttpUrl(rawUrl)) {
 
 const debugAdblock = String(process.env.SCREENSHOT_DEBUG_ADBLOCK ?? "").trim() === "1";
 const cookiesPath = String(args.cookies_path ?? "").trim();
-const outputWidth = Math.round(toNumber(args.width, 1920, 320, 3840));
-const outputHeight = Math.round(toNumber(args.height, 960, 240, 2160));
+const outputWidth = Math.round(toNumber(args.width, 2560, 320, 3840));
+const outputHeight = Math.round(toNumber(args.height, 1280, 240, 2160));
 const zoomPercent = toNumber(args.zoom, 300, 50, 800);
 const timeoutMs = Math.round(toNumber(args.timeout_ms, 22000, 3000, 120000));
 

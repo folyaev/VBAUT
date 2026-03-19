@@ -208,8 +208,8 @@
             <button id="manualSaveCookiesBtn" type="button">Save Cookies</button>
           </div>
           <div class="row">
-            <input id="manualWidthInput" type="number" min="480" max="3840" step="10" value="1920" placeholder="Width" />
-            <input id="manualHeightInput" type="number" min="320" max="2160" step="10" value="960" placeholder="Height" />
+            <input id="manualWidthInput" type="number" min="480" max="3840" step="10" value="2560" placeholder="Width" />
+            <input id="manualHeightInput" type="number" min="320" max="2160" step="10" value="1280" placeholder="Height" />
             <input id="manualZoomInput" type="number" min="50" max="800" step="10" value="400" placeholder="Zoom %" />
           </div>
           <div class="row">
@@ -346,10 +346,27 @@
         }
       }
 
-      function screenshotSrc(url) {
+      function screenshotSrc(url, version = "10") {
         const normalized = normalizeUrl(url);
         if (!normalized) return "";
-        return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=10`;
+        return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=${encodeURIComponent(String(version || "10"))}`;
+      }
+
+      function revokeObjectUrlSafe(value) {
+        const text = String(value || "").trim();
+        if (!text || !text.startsWith("blob:")) return;
+        try {
+          URL.revokeObjectURL(text);
+        } catch {
+          // noop
+        }
+      }
+
+      function replaceManualImage(item, blob) {
+        if (!item || !blob) return "";
+        revokeObjectUrlSafe(item.manualImage);
+        item.manualImage = URL.createObjectURL(blob);
+        return item.manualImage;
       }
 
       function hostOf(url) {
@@ -380,8 +397,8 @@
           return Math.max(min, Math.min(max, parsed));
         };
         return {
-          width: clamp(manualWidthInput?.value, 1920, 480, 3840),
-          height: clamp(manualHeightInput?.value, 960, 320, 2160),
+          width: clamp(manualWidthInput?.value, 2560, 480, 3840),
+          height: clamp(manualHeightInput?.value, 1280, 320, 2160),
           zoom: clamp(manualZoomInput?.value, 400, 50, 800)
         };
       }
@@ -432,6 +449,14 @@
         return applyManualCaptureSettings(profile);
       }
 
+      function isLegacyGenericHostProfile(profile) {
+        if (!profile || typeof profile !== "object") return false;
+        const width = Number(profile.width || 0);
+        const height = Number(profile.height || 0);
+        const zoom = Number(profile.zoom || 0);
+        return width === 1920 && height === 960 && zoom === 400;
+      }
+
       function readCookieDomains() {
         return String(cookieDomainsInput?.value || "")
           .split(/[\s,;]+/)
@@ -470,7 +495,8 @@
       async function applyManualProfileForItem(item) {
         if (!item) return null;
         const hostProfile = getManualProfileForHost(item.url);
-        if (hostProfile) {
+        const legacyGeneric = isLegacyGenericHostProfile(hostProfile);
+        if (hostProfile && !legacyGeneric) {
           queueAudit("manual_profile_host", {
             url: item.url,
             detail: `${hostProfile.width}x${hostProfile.height}@${hostProfile.zoom}`
@@ -479,13 +505,35 @@
         }
         try {
           const applied = await resolveManualProfileForUrl(item.url);
-          if (!applied) return null;
+          if (!applied) {
+            if (hostProfile) {
+              queueAudit("manual_profile_host_fallback", {
+                url: item.url,
+                detail: `${hostProfile.width}x${hostProfile.height}@${hostProfile.zoom}`
+              });
+              return hostProfile;
+            }
+            return null;
+          }
+          if (legacyGeneric) {
+            queueAudit("manual_profile_host_ignored", {
+              url: item.url,
+              detail: "legacy_1920x960@400"
+            });
+          }
           queueAudit("manual_profile_auto", {
             url: item.url,
             detail: `${applied.width}x${applied.height}@${applied.zoom}`
           });
           return applied;
         } catch (error) {
+          if (hostProfile) {
+            queueAudit("manual_profile_host_fallback", {
+              url: item.url,
+              detail: `${hostProfile.width}x${hostProfile.height}@${hostProfile.zoom}`
+            });
+            return hostProfile;
+          }
           queueAudit("manual_profile_error", {
             url: item.url,
             status: "error",
@@ -513,7 +561,8 @@
           description: "",
           image: "",
           siteName: "",
-          manualImage: ""
+          manualImage: "",
+          screenshotVersion: "10"
         };
         items.push(item);
         queueAudit("add_link", { url: normalized, status: "queued" });
@@ -567,6 +616,62 @@
         render();
       }
 
+      async function refreshScreenshotAuto(item) {
+        if (!item || item.loading) return;
+        revokeObjectUrlSafe(item.manualImage);
+        item.manualImage = "";
+        item.mode = "screenshot";
+        item.error = false;
+        item.loading = true;
+        item.loaded = false;
+        item.screenshotVersion = `10-${Date.now()}`;
+        queueAudit("screenshot_refresh", {
+          url: item.url,
+          mode: "screenshot",
+          detail: `v=${item.screenshotVersion}`
+        });
+        render();
+        const screenshotUrl = screenshotSrc(item.url, item.screenshotVersion);
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 45000);
+        try {
+          const response = await fetch(screenshotUrl, {
+            signal: controller.signal,
+            headers: { accept: "image/png,*/*", "ngrok-skip-browser-warning": "1" }
+          });
+          if (!response.ok) {
+            throw new Error(`screenshot_failed_${response.status}`);
+          }
+          const blob = await response.blob();
+          if (!blob || blob.size <= 0) {
+            throw new Error("screenshot_empty");
+          }
+          replaceManualImage(item, blob);
+          item.loading = false;
+          item.loaded = true;
+          item.error = false;
+          queueAudit("screenshot_refresh_ok", {
+            url: item.url,
+            mode: "screenshot",
+            detail: `bytes=${blob.size}`
+          });
+          render();
+        } catch (error) {
+          item.loading = false;
+          item.loaded = true;
+          item.error = true;
+          queueAudit("screenshot_refresh_error", {
+            url: item.url,
+            mode: "screenshot",
+            status: "error",
+            message: String(error?.message || "refresh_failed")
+          });
+          render();
+        } finally {
+          window.clearTimeout(timer);
+        }
+      }
+
       function removeItem(id) {
         const index = items.findIndex((item) => item.id === id);
         if (index >= 0) {
@@ -604,7 +709,6 @@
         try {
           await applyManualProfileForItem(item);
           const settings = readManualCaptureSettings();
-          saveManualProfileForHost(item.url, settings);
           const response = await fetch("/api/tools/screenshot-lab/manual/start", {
             method: "POST",
             headers: { "content-type": "application/json", accept: "application/json", "ngrok-skip-browser-warning": "1" },
@@ -621,7 +725,7 @@
           manualSessionId = String(data.session_id || "");
           manualSessionCaptured = false;
           setManualStatus(
-            `Manual session active: ${manualSessionId} | output ${data?.width || settings.width}x${data?.height || settings.height} | zoom ${data?.zoom || settings.zoom}%`
+            `Manual session active: ${manualSessionId} | output ${data?.width || settings.width}x${data?.height || settings.height}`
           );
           queueAudit("manual_start_ok", { url: item.url, detail: `session=${manualSessionId}` });
         } catch (error) {
@@ -656,14 +760,7 @@
             throw new Error(String(data?.error || "manual_capture_failed"));
           }
           const blob = await response.blob();
-          if (targetItem.manualImage) {
-            try {
-              URL.revokeObjectURL(targetItem.manualImage);
-            } catch {
-              // noop
-            }
-          }
-          targetItem.manualImage = URL.createObjectURL(blob);
+          replaceManualImage(targetItem, blob);
           targetItem.mode = "screenshot";
           targetItem.loaded = true;
           targetItem.error = false;
@@ -808,9 +905,8 @@
           const eventsCount = Number(data.session.events_count || 0);
           const outputWidth = Number(data.session.width || 0);
           const outputHeight = Number(data.session.height || 0);
-          const zoom = Number(data.session.zoom || 0);
           setManualStatus(
-            `Manual session active: ${manualSessionId} | ${outputWidth}x${outputHeight} @ ${zoom}% | events: ${eventsCount} | ${currentUrl}`
+            `Manual session active: ${manualSessionId} | ${outputWidth}x${outputHeight} | events: ${eventsCount} | ${currentUrl}`
           );
         } catch {
           // noop
@@ -896,7 +992,7 @@
           const card = document.createElement("div");
           card.className = "item";
           const host = hostOf(item.url);
-          const screenshot = screenshotSrc(item.url);
+          const screenshot = screenshotSrc(item.url, item.screenshotVersion || "10");
           const imageSrc = item.mode === "screenshot" ? item.manualImage || screenshot : item.image;
           const hasPreviewText = Boolean(item.title || item.description || item.siteName);
           const title = item.title || host || item.url;
@@ -916,7 +1012,7 @@
               </div>
             </div>
             <div class="preview">
-              ${item.loading ? '<div class="muted">Loading preview...</div>' : ""}
+              ${item.loading ? `<div class="muted">${item.mode === "screenshot" ? "Refreshing screenshot..." : "Loading preview..."}</div>` : ""}
               ${item.error ? '<div class="muted">Preview failed. Try screenshot/manual mode.</div>' : ""}
               ${
                 !item.loading && !item.error
@@ -933,7 +1029,7 @@
             </div>
           `;
 
-          card.querySelector('[data-action="screenshot"]').addEventListener("click", () => switchMode(item, "screenshot"));
+          card.querySelector('[data-action="screenshot"]').addEventListener("click", () => refreshScreenshotAuto(item));
           card.querySelector('[data-action="preview"]').addEventListener("click", () => switchMode(item, "preview"));
           card.querySelector('[data-action="manual"]').addEventListener("click", () => {
             void handleManualButtonClick(item);
@@ -946,9 +1042,21 @@
 
           const image = card.querySelector("img");
           if (image) {
+            image.addEventListener("load", () => {
+              if (!item.loading) return;
+              item.loading = false;
+              item.loaded = true;
+              item.error = false;
+              queueAudit("image_load", { url: item.url, mode: item.mode, status: "ok" });
+              render();
+            });
             image.addEventListener("error", () => {
+              item.loading = false;
+              item.loaded = true;
+              item.error = true;
               image.style.display = "none";
               queueAudit("image_error", { url: item.url, mode: item.mode, status: "error" });
+              render();
             });
           }
 

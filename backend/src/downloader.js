@@ -19,6 +19,7 @@ const DEFAULT_FORMAT = [
 ].join("");
 const YTDLP_UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
 const GALLERYDL_TIMEOUT_MS = 2 * 60 * 1000;
+const GALLERYDL_IMAGE_ONLY_FILTER = "extension in ('jpg', 'jpeg', 'png', 'webp', 'gif')";
 const VERIFYABLE_MEDIA_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 const TRACKED_OUTPUT_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus|jpg|jpeg|png|webp|gif)$/i;
 const IMAGE_OUTPUT_EXT_RE = /\.(jpg|jpeg|png|webp|gif)$/i;
@@ -669,7 +670,7 @@ export class MediaDownloadQueue {
     job.last_message = "yt-dlp completed, trying gallery-dl for extra media in X post...";
     this._emit(job);
 
-    const result = await this._spawnGalleryDl(job);
+    const result = await this._spawnGalleryDl(job, { imageOnly: true });
     if (job.cancel_requested || result.canceled) {
       job.status = "canceled";
       job.finished_at = new Date().toISOString();
@@ -1079,12 +1080,16 @@ export class MediaDownloadQueue {
     });
   }
 
-  _spawnGalleryDl(job) {
+  _spawnGalleryDl(job, options = null) {
+    const imageOnly = Boolean(options?.imageOnly);
     const args = [];
     if (this.galleryDlPythonModule) {
       args.push("-m", "gallery_dl");
     }
     args.push("--directory", job.output_dir);
+    if (imageOnly) {
+      args.push("--filter", GALLERYDL_IMAGE_ONLY_FILTER);
+    }
     if (this.galleryDlProxy) {
       args.push("--proxy", this.galleryDlProxy);
     }
