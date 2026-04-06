@@ -260,6 +260,12 @@
       const initialMode = String(searchParams.get("mode") || "").trim().toLowerCase() === "screenshot"
         ? "screenshot"
         : "preview";
+      const captureContext = {
+        docId: String(searchParams.get("doc_id") || "").trim(),
+        releaseId: String(searchParams.get("release_id") || "").trim(),
+        segmentId: String(searchParams.get("segment_id") || "").trim(),
+        note: String(searchParams.get("note") || "").trim()
+      };
       const MANUAL_HOST_PROFILE_STORAGE_KEY = "vbaut_screenshot_lab_manual_host_profiles_v1";
       let manualHostProfiles = loadManualHostProfiles();
 
@@ -349,7 +355,7 @@
       function screenshotSrc(url, version = "10") {
         const normalized = normalizeUrl(url);
         if (!normalized) return "";
-        return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=${encodeURIComponent(String(version || "10"))}`;
+        return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=${encodeURIComponent(String(version || "11"))}`;
       }
 
       function revokeObjectUrlSafe(value) {
@@ -383,6 +389,14 @@
 
       function setManualStatus(text) {
         manualStatusNode.textContent = text;
+      }
+
+      function getCaptureContextLabel() {
+        const parts = [];
+        if (captureContext.docId) parts.push(`doc ${captureContext.docId}`);
+        if (captureContext.releaseId) parts.push(`release ${captureContext.releaseId}`);
+        if (captureContext.segmentId) parts.push(`segment ${captureContext.segmentId}`);
+        return parts.join(" · ");
       }
 
       function setGlobalCookiesStatus(text) {
@@ -753,20 +767,39 @@
           const response = await fetch("/api/tools/screenshot-lab/manual/capture", {
             method: "POST",
             headers: { "content-type": "application/json", accept: "image/png", "ngrok-skip-browser-warning": "1" },
-            body: JSON.stringify({ session_id: manualSessionId })
+            body: JSON.stringify({
+              session_id: manualSessionId,
+              doc_id: captureContext.docId,
+              release_id: captureContext.releaseId,
+              segment_id: captureContext.segmentId,
+              note: [captureContext.note, targetItem.title || "", targetItem.url].filter(Boolean).join(" | ")
+            })
           });
           if (!response.ok) {
             const data = await response.json().catch(() => ({}));
             throw new Error(String(data?.error || "manual_capture_failed"));
           }
+          const savedAssetId = String(response.headers.get("x-screenshot-asset-id") || "").trim();
           const blob = await response.blob();
           replaceManualImage(targetItem, blob);
           targetItem.mode = "screenshot";
           targetItem.loaded = true;
           targetItem.error = false;
           manualSessionCaptured = true;
-          setManualStatus(`Captured for ${hostOf(targetItem.url) || targetItem.url}`);
-          queueAudit("manual_capture_ok", { url: targetItem.url, detail: `session=${manualSessionId}` });
+          const contextLabel = getCaptureContextLabel();
+          setManualStatus(
+            [
+              `Captured for ${hostOf(targetItem.url) || targetItem.url}`,
+              savedAssetId ? `asset ${savedAssetId}` : "",
+              contextLabel
+            ]
+              .filter(Boolean)
+              .join(" · ")
+          );
+          queueAudit("manual_capture_ok", {
+            url: targetItem.url,
+            detail: `session=${manualSessionId}${savedAssetId ? `;asset=${savedAssetId}` : ""}`
+          });
           render();
         } catch (error) {
           setManualStatus(`Manual capture error: ${String(error?.message || "failed")}`);
@@ -1133,6 +1166,10 @@
           .map((line) => line.trim())
           .filter(Boolean)
           .forEach((line) => ensureUniquePush(line));
+      }
+      const contextLabel = getCaptureContextLabel();
+      if (contextLabel) {
+        setManualStatus(`Manual session: inactive · ${contextLabel}`);
       }
       queueAudit("page_open", {
         detail: initialUrls ? "with_initial_urls" : "blank",

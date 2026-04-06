@@ -4,6 +4,23 @@
     "height": 1280,
     "zoom": 400
   },
+  "pics_sources": {
+    "thumbnails": [
+      "https://s0.rbk.ru/",
+      "https://icdn.lenta.ru/",
+      "https://cdn.forbes.ru/",
+      "https://rtvi.com/wp-content/",
+      "https://s.ura.news/",
+      "https://cdn-kz.kursiv.media/",
+      "https://api.nsn.fm/",
+      "https://cdn.shazoo.ru/"
+    ],
+    "squared": [
+      "https://vk.com/kommersant",
+      "https://vk.com/izvestia",
+      "https://vk.com/lentaru"
+    ]
+  },
   "headlines": {
     "zoom_400": [
       "https://ruposters.ru/",
@@ -27,6 +44,7 @@
     ],
     "zoom_250": [
       "https://vc.ru/",
+      "https://www.rbc.ru/",
       "https://finance.yahoo.com/",
       "https://www.evening-kazan.ru/",
       "https://daily.afisha.ru/",

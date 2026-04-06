@@ -4,9 +4,11 @@ export function createMediaDownloadStateUtils(deps) {
   const {
     appendEvent,
     canonicalizeLinkUrl,
+    getDocumentState,
     getDocDir,
     normalizeLinkUrl,
-    readOptionalJson,
+    onPersistMediaDownloads,
+    onPersistDocumentState,
     writeJson
   } = deps;
 
@@ -79,7 +81,10 @@ export function createMediaDownloadStateUtils(deps) {
     await withMediaDocumentWriteLock(docId, async () => {
       const dir = getDocDir(docId);
       const documentPath = path.join(dir, "document.json");
-      const document = await readOptionalJson(documentPath);
+      const document =
+        typeof getDocumentState === "function"
+          ? await getDocumentState(docId)
+          : null;
       if (!document) return;
 
       const downloaded = normalizeDocumentMediaDownloads(document.media_downloads);
@@ -116,6 +121,12 @@ export function createMediaDownloadStateUtils(deps) {
       document.media_downloads = downloaded;
       document.updated_at = now;
       await writeJson(documentPath, document);
+      if (typeof onPersistDocumentState === "function") {
+        await Promise.resolve(onPersistDocumentState(docId, document, "media_download_recorded")).catch(() => null);
+      }
+      if (typeof onPersistMediaDownloads === "function") {
+        await Promise.resolve(onPersistMediaDownloads(docId, downloaded, "media_download_recorded")).catch(() => null);
+      }
       await appendEvent(docId, {
         timestamp: now,
         event: "media_download_recorded",

@@ -11,6 +11,7 @@ const LINK_SCREENSHOT_PROFILES_PATH = path.resolve(
   "../../../screenshot-engine/config/link-screenshot-profiles.json"
 );
 const DEFAULT_LINK_SCREENSHOT_COOKIES_PATH = path.resolve(__dirname, "../../../data/cookies/global-cookies.json");
+const LINK_SCREENSHOT_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en;q=0.8";
 const BACKEND_ENV_PATH = path.resolve(__dirname, "../../.env");
 const SCREENSHOT_LAB_HTML_PATH = path.resolve(__dirname, "../../public/screenshot-lab.html");
 const SCREENSHOT_LAB_LOG_FILE_NAME = "screenshot-lab-events.ndjson";
@@ -28,6 +29,18 @@ const SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS = clampNumber(
   0,
   12000
 );
+const SCREENSHOT_LAB_MANUAL_READY_WAIT_MS = clampNumber(
+  process.env.SCREENSHOT_LAB_MANUAL_READY_WAIT_MS,
+  1800,
+  0,
+  15000
+);
+const SCREENSHOT_LAB_MANUAL_CAPTURE_WAIT_MS = clampNumber(
+  process.env.SCREENSHOT_LAB_MANUAL_CAPTURE_WAIT_MS,
+  1800,
+  0,
+  15000
+);
 const SCREENSHOT_LAB_MANUAL_FORCE_HEADED = !["0", "false", "off", "no"].includes(
   String(process.env.SCREENSHOT_LAB_MANUAL_FORCE_HEADED ?? "1").trim().toLowerCase()
 );
@@ -43,6 +56,19 @@ let linkScreenshotProfilesMemo = null;
 let linkScreenshotProfilesLoadedAt = 0;
 let manualLabPuppeteerMemo = null;
 let screenshotBrowserServiceRef = null;
+
+function createScreenshotFileName() {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `shot_${stamp}_${suffix}.png`;
+}
+
+function normalizeRelativeFilePath(filePath) {
+  return String(filePath ?? "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .trim();
+}
 
 function clampNumber(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -334,6 +360,41 @@ function resolveLinkScreenshotProfile(rawUrl, profiles) {
   return profile;
 }
 
+async function assessScreenshotPageState(page) {
+  if (!page) return { isAntiBot: false, textLen: 0, title: "" };
+  try {
+    return await page.evaluate(() => {
+      const text = String(document.body?.innerText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      const title = String(document.title || "").toLowerCase();
+      const combined = `${title} ${text.slice(0, 2500)}`;
+      const antiBotMarkers = [
+        "checking your browser",
+        "verify you are human",
+        "just a moment",
+        "forbidden",
+        "if you are not a bot",
+        "captcha",
+        "cloudflare",
+        "проверка браузера",
+        "не удалось проверить ваш браузер автоматически",
+        "пройдите ручную проверку",
+        "защита от ботов",
+        "доступ ограничен"
+      ];
+      return {
+        isAntiBot: antiBotMarkers.some((marker) => combined.includes(marker)),
+        textLen: text.length,
+        title
+      };
+    });
+  } catch {
+    return { isAntiBot: false, textLen: 0, title: "" };
+  }
+}
+
 async function captureLinkScreenshotBuffer({ url, width, height, zoom, cookiesPath = "" }) {
   const scriptExists = await fs.stat(LINK_SCREENSHOT_SCRIPT_PATH).catch(() => null);
   if (!scriptExists) {
@@ -430,7 +491,7 @@ function shouldUsePersistentBrowserCapture(rawUrl) {
   );
 }
 
-async function captureLinkScreenshotViaPersistentBrowser({ url, width, height }) {
+async function captureLinkScreenshotViaPersistentBrowser({ url, width, height, zoom, resetBrowserZoom = false }) {
   if (!screenshotBrowserServiceRef?.enabled || !screenshotBrowserServiceRef?.openPage) {
     throw new Error("persistent browser is unavailable");
   }
@@ -438,13 +499,28 @@ async function captureLinkScreenshotViaPersistentBrowser({ url, width, height })
     url,
     width,
     height,
-    emulateViewport: true
+    zoom,
+    acceptLanguage: LINK_SCREENSHOT_ACCEPT_LANGUAGE,
+    emulateViewport: true,
+    resetBrowserZoom
   });
   const page = opened?.page;
   if (!page) throw new Error("persistent page not created");
   try {
     if (SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS > 0) {
       await waitMs(SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS);
+    }
+    let pageState = await assessScreenshotPageState(page);
+    if (pageState?.isAntiBot) {
+      await waitMs(2500);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
+      if (SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS > 0) {
+        await waitMs(SCREENSHOT_PERSISTENT_CAPTURE_WAIT_MS);
+      }
+      pageState = await assessScreenshotPageState(page);
+      if (pageState?.isAntiBot) {
+        throw new Error("anti-bot-page");
+      }
     }
     await hideScrollbarsForCapture(page);
     const buffer = await page.screenshot({
@@ -750,10 +826,26 @@ async function hideScrollbarsForCapture(page) {
   }
 }
 
+async function waitForPageToSettle(page, extraWaitMs = 0) {
+  if (!page) return;
+  try {
+    if (typeof page.waitForNetworkIdle === "function") {
+      await page.waitForNetworkIdle({ idleTime: 900, timeout: 5000 }).catch(() => null);
+    }
+  } catch {
+    // noop
+  }
+  if (extraWaitMs > 0) {
+    await waitMs(extraWaitMs);
+  }
+}
+
 export function registerMiscRoutes(app, deps) {
   const {
     appendUiActionsAudit,
+    attachAsset,
     config,
+    createAsset,
     dataDir,
     fetchLinkPreview,
     finishNotionProgress,
@@ -766,11 +858,67 @@ export function registerMiscRoutes(app, deps) {
     normalizeNotionUrl,
     pruneNotionProgressStore,
     pushNotionProgress,
+    releaseOutcomeMemoryStore,
+    sourceMemoryStore,
+    sourceProfilesStore,
     screenshotBrowserService,
     scrapeNotionPage,
     translateHeadingToEnglishQuery
   } = deps;
   screenshotBrowserServiceRef = screenshotBrowserService ?? null;
+
+  async function persistScreenshotAsset({
+    buffer,
+    url = "",
+    source = "screenshot_lab_manual",
+    sessionId = "",
+    docId = "",
+    segmentId = "",
+    releaseId = "",
+    note = ""
+  }) {
+    if (!createAsset || !buffer?.length) return null;
+    const dayDir = new Date().toISOString().slice(0, 10);
+    const screenshotsDir = path.resolve(dataDir || path.resolve(__dirname, "../../../data"), "_integration", "screenshots", dayDir);
+    await fs.mkdir(screenshotsDir, { recursive: true });
+    const fileName = createScreenshotFileName();
+    const absolutePath = path.join(screenshotsDir, fileName);
+    await fs.writeFile(absolutePath, buffer);
+    const relativePath = normalizeRelativeFilePath(path.relative(dataDir, absolutePath));
+    const asset = await createAsset({
+      kind: "screenshot",
+      status: "processed",
+      title: clipString(`Screenshot ${getHostFromUrl(url) || fileName}`, 180),
+      description: clipString(note || url, 1200),
+      source_url: clipString(url, 2000),
+      source_domain: clipString(getHostFromUrl(url), 200),
+      file_name: fileName,
+      local_path: relativePath,
+      screenshot_path: relativePath,
+      mime_type: "image/png",
+      processing_state: "captured",
+      origin_type: "screenshot_lab",
+      origin_id: clipString(sessionId, 120),
+      meta: {
+        source,
+        captured_from_url: clipString(url, 2000),
+        note: clipString(note, 1000)
+      }
+    });
+    if (!asset || !attachAsset) return asset;
+    const attachmentTargets = [
+      docId ? { target_type: "document", target_id: docId, role: "reference" } : null,
+      segmentId ? { target_type: "segment", target_id: segmentId, role: "screenshot" } : null,
+      releaseId ? { target_type: "release", target_id: releaseId, role: "visual" } : null
+    ].filter(Boolean);
+    for (const target of attachmentTargets) {
+      await attachAsset(asset.id, {
+        ...target,
+        attached_by: "screenshot_lab"
+      }).catch(() => null);
+    }
+    return asset;
+  }
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
@@ -982,6 +1130,7 @@ export function registerMiscRoutes(app, deps) {
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
+            "--lang=ru-RU",
             `--window-size=${outputWidth},${outputHeight}`
           ]
         });
@@ -990,6 +1139,12 @@ export function registerMiscRoutes(app, deps) {
         await page.evaluateOnNewDocument(() => {
           try {
             Object.defineProperty(navigator, "webdriver", { get: () => false });
+          } catch {
+            // noop
+          }
+          try {
+            Object.defineProperty(navigator, "language", { get: () => "ru-RU" });
+            Object.defineProperty(navigator, "languages", { get: () => ["ru-RU", "ru", "en-US", "en"] });
           } catch {
             // noop
           }
@@ -1077,6 +1232,7 @@ export function registerMiscRoutes(app, deps) {
       if (!persistentMode) {
         await page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
       }
+      await waitForPageToSettle(page, SCREENSHOT_LAB_MANUAL_READY_WAIT_MS);
       pushManualSessionEvent(session, "ready", { url: page.url() || normalizedUrl });
       await appendScreenshotLabAuditEvents(dataDir, [
         { type: "manual_start", url: normalizedUrl, detail: `session=${sessionId}` }
@@ -1163,18 +1319,32 @@ export function registerMiscRoutes(app, deps) {
       if (!session || !session.page) {
         return res.status(404).json({ error: "manual session not found" });
       }
+      await waitForPageToSettle(session.page, SCREENSHOT_LAB_MANUAL_CAPTURE_WAIT_MS);
       await hideScrollbarsForCapture(session.page);
       const buffer = await session.page.screenshot({
         type: "png",
         fullPage: false,
         captureBeyondViewport: false
       });
+      const screenshotAsset = await persistScreenshotAsset({
+        buffer,
+        url: session.page.url?.() || session.baseUrl,
+        sessionId,
+        docId: String(req.body?.doc_id ?? "").trim(),
+        segmentId: String(req.body?.segment_id ?? "").trim(),
+        releaseId: String(req.body?.release_id ?? "").trim(),
+        note: String(req.body?.note ?? "").trim()
+      }).catch(() => null);
       pushManualSessionEvent(session, "capture", { url: session.page.url?.() || session.baseUrl });
       await appendScreenshotLabAuditEvents(dataDir, [
         { type: "manual_capture", url: session.page.url?.() || session.baseUrl, detail: `session=${sessionId}` }
       ]);
       res.setHeader("content-type", "image/png");
       res.setHeader("cache-control", "no-store");
+      if (screenshotAsset?.id) {
+        res.setHeader("x-screenshot-asset-id", screenshotAsset.id);
+        res.setHeader("x-screenshot-asset-path", String(screenshotAsset.screenshot_path || screenshotAsset.local_path || ""));
+      }
       return res.send(buffer);
     } catch (error) {
       return res.status(500).json({ error: String(error?.message ?? "manual capture failed") });
@@ -1293,6 +1463,65 @@ export function registerMiscRoutes(app, deps) {
 
   app.get("/api/config", (_req, res) => {
     res.json(config);
+  });
+
+  app.get("/api/source-profiles", async (_req, res) => {
+    try {
+      const profiles = await sourceProfilesStore.getSourceProfiles();
+      res.json({
+        file_path: sourceProfilesStore.filePath,
+        profiles
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/source-profiles", async (req, res) => {
+    try {
+      const profilesInput =
+        req.body?.profiles && typeof req.body.profiles === "object" && !Array.isArray(req.body.profiles)
+          ? req.body.profiles
+          : null;
+      if (!profilesInput) {
+        return res.status(400).json({ error: "profiles object is required" });
+      }
+      const profiles = await sourceProfilesStore.updateSourceProfiles(profilesInput);
+      res.json({
+        ok: true,
+        file_path: sourceProfilesStore.filePath,
+        profiles
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/source-memory", async (_req, res) => {
+    try {
+      const memory = await sourceMemoryStore.getSourceMemory();
+      res.json({
+        file_path: sourceMemoryStore.filePath,
+        summary: sourceMemoryStore.summarizeMemory(memory)
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/release-outcome-memory", async (_req, res) => {
+    try {
+      if (!releaseOutcomeMemoryStore) {
+        return res.status(503).json({ error: "Release outcome memory unavailable" });
+      }
+      const memory = await releaseOutcomeMemoryStore.getReleaseOutcomeMemory();
+      res.json({
+        file_path: releaseOutcomeMemoryStore.filePath,
+        summary: releaseOutcomeMemoryStore.summarizeReleaseOutcomeMemory(memory)
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.post("/api/audit/ui-actions", async (req, res) => {
@@ -1484,9 +1713,20 @@ export function registerMiscRoutes(app, deps) {
       }
 
       const profiles = await loadLinkScreenshotProfiles();
-      const profile = resolveLinkScreenshotProfile(captureUrl, profiles);
+      const resolvedProfile = resolveLinkScreenshotProfile(captureUrl, profiles);
+      const profile = {
+        width: readOptionalClampedNumber(req.query?.width, 320, 3840) ?? resolvedProfile.width,
+        height: readOptionalClampedNumber(req.query?.height, 240, 2160) ?? resolvedProfile.height,
+        zoom: readOptionalClampedNumber(req.query?.zoom, 50, 800) ?? resolvedProfile.zoom
+      };
+      const resetBrowserZoom = String(req.query?.reset_browser_zoom ?? "0").trim() === "1";
       const usePersistentCapture = shouldUsePersistentBrowserCapture(captureUrl);
-      const cacheKey = `${captureUrl}|${profile.width}|${profile.height}|${profile.zoom}|mode=${usePersistentCapture ? "persistent" : "local"}|cookies=${cookiesPath ? "1" : "0"}|v=${cacheVersion}`;
+      const captureStrategy = !usePersistentCapture
+        ? "local-only"
+        : resetBrowserZoom
+          ? "persistent-first"
+          : "local-first";
+      const cacheKey = `${captureUrl}|${profile.width}|${profile.height}|${profile.zoom}|strategy=${captureStrategy}|cookies=${cookiesPath ? "1" : "0"}|reset=${resetBrowserZoom ? "1" : "0"}|v=${cacheVersion}`;
       const cached = getCachedLinkScreenshot(cacheKey);
       if (cached) {
         res.setHeader("x-link-screenshot-width", String(profile.width));
@@ -1508,54 +1748,71 @@ export function registerMiscRoutes(app, deps) {
       let buffer = null;
       let contentType = "image/png";
       let screenshotSource = "local";
-      try {
-        if (usePersistentCapture) {
-          buffer = await captureLinkScreenshotViaPersistentBrowser({
-            url: captureUrl,
-            width: profile.width,
-            height: profile.height
-          });
-          screenshotSource = "persistent-browser";
-        } else {
-          buffer = await captureLinkScreenshotBuffer({
-            url: captureUrl,
-            width: profile.width,
-            height: profile.height,
-            zoom: profile.zoom,
-            cookiesPath
-          });
-        }
-      } catch (error) {
-        const message = String(error?.message ?? "").toLowerCase();
-        const localAntiBotBlocked =
-          message.includes("anti-bot-page") && isHostInDomain(host, "tass.ru");
-        if (localAntiBotBlocked && screenshotSource !== "persistent-browser") {
-          return res.status(502).json({ error: "screenshot blocked by anti-bot" });
-        }
-        if (screenshotSource === "persistent-browser") {
+      let lastCaptureError = null;
+
+      const tryLocalCapture = async () => {
+        buffer = await captureLinkScreenshotBuffer({
+          url: captureUrl,
+          width: profile.width,
+          height: profile.height,
+          zoom: profile.zoom,
+          cookiesPath
+        });
+        screenshotSource = "local";
+      };
+
+      const tryPersistentCapture = async () => {
+        buffer = await captureLinkScreenshotViaPersistentBrowser({
+          url: captureUrl,
+          width: profile.width,
+          height: profile.height,
+          zoom: profile.zoom,
+          resetBrowserZoom
+        });
+        screenshotSource = "persistent-browser";
+      };
+
+      if (captureStrategy === "persistent-first") {
+        try {
+          await tryPersistentCapture();
+        } catch (error) {
+          lastCaptureError = error;
           try {
-            buffer = await captureLinkScreenshotBuffer({
-              url: captureUrl,
-              width: profile.width,
-              height: profile.height,
-              zoom: profile.zoom,
-              cookiesPath
-            });
-            screenshotSource = "local";
-          } catch {
-            // fallback to remote below
+            await tryLocalCapture();
+          } catch (fallbackError) {
+            lastCaptureError = fallbackError;
           }
         }
-        if (!buffer) {
+      } else {
+        try {
+          await tryLocalCapture();
+        } catch (error) {
+          lastCaptureError = error;
+          if (usePersistentCapture) {
+            try {
+              await tryPersistentCapture();
+            } catch (fallbackError) {
+              lastCaptureError = fallbackError;
+            }
+          }
+        }
+      }
+
+      if (!buffer) {
+        const message = String(lastCaptureError?.message ?? "").toLowerCase();
+        const localAntiBotBlocked =
+          message.includes("anti-bot-page") && isHostInDomain(host, "tass.ru") && !usePersistentCapture;
+        if (localAntiBotBlocked) {
+          return res.status(502).json({ error: "screenshot blocked by anti-bot" });
+        }
         const thumIoUrl = buildThumIoScreenshotUrl(captureUrl, profile);
         const fallback = await fetchRemoteImageBuffer(thumIoUrl, imageProxyMaxBytes, 28000);
         if (!fallback?.buffer) {
-          throw new Error("screenshot capture failed");
+          throw lastCaptureError ?? new Error("screenshot capture failed");
         }
         buffer = fallback.buffer;
         contentType = String(fallback.contentType ?? "image/png");
         screenshotSource = "thum.io";
-        }
       }
 
       if (!buffer || buffer.length > imageProxyMaxBytes) {

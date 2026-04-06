@@ -20,9 +20,11 @@ const DEFAULT_FORMAT = [
 const YTDLP_UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
 const GALLERYDL_TIMEOUT_MS = 2 * 60 * 1000;
 const GALLERYDL_IMAGE_ONLY_FILTER = "extension in ('jpg', 'jpeg', 'png', 'webp', 'gif')";
+const THUMBNAIL_FALLBACK_TIMEOUT_MS = 30000;
 const VERIFYABLE_MEDIA_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 const TRACKED_OUTPUT_EXT_RE = /\.(mp4|m4v|mov|mkv|webm|avi|mp3|m4a|aac|wav|flac|ogg|opus|jpg|jpeg|png|webp|gif)$/i;
 const IMAGE_OUTPUT_EXT_RE = /\.(jpg|jpeg|png|webp|gif)$/i;
+const X_TRANSIENT_RETRY_DELAYS_MS = [4000, 10000];
 
 const YTDLP_CANDIDATE_HOSTS = [
   /(^|\.)youtube\.com$/i,
@@ -49,6 +51,22 @@ const TIKTOK_SHORT_HOSTS = new Set(["vt.tiktok.com", "vm.tiktok.com"]);
 
 const DIRECT_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|m3u8|mp3|m4a|wav|flac)(?:$|[?#])/i;
 
+function isVkVideoUrl(parsedUrl) {
+  if (!parsedUrl) return false;
+  const host = String(parsedUrl.hostname ?? "").toLowerCase();
+  const pathWithQuery = `${parsedUrl.pathname ?? ""}${parsedUrl.search ?? ""}`.toLowerCase();
+  if (host === "vk.com" || host.endsWith(".vk.com")) {
+    return pathWithQuery.startsWith("/video");
+  }
+  if (host === "vk.ru" || host.endsWith(".vk.ru")) {
+    return pathWithQuery.startsWith("/video");
+  }
+  if (host === "vkvideo.ru" || host.endsWith(".vkvideo.ru")) {
+    return pathWithQuery.startsWith("/video") || pathWithQuery.includes("/video-") || pathWithQuery.includes("video");
+  }
+  return false;
+}
+
 export function isYtDlpCandidateUrl(rawUrl) {
   const value = String(rawUrl ?? "").trim();
   if (!value) return false;
@@ -61,6 +79,9 @@ export function isYtDlpCandidateUrl(rawUrl) {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
   if (DIRECT_MEDIA_PATH_RE.test(parsed.pathname + parsed.search)) return true;
   const host = parsed.hostname.toLowerCase();
+  if (host === "vk.com" || host.endsWith(".vk.com") || host === "vk.ru" || host.endsWith(".vk.ru") || host === "vkvideo.ru" || host.endsWith(".vkvideo.ru")) {
+    return isVkVideoUrl(parsed);
+  }
   return YTDLP_CANDIDATE_HOSTS.some((pattern) => pattern.test(host));
 }
 
@@ -113,6 +134,19 @@ function isXUrl(rawUrl) {
   } catch {
     return false;
   }
+}
+
+function shouldRetryTransientXFailure(rawUrl, detail = "") {
+  if (!isXUrl(rawUrl)) return false;
+  const text = String(detail ?? "").toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("api.x.com") &&
+    (text.includes("getaddrinfo failed") ||
+      text.includes("failed to resolve") ||
+      text.includes("nameresolutionerror") ||
+      text.includes("guest_token"))
+  );
 }
 
 export async function resolveDownloaderTools() {
@@ -339,7 +373,8 @@ export class MediaDownloadQueue {
       meta_uploader_url: null,
       meta_webpage_url: null,
       meta_format_note: null,
-      meta_resolution: null
+      meta_resolution: null,
+      meta_thumbnail: null
     };
 
     this.jobs.set(job.id, job);
@@ -409,7 +444,8 @@ export class MediaDownloadQueue {
       meta_uploader_url: job.meta_uploader_url ?? null,
       meta_webpage_url: job.meta_webpage_url ?? null,
       meta_format_note: job.meta_format_note ?? null,
-      meta_resolution: job.meta_resolution ?? null
+      meta_resolution: job.meta_resolution ?? null,
+      meta_thumbnail: job.meta_thumbnail ?? null
     };
   }
 
@@ -527,6 +563,7 @@ export class MediaDownloadQueue {
 
     let result = null;
     let attempt = 0;
+    let transientXRetryCount = 0;
     let displayFiles = new Set(job.output_files ?? []);
     let absoluteFiles = new Set();
     while (attempt < 2) {
@@ -543,6 +580,15 @@ export class MediaDownloadQueue {
       }
 
       if (result.exitCode !== 0) {
+        const retryDelayMs = X_TRANSIENT_RETRY_DELAYS_MS[transientXRetryCount] ?? 0;
+        const retryDetail = result.error || result.stderrTail || "";
+        if (retryDelayMs > 0 && shouldRetryTransientXFailure(job.url, retryDetail)) {
+          transientXRetryCount += 1;
+          job.last_message = `X download retry ${transientXRetryCount}/${X_TRANSIENT_RETRY_DELAYS_MS.length} after transient api.x.com failure...`;
+          this._emit(job);
+          await sleep(retryDelayMs);
+          continue;
+        }
         break;
       }
 
@@ -567,6 +613,14 @@ export class MediaDownloadQueue {
       if (displayFiles.size === 0 && predictedPath && (await fileExists(predictedPath))) {
         absoluteFiles.add(predictedPath);
         displayFiles.add(toRelativeDisplayPath(job.output_dir, predictedPath));
+      }
+
+      if (displayFiles.size === 0) {
+        const thumbnailFallbackPath = await this._tryThumbnailFallback(job, mediaId);
+        if (thumbnailFallbackPath) {
+          absoluteFiles.add(thumbnailFallbackPath);
+          displayFiles.add(toRelativeDisplayPath(job.output_dir, thumbnailFallbackPath));
+        }
       }
 
       if (displayFiles.size > 0) {
@@ -943,6 +997,8 @@ export class MediaDownloadQueue {
       "--print",
       "before_dl:__META_RESOLUTION__%(resolution)s",
       "--print",
+      "before_dl:__META_THUMBNAIL__%(thumbnail)s",
+      "--print",
       "after_move:__FILE__%(filepath)s",
       "-f",
       DEFAULT_FORMAT,
@@ -1033,6 +1089,7 @@ export class MediaDownloadQueue {
         if (assignMeta("__META_WEBPAGE_URL__", "meta_webpage_url")) return;
         if (assignMeta("__META_FORMAT_NOTE__", "meta_format_note")) return;
         if (assignMeta("__META_RESOLUTION__", "meta_resolution")) return;
+        if (assignMeta("__META_THUMBNAIL__", "meta_thumbnail")) return;
 
         const percent = parsePercent(text);
         if (percent !== null) {
@@ -1151,6 +1208,51 @@ export class MediaDownloadQueue {
         });
       });
     });
+  }
+
+  async _tryThumbnailFallback(job, mediaId = "") {
+    const thumbnailUrl = String(job?.meta_thumbnail ?? "").trim();
+    if (!thumbnailUrl) return null;
+    if (!/^https?:\/\//i.test(thumbnailUrl)) return null;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), THUMBNAIL_FALLBACK_TIMEOUT_MS);
+    try {
+      job.last_message = "No media file from yt-dlp, trying preview image fallback...";
+      this._emit(job);
+
+      const response = await fetch(thumbnailUrl, {
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "user-agent": "Mozilla/5.0",
+          accept: "image/*,*/*;q=0.8"
+        }
+      });
+      if (!response.ok) return null;
+
+      const contentType = String(response.headers.get("content-type") ?? "").toLowerCase();
+      if (contentType && !contentType.startsWith("image/")) return null;
+
+      const contentLength = Number(response.headers.get("content-length") ?? 0);
+      if (Number.isFinite(contentLength) && contentLength > 20 * 1024 * 1024) {
+        return null;
+      }
+
+      const fileExt = inferImageExtensionFromResponse(thumbnailUrl, contentType);
+      const title = sanitizeFileStem(job?.meta_title || job?.section_title || "preview");
+      const idPart = String(mediaId ?? "").trim() ? ` [${String(mediaId).trim()}]` : "";
+      const fileName = `${title}${idPart}.${fileExt}`;
+      const absolutePath = path.join(job.output_dir, fileName);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) return null;
+      await fs.writeFile(absolutePath, bytes);
+      return absolutePath;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -1343,6 +1445,34 @@ function normalizeYtDlpMetaValue(value) {
   if (!text) return "";
   if (/^(na|n\/a|null|none|unknown)$/i.test(text)) return "";
   return text.length > 220 ? text.slice(0, 220).trim() : text;
+}
+
+function sanitizeFileStem(value) {
+  const normalized = String(value ?? "")
+    .replace(/[^\p{L}\p{N}\s._-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  const base = normalized || "preview";
+  return base.length > 180 ? base.slice(0, 180).trim() : base;
+}
+
+function inferImageExtensionFromResponse(url, contentType = "") {
+  const type = String(contentType ?? "").toLowerCase();
+  if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
+  if (type.includes("png")) return "png";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("gif")) return "gif";
+  try {
+    const parsed = new URL(String(url ?? "").trim());
+    const ext = path.extname(parsed.pathname).replace(/^\./, "").toLowerCase();
+    if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) {
+      return ext === "jpeg" ? "jpg" : ext;
+    }
+  } catch {
+    // noop
+  }
+  return "jpg";
 }
 
 function buildSubprocessEnv(extra = null) {

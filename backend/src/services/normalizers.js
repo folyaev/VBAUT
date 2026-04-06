@@ -13,6 +13,13 @@ function normalizeStringList(value, limit) {
   return normalized.slice(0, limit);
 }
 
+function normalizeCompactString(value, maxLength = 512) {
+  if (typeof value !== "string") return "";
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+}
+
 export function emptySearchDecision() {
   return { keywords: [], queries: [] };
 }
@@ -177,6 +184,63 @@ export function normalizeSegmentWithVisual(segment) {
   };
 }
 
+export function normalizeResearchSourcesInput(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const normalized = {
+        url: normalizeCompactString(entry.url, 2048),
+        title: normalizeCompactString(entry.title),
+        domain: normalizeCompactString(entry.domain, 255),
+        snippet: normalizeCompactString(entry.snippet, 1024),
+        applied_at: normalizeCompactString(entry.applied_at, 64),
+        role: normalizeCompactString(entry.role, 64),
+        attachment_role: normalizeCompactString(entry.attachment_role, 64),
+        asset_id: normalizeCompactString(entry.asset_id, 128),
+        reason: normalizeCompactString(entry.reason, 1024),
+        scores:
+          entry.scores && typeof entry.scores === "object"
+            ? {
+                total_score: Number(entry.scores.total_score ?? 0),
+                source_score: Number(entry.scores.source_score ?? 0),
+                visual_score: Number(entry.scores.visual_score ?? 0),
+                montage_score: Number(entry.scores.montage_score ?? 0)
+              }
+            : null
+      };
+      return normalized.url || normalized.title || normalized.domain ? normalized : null;
+    })
+    .filter(Boolean)
+    .slice(0, 64);
+}
+
+export function normalizeResearchBundleTraceInput(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const normalizePick = (pick) => {
+    if (!pick || typeof pick !== "object" || Array.isArray(pick)) return null;
+    const normalized = {
+      result_id: normalizeCompactString(pick.result_id, 128),
+      title: normalizeCompactString(pick.title),
+      domain: normalizeCompactString(pick.domain, 255),
+      url: normalizeCompactString(pick.url, 2048),
+      role: normalizeCompactString(pick.role, 64),
+      asset_id: normalizeCompactString(pick.asset_id, 128),
+      attachment_id: normalizeCompactString(pick.attachment_id, 128)
+    };
+    return normalized.result_id || normalized.title || normalized.url ? normalized : null;
+  };
+  const normalized = {
+    run_id: normalizeCompactString(value.run_id, 128),
+    source_result_id: normalizeCompactString(value.source_result_id, 128),
+    visual_result_id: normalizeCompactString(value.visual_result_id, 128),
+    applied_at: normalizeCompactString(value.applied_at, 64),
+    source: normalizePick(value.source),
+    visual: normalizePick(value.visual)
+  };
+  return normalized.run_id || normalized.source || normalized.visual ? normalized : null;
+}
+
 export function normalizeSegmentsInput(segments) {
   return segments.map((segment) => ({
     segment_id: String(segment.segment_id ?? ""),
@@ -185,6 +249,14 @@ export function normalizeSegmentsInput(segments) {
     section_id: segment.section_id ? String(segment.section_id) : null,
     section_title: segment.section_title ? String(segment.section_title) : null,
     section_index: Number.isFinite(Number(segment.section_index)) ? Number(segment.section_index) : null,
+    research_use_topic_title: Boolean(segment?.research_use_topic_title),
+    research_use_theme_tags: Boolean(segment?.research_use_theme_tags),
+    topic_tags: Array.isArray(segment.topic_tags)
+      ? [...new Set(segment.topic_tags.map((item) => String(item ?? "").trim()).filter(Boolean))].slice(0, 12)
+      : [],
+    section_tags: Array.isArray(segment.section_tags)
+      ? [...new Set(segment.section_tags.map((item) => String(item ?? "").trim()).filter(Boolean))].slice(0, 12)
+      : [],
     links: Array.isArray(segment.links)
       ? segment.links.map((link) => ({
           url: String(link?.url ?? "").trim(),
@@ -203,6 +275,8 @@ export function normalizeDecisionsInput(decisions) {
     visual_decision: normalizeVisualDecisionInput(decision.visual_decision ?? decision),
     search_decision: normalizeSearchDecisionInput(decision.search_decision ?? decision.visual_decision),
     search_decision_en: normalizeSearchDecisionInput(decision.search_decision_en),
+    research_sources: normalizeResearchSourcesInput(decision.research_sources),
+    research_bundle_trace: normalizeResearchBundleTraceInput(decision.research_bundle_trace),
     version: Number(decision.version ?? 1)
   }));
 }

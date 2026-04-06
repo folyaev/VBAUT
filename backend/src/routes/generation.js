@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createDocumentRouteLoaders } from "../services/document-route-loaders.js";
 
 export function registerGenerationRoutes(app, deps) {
   const {
@@ -13,7 +14,10 @@ export function registerGenerationRoutes(app, deps) {
     generateSearchDecisionsForSegments,
     generateSegmentsOnly,
     generateVisualDecisionsForSegments,
+    getDocumentState,
     getDocDir,
+    listDocDecisions,
+    listDocSegments,
     markDocumentSegmented,
     mergeLinkSegmentsBySection,
     mergeSegmentsWithHistory,
@@ -27,9 +31,19 @@ export function registerGenerationRoutes(app, deps) {
     readOptionalJson,
     saveVersioned,
     splitSegmentsAndDecisions,
+    syncDocumentState,
+    syncDocumentContext,
     syncDocumentSegmentationState,
     writeJson
   } = deps;
+  const { loadDocumentState: loadGenerationDocumentState, loadDocumentContext: loadGenerationDocumentContext } =
+    createDocumentRouteLoaders({
+      getDocDir,
+      readOptionalJson,
+      getDocumentState,
+      listDocSegments,
+      listDocDecisions
+    });
 
   async function listVersions(dir, baseName) {
     const entries = await fs.readdir(dir).catch(() => []);
@@ -60,7 +74,7 @@ export function registerGenerationRoutes(app, deps) {
     try {
       const docId = req.params.id;
       const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadGenerationDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
       let text = document.raw_text;
@@ -82,8 +96,7 @@ export function registerGenerationRoutes(app, deps) {
       }
 
       const segments = await generateSegmentsOnly({ text });
-      const existingSegments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
-      const existingDecisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const { segments: existingSegments, decisions: existingDecisions } = await loadGenerationDocumentContext(docId);
       const existingLinkSegments = normalizeLinkSegmentsInput(
         existingSegments.filter((segment) => String(segment?.block_type ?? "").trim().toLowerCase() === "links")
       );
@@ -124,9 +137,11 @@ export function registerGenerationRoutes(app, deps) {
 
       const segmentsVersion = await saveVersioned(docId, "segments", segmentsData);
       const decisionsVersion = await saveVersioned(docId, "decisions", decisionsData);
+      await syncDocumentContext?.(docId, segmentsData, decisionsData, "segments_generate");
       markDocumentSegmented(document, text);
       document.updated_at = new Date().toISOString();
       await writeJson(path.join(dir, "document.json"), document);
+      await syncDocumentState?.(docId, document, "segments_generate");
 
       await appendEvent(docId, {
         timestamp: new Date().toISOString(),
@@ -166,11 +181,10 @@ export function registerGenerationRoutes(app, deps) {
     try {
       const docId = req.params.id;
       const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadGenerationDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
-      const currentSegments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
-      const currentDecisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const { segments: currentSegments, decisions: currentDecisions } = await loadGenerationDocumentContext(docId);
       if (!Array.isArray(currentSegments) || currentSegments.length === 0) {
         return res.status(400).json({ error: "Current segments not found" });
       }
@@ -239,6 +253,7 @@ export function registerGenerationRoutes(app, deps) {
       });
 
       const version = await saveVersioned(docId, "decisions", nextDecisions);
+      await syncDocumentContext?.(docId, currentSegments, nextDecisions, "decisions_realign");
       await appendEvent(docId, {
         timestamp: new Date().toISOString(),
         event: "decisions_realigned",
@@ -265,11 +280,14 @@ export function registerGenerationRoutes(app, deps) {
   app.post("/api/documents/:id/decisions:generate", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadGenerationDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
-      const segments = ((await readOptionalJson(path.join(dir, "segments.json"))) ?? []).filter(
+      const segments = (
+        (
+          (await loadGenerationDocumentContext(docId)).segments
+        )
+      ).filter(
         (segment) => segment?.block_type !== "links"
       );
       if (!segments.length) return res.status(400).json({ error: "Segments not found" });
@@ -296,7 +314,7 @@ export function registerGenerationRoutes(app, deps) {
       }
 
       const generated = await generateVisualDecisionsForSegments(targetSegments);
-      const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const { decisions } = await loadGenerationDocumentContext(docId);
       const decisionMap = new Map(decisions.map((item) => [item.segment_id, item]));
 
       generated.forEach((decision) => {
@@ -316,6 +334,7 @@ export function registerGenerationRoutes(app, deps) {
 
       const mergedDecisions = Array.from(decisionMap.values());
       const version = await saveVersioned(docId, "decisions", mergedDecisions);
+      await syncDocumentContext?.(docId, segments, mergedDecisions, "decisions_generate");
 
       await appendEvent(docId, {
         timestamp: new Date().toISOString(),
@@ -341,11 +360,10 @@ export function registerGenerationRoutes(app, deps) {
   app.post("/api/documents/:id/search:generate", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadGenerationDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
-      const segments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
+      const { segments } = await loadGenerationDocumentContext(docId);
       if (!segments.length) return res.status(400).json({ error: "Segments not found" });
 
       const inputSegments = Array.isArray(req.body?.segments)
@@ -363,7 +381,7 @@ export function registerGenerationRoutes(app, deps) {
       if (inputSegments?.length) {
         targetSegments = inputSegments.map(normalizeSegmentWithVisual).filter((segment) => segment.segment_id);
       } else if (inputIds.length) {
-        const decisionList = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+        const { decisions: decisionList } = await loadGenerationDocumentContext(docId);
         const decisionMap = new Map(decisionList.map((item) => [item.segment_id, item]));
         targetSegments = segments
           .filter((segment) => inputIds.includes(segment.segment_id))
@@ -378,7 +396,7 @@ export function registerGenerationRoutes(app, deps) {
       }
 
       const generated = await generateSearchDecisionsForSegments(targetSegments);
-      const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const { decisions } = await loadGenerationDocumentContext(docId);
       const decisionMap = new Map(decisions.map((item) => [item.segment_id, item]));
 
       generated.forEach((decision) => {
@@ -395,6 +413,7 @@ export function registerGenerationRoutes(app, deps) {
 
       const mergedDecisions = Array.from(decisionMap.values());
       const version = await saveVersioned(docId, "decisions", mergedDecisions);
+      await syncDocumentContext?.(docId, segments, mergedDecisions, "search_generate");
 
       await appendEvent(docId, {
         timestamp: new Date().toISOString(),
@@ -424,11 +443,10 @@ export function registerGenerationRoutes(app, deps) {
   app.post("/api/documents/:id/search-en:generate", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadGenerationDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
-      const segments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
+      const { segments } = await loadGenerationDocumentContext(docId);
       if (!segments.length) return res.status(400).json({ error: "Segments not found" });
 
       const inputSegments = Array.isArray(req.body?.segments)
@@ -446,7 +464,7 @@ export function registerGenerationRoutes(app, deps) {
       if (inputSegments?.length) {
         targetSegments = inputSegments.map(normalizeSegmentWithVisual).filter((segment) => segment.segment_id);
       } else if (inputIds.length) {
-        const decisionList = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+        const { decisions: decisionList } = await loadGenerationDocumentContext(docId);
         const decisionMap = new Map(decisionList.map((item) => [item.segment_id, item]));
         targetSegments = segments
           .filter((segment) => inputIds.includes(segment.segment_id))
@@ -461,7 +479,7 @@ export function registerGenerationRoutes(app, deps) {
       }
 
       const generated = await generateEnglishSearchDecisionsForSegments(targetSegments);
-      const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const { decisions } = await loadGenerationDocumentContext(docId);
       const decisionMap = new Map(decisions.map((item) => [item.segment_id, item]));
 
       generated.forEach((decision) => {
@@ -478,6 +496,7 @@ export function registerGenerationRoutes(app, deps) {
 
       const mergedDecisions = Array.from(decisionMap.values());
       const version = await saveVersioned(docId, "decisions", mergedDecisions);
+      await syncDocumentContext?.(docId, segments, mergedDecisions, "search_en_generate");
 
       await appendEvent(docId, {
         timestamp: new Date().toISOString(),

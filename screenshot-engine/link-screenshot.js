@@ -366,6 +366,7 @@ try {
       "--disable-background-timer-throttling",
       "--disable-breakpad",
       "--disable-renderer-backgrounding",
+      "--lang=ru-RU",
       `--window-size=${outputWidth},${outputHeight}`
     ],
     defaultViewport: {
@@ -376,6 +377,14 @@ try {
   });
 
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    try {
+      Object.defineProperty(navigator, "language", { get: () => "ru-RU" });
+      Object.defineProperty(navigator, "languages", { get: () => ["ru-RU", "ru", "en-US", "en"] });
+    } catch {
+      // noop
+    }
+  });
   await page.setViewport({ width: viewportWidth, height: viewportHeight, deviceScaleFactor: zoomFactor });
   await enableAdblockLikeFiltering(page, rawUrl);
   await page.setUserAgent(

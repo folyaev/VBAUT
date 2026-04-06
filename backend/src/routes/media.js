@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
-import path from "node:path";
+import { createDocumentRouteLoaders } from "../services/document-route-loaders.js";
 
 export function registerMediaRoutes(app, deps) {
   const {
     appendEvent,
+    getDocumentState,
     getDocDir,
+    getDocumentMediaDownloads,
     getMediaDir,
     getYtDlpVersion,
     isHttpUrl,
@@ -22,6 +24,14 @@ export function registerMediaRoutes(app, deps) {
     updateYtDlpBinary
   } = deps;
   let ytDlpUpdatePromise = null;
+  const { loadDocumentState: loadMediaDocumentState, loadDocumentMediaDownloads: loadMediaDownloads } =
+    createDocumentRouteLoaders({
+      getDocDir,
+      readOptionalJson,
+      getDocumentState,
+      getDocumentMediaDownloads,
+      normalizeDocumentMediaDownloads
+    });
 
   app.get("/api/downloader/config", (_req, res) => {
     res.json({
@@ -86,13 +96,12 @@ export function registerMediaRoutes(app, deps) {
   app.get("/api/documents/:id/media", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadMediaDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
       const files = await listMediaFiles();
       const jobs = mediaDownloader.listJobs(docId);
-      const downloadedMap = normalizeDocumentMediaDownloads(document.media_downloads);
+      const downloadedMap = await loadMediaDownloads(docId, document);
       res.json({
         files,
         jobs,
@@ -108,8 +117,7 @@ export function registerMediaRoutes(app, deps) {
   app.post("/api/documents/:id/media:download", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadMediaDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
       if (!mediaDownloader.isAvailable()) {
@@ -124,6 +132,18 @@ export function registerMediaRoutes(app, deps) {
       if (!isHttpUrl(url)) return res.status(400).json({ error: "url must be http(s)" });
       if (!isYtDlpCandidateUrl(url)) {
         return res.status(400).json({ error: "URL is not supported by yt-dlp filter" });
+      }
+      const downloadedMap = await loadMediaDownloads(docId, document);
+      const alreadyDownloaded =
+        downloadedMap &&
+        typeof downloadedMap === "object" &&
+        Object.values(downloadedMap).some((item) => String(item?.url ?? "").trim() === url);
+      if (alreadyDownloaded) {
+        return res.json({
+          already_downloaded: true,
+          url,
+          tools: mediaDownloader.getToolsInfo()
+        });
       }
       if (isMediaAlreadyDownloaded(document, url)) {
         return res.json({
@@ -153,8 +173,7 @@ export function registerMediaRoutes(app, deps) {
   app.get("/api/documents/:id/media/:jobId", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadMediaDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
       const job = mediaDownloader.getJob(req.params.jobId);
@@ -168,8 +187,7 @@ export function registerMediaRoutes(app, deps) {
   app.post("/api/documents/:id/media/:jobId:cancel", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadMediaDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
       const job = mediaDownloader.getJob(req.params.jobId);
@@ -193,8 +211,7 @@ export function registerMediaRoutes(app, deps) {
   app.get("/api/documents/:id/media/file", async (req, res) => {
     try {
       const docId = req.params.id;
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadMediaDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
       const relativePath = String(req.query?.path ?? "").trim();

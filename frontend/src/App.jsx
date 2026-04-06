@@ -1,4 +1,43 @@
 ﻿import React, { useEffect, useState } from "react";
+import { AppHeroHeader } from "./components/AppHeroHeader.jsx";
+import { AppNewsOpsSection } from "./components/AppNewsOpsSection.jsx";
+import { LazySectionFallback } from "./components/LazySectionFallback.jsx";
+import { SegmentLinkedReleasePanel } from "./components/SegmentLinkedReleasePanel.jsx";
+import { SegmentResearchBrief } from "./components/SegmentResearchBrief.jsx";
+import { SegmentResearchHeader } from "./components/SegmentResearchHeader.jsx";
+import { SegmentResearchResultsPanel } from "./components/SegmentResearchResultsPanel.jsx";
+import { SegmentSearchQueriesPanel } from "./components/SegmentSearchQueriesPanel.jsx";
+import { SegmentResearchToolbar } from "./components/SegmentResearchToolbar.jsx";
+import { SegmentVisualEditor } from "./components/SegmentVisualEditor.jsx";
+import { ScenarioBlocksHeader } from "./components/ScenarioBlocksHeader.jsx";
+import { ScenarioGroupSection } from "./components/ScenarioGroupSection.jsx";
+import { ScenarioLinksPanel } from "./components/ScenarioLinksPanel.jsx";
+import { useCollaborativeSession } from "./hooks/useCollaborativeSession.js";
+import { useReleaseAssistantActions } from "./hooks/useReleaseAssistantActions.js";
+import { useMediaManager } from "./hooks/useMediaManager.js";
+import { useReleaseBoardState } from "./hooks/useReleaseBoardState.js";
+import { useReleaseMutations } from "./hooks/useReleaseMutations.js";
+import { useReleaseWorkspaceData } from "./hooks/useReleaseWorkspaceData.js";
+import { useScenarioGroups } from "./hooks/useScenarioGroups.js";
+import { useUiAuditQueue } from "./hooks/useUiAuditQueue.js";
+const NewsroomWorkspace = React.lazy(() =>
+  import("./components/NewsroomWorkspace.jsx").then((module) => ({ default: module.NewsroomWorkspace }))
+);
+const ReleaseOnAirMode = React.lazy(() =>
+  import("./components/ReleaseOnAirMode.jsx").then((module) => ({ default: module.ReleaseOnAirMode }))
+);
+const ReleaseProducerMode = React.lazy(() =>
+  import("./components/ReleaseProducerMode.jsx").then((module) => ({ default: module.ReleaseProducerMode }))
+);
+const ScenarioEditorPanel = React.lazy(() =>
+  import("./components/ScenarioEditorPanel.jsx").then((module) => ({ default: module.ScenarioEditorPanel }))
+);
+const MediaHistoryPanel = React.lazy(() =>
+  import("./components/MediaHistoryPanel.jsx").then((module) => ({ default: module.MediaHistoryPanel }))
+);
+const ResearchWorkspace = React.lazy(() =>
+  import("./components/ResearchWorkspace.jsx").then((module) => ({ default: module.ResearchWorkspace }))
+);
 const defaultConfig = {
   blockTypes: ["news", "ad", "selfad", "intro", "outro"],
   visualTypes: [
@@ -56,11 +95,32 @@ const defaultConfig = {
 };
 const HEADING_SEARCH_RU_ENGINE_IDS = new Set(["vk", "vk_video", "perplexity"]);
 const HEADING_EN_SEARCH_ENGINES = [
-  { id: "yt_reuters", label: "Reuters", url: "https://www.youtube.com/@Reuters/search?query=" },
-  { id: "yt_afp", label: "AFP", url: "https://www.youtube.com/@AFP/search?query=" },
-  { id: "yt_nypost", label: "NY Post", url: "https://www.youtube.com/@nypost/search?query=" },
-  { id: "yt_wthr13", label: "WTHR13", url: "https://www.youtube.com/@WTHR13News/search?query=" },
-  { id: "yt_independent", label: "Independent", url: "https://www.youtube.com/@theindependent/search?query=" }
+  { id: "yt_reuters", label: "@Reuters", url: "https://www.youtube.com/@Reuters/search?query=" },
+  { id: "yt_afp", label: "@AFP", url: "https://www.youtube.com/@AFP/search?query=" },
+  { id: "yt_nypost", label: "@nypost", url: "https://www.youtube.com/@nypost/search?query=" },
+  { id: "yt_gbcnewsroom", label: "@GBCNewsroom", url: "https://www.youtube.com/@GBCNewsroom/search?query=" },
+  { id: "yt_kolezev", label: "@Kolezev", url: "https://www.youtube.com/@Kolezev/search?query=" },
+  { id: "yt_wfaa8", label: "@Wfaa8", url: "https://www.youtube.com/@Wfaa8/search?query=" },
+  { id: "yt_wthr13news", label: "@WTHR13News", url: "https://www.youtube.com/@WTHR13News/search?query=" },
+  { id: "yt_waaytv", label: "@WAAYTV", url: "https://www.youtube.com/@WAAYTV/search?query=" },
+  { id: "yt_newsthink", label: "@Newsthink", url: "https://www.youtube.com/@Newsthink/search?query=" },
+  { id: "yt_redactsiya", label: "@redactsiya", url: "https://www.youtube.com/@redactsiya/search?query=" },
+  { id: "yt_theindependent", label: "@theindependent", url: "https://www.youtube.com/@theindependent/search?query=" },
+  { id: "yt_diplomatrutube", label: "@Diplomatrutube", url: "https://www.youtube.com/@Diplomatrutube/search?query=" },
+  { id: "yt_business", label: "@business", url: "https://www.youtube.com/@business/search?query=" },
+  { id: "yt_fox13now", label: "@Fox13now", url: "https://www.youtube.com/@Fox13now/search?query=" },
+  { id: "yt_ksdk", label: "@KSDK", url: "https://www.youtube.com/@KSDK/search?query=" },
+  { id: "yt_associatedpress", label: "@AssociatedPress", url: "https://www.youtube.com/@AssociatedPress/search?query=" },
+  { id: "yt_kanal13az", label: "@Kanal13AZ", url: "https://www.youtube.com/@Kanal13AZ/search?query=" },
+  { id: "yt_abcnewsaustralia", label: "@abcnewsaustralia", url: "https://www.youtube.com/@abcnewsaustralia/search?query=" },
+  { id: "yt_cbcthenational", label: "@CBCTheNational", url: "https://www.youtube.com/@CBCTheNational/search?query=" },
+  { id: "yt_10tampabay", label: "@10TampaBay", url: "https://www.youtube.com/@10TampaBay/search?query=" },
+  { id: "yt_thetimes", label: "@TheTimes", url: "https://www.youtube.com/@TheTimes/search?query=" },
+  { id: "yt_aljazeeraenglish", label: "@aljazeeraenglish", url: "https://www.youtube.com/@aljazeeraenglish/search?query=" },
+  { id: "yt_euronewsru", label: "@euronewsru", url: "https://www.youtube.com/@euronewsru/search?query=" },
+  { id: "yt_bbcnews", label: "@BBCNews", url: "https://www.youtube.com/@BBCNews/search?query=" },
+  { id: "yt_abc7news", label: "@abc7news", url: "https://www.youtube.com/@abc7news/search?query=" },
+  { id: "yt_9newsaus", label: "@9NewsAUS", url: "https://www.youtube.com/@9NewsAUS/search?query=" }
 ];
 const YTDLP_CANDIDATE_HOSTS = [
   /(^|\.)youtube\.com$/i,
@@ -83,7 +143,51 @@ const YTDLP_CANDIDATE_HOSTS = [
   /(^|\.)streamable\.com$/i,
   /(^|\.)soundcloud\.com$/i
 ];
+
+function formatDomainListForTextarea(list = []) {
+  return (Array.isArray(list) ? list : [])
+    .map((item) => String(item ?? "").trim().toLowerCase())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseDomainListFromTextarea(value = "") {
+  return [...new Set(
+    String(value ?? "")
+      .split(/\r?\n|,|;/)
+      .map((item) => String(item ?? "").trim().toLowerCase())
+      .filter(Boolean)
+  )];
+}
+
+function buildSourceProfilesDraft(profiles = {}) {
+  return {
+    trusted_domains: formatDomainListForTextarea(profiles?.trusted_domains),
+    blocked_domains: formatDomainListForTextarea(profiles?.blocked_domains),
+    video_platform_domains: formatDomainListForTextarea(profiles?.video_platform_domains),
+    social_domains: formatDomainListForTextarea(profiles?.social_domains),
+    downloadable_domains: formatDomainListForTextarea(profiles?.downloadable_domains),
+    screenshot_friendly_domains: formatDomainListForTextarea(profiles?.screenshot_friendly_domains),
+    domain_profiles_json: JSON.stringify(profiles?.domain_profiles ?? {}, null, 2),
+    channel_profiles_json: JSON.stringify(profiles?.channel_profiles ?? {}, null, 2)
+  };
+}
 const DIRECT_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|m3u8|mp3|m4a|wav|flac)(?:$|[?#])/i;
+const isVkVideoUrl = (parsedUrl) => {
+  if (!parsedUrl) return false;
+  const host = String(parsedUrl.hostname ?? "").toLowerCase();
+  const pathWithQuery = `${parsedUrl.pathname ?? ""}${parsedUrl.search ?? ""}`.toLowerCase();
+  if (host === "vk.com" || host.endsWith(".vk.com")) {
+    return pathWithQuery.startsWith("/video");
+  }
+  if (host === "vk.ru" || host.endsWith(".vk.ru")) {
+    return pathWithQuery.startsWith("/video");
+  }
+  if (host === "vkvideo.ru" || host.endsWith(".vkvideo.ru")) {
+    return pathWithQuery.startsWith("/video") || pathWithQuery.includes("/video-") || pathWithQuery.includes("video");
+  }
+  return false;
+};
 const VIDEO_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|avi|mpg|mpeg|mts|m2ts)(?:$|[?#])/i;
 const TIMECODE_EDIT_FPS = 50;
 const VISUAL_TYPE_LABELS = {
@@ -225,6 +329,52 @@ const normalizeQueryList = (value, limit) => {
   if (!limit) return normalized;
   return normalized.slice(0, limit);
 };
+const normalizeResearchSources = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const normalized = {
+        url: String(entry.url ?? "").trim(),
+        title: String(entry.title ?? "").trim(),
+        domain: String(entry.domain ?? "").trim(),
+        snippet: String(entry.snippet ?? "").trim(),
+        applied_at: String(entry.applied_at ?? "").trim(),
+        role: String(entry.role ?? "").trim(),
+        attachment_role: String(entry.attachment_role ?? "").trim(),
+        asset_id: String(entry.asset_id ?? "").trim(),
+        reason: String(entry.reason ?? "").trim(),
+        scores: entry.scores && typeof entry.scores === "object" ? { ...entry.scores } : null
+      };
+      return normalized.url || normalized.title || normalized.domain ? normalized : null;
+    })
+    .filter(Boolean);
+};
+const normalizeResearchBundleTrace = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const normalizePick = (pick) => {
+    if (!pick || typeof pick !== "object" || Array.isArray(pick)) return null;
+    const normalized = {
+      result_id: String(pick.result_id ?? "").trim(),
+      title: String(pick.title ?? "").trim(),
+      domain: String(pick.domain ?? "").trim(),
+      url: String(pick.url ?? "").trim(),
+      role: String(pick.role ?? "").trim(),
+      asset_id: String(pick.asset_id ?? "").trim(),
+      attachment_id: String(pick.attachment_id ?? "").trim()
+    };
+    return normalized.result_id || normalized.title || normalized.url ? normalized : null;
+  };
+  const normalized = {
+    run_id: String(value.run_id ?? "").trim(),
+    source_result_id: String(value.source_result_id ?? "").trim(),
+    visual_result_id: String(value.visual_result_id ?? "").trim(),
+    applied_at: String(value.applied_at ?? "").trim(),
+    source: normalizePick(value.source),
+    visual: normalizePick(value.visual)
+  };
+  return normalized.run_id || normalized.source || normalized.visual ? normalized : null;
+};
 const getInitialTheme = () => {
   if (typeof window === "undefined") return "dark";
   const stored = window.localStorage?.getItem("theme");
@@ -233,6 +383,88 @@ const getInitialTheme = () => {
     return "light";
   }
   return "dark";
+};
+const isNewsroomPathname = (pathname) => {
+  const normalized = String(pathname ?? "")
+    .trim()
+    .replace(/\/+$/g, "") || "/";
+  return normalized === "/newsroom";
+};
+const isResearchPathname = (pathname) => {
+  const normalized = String(pathname ?? "")
+    .trim()
+    .replace(/\/+$/g, "") || "/";
+  return normalized === "/research";
+};
+const getInitialAppMode = () => {
+  if (typeof window === "undefined") return "workspace";
+  const mode = String(new URLSearchParams(window.location.search).get("mode") ?? "").toLowerCase().trim();
+  if (mode === "producer") return "producer";
+  if (mode === "onair") return "onair";
+  if (mode === "newsops") return "newsops";
+  if (mode === "inbox") return "inbox";
+  if (mode === "library") return "library";
+  if (mode === "releases") return "releases";
+  if (isResearchPathname(window.location.pathname)) return "research";
+  if (isNewsroomPathname(window.location.pathname)) return "newsroom";
+  return "workspace";
+};
+const getInitialReleaseQueryId = () => {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get("release") ?? "").trim();
+};
+const getInitialResearchDocQueryId = () => {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get("doc_id") ?? "").trim();
+};
+const getInitialResearchSegmentQueryId = () => {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get("segment_id") ?? "").trim();
+};
+const getInitialResearchRunQueryId = () => {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get("run_id") ?? "").trim();
+};
+const syncAppLocation = (mode, releaseId, researchState = {}) => {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  const isNewsroomMode = mode === "newsroom" || mode === "inbox" || mode === "library" || mode === "releases";
+  const isResearchMode = mode === "research";
+  url.pathname = isResearchMode ? "/research" : isNewsroomMode ? "/newsroom" : "/";
+  if (mode === "producer" || mode === "onair" || mode === "newsops" || mode === "inbox" || mode === "library" || mode === "releases") {
+    url.searchParams.set("mode", mode);
+  } else {
+    url.searchParams.delete("mode");
+  }
+  const normalizedReleaseId = String(releaseId ?? "").trim();
+  if (normalizedReleaseId) {
+    url.searchParams.set("release", normalizedReleaseId);
+  } else {
+    url.searchParams.delete("release");
+  }
+  const normalizedResearchDocId = String(researchState?.docId ?? "").trim();
+  const normalizedResearchSegmentId = String(researchState?.segmentId ?? "").trim();
+  const normalizedResearchRunId = String(researchState?.runId ?? "").trim();
+  if (isResearchMode && normalizedResearchDocId) {
+    url.searchParams.set("doc_id", normalizedResearchDocId);
+  } else {
+    url.searchParams.delete("doc_id");
+  }
+  if (isResearchMode && normalizedResearchSegmentId) {
+    url.searchParams.set("segment_id", normalizedResearchSegmentId);
+  } else {
+    url.searchParams.delete("segment_id");
+  }
+  if (isResearchMode && normalizedResearchRunId) {
+    url.searchParams.set("run_id", normalizedResearchRunId);
+  } else {
+    url.searchParams.delete("run_id");
+  }
+  const nextPath = `${url.pathname}${url.search}${url.hash}`;
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextPath !== currentPath) {
+    window.history.replaceState({}, "", nextPath);
+  }
 };
 const formatDocDate = (value) => {
   if (!value) return "";
@@ -247,6 +479,325 @@ const formatDocDate = (value) => {
   } catch {
     return date.toISOString().slice(0, 10);
   }
+};
+const formatDateTimeShort = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  try {
+    return date.toLocaleString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return date.toISOString().slice(0, 16).replace("T", " ");
+  }
+};
+const formatRelativeEventLabel = (value) => {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const diffSec = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
+  return `${Math.round(diffSec / 86400)}d ago`;
+};
+const formatAssetKindLabel = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  const labels = {
+    link: "Ссылка",
+    note: "Заметка",
+    telegram_media: "Telegram media",
+    downloaded_media: "Скачанный файл",
+    screenshot: "Скриншот",
+    preview: "Превью"
+  };
+  return labels[key] ?? (key || "Asset");
+};
+const formatReleaseItemStatusLabel = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  const labels = {
+    planned: "Planned",
+    selected: "Selected",
+    scripting: "Scripting",
+    visual_ready: "Visual Ready",
+    ready: "Ready",
+    done: "Done",
+    skipped: "Skipped"
+  };
+  return labels[key] ?? (key || "planned");
+};
+const formatReleaseReadyStateLabel = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  const labels = {
+    ready: "Ready",
+    capture_needed: "Capture Needed",
+    download_needed: "Download Needed",
+    backup_only: "Backup Only",
+    downloaded: "Downloaded",
+    captured: "Captured"
+  };
+  return labels[key] ?? (key || "");
+};
+const formatReleasePickedFromLabel = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  const labels = {
+    research_bundle: "Research Bundle",
+    research_brief: "Research Brief",
+    assistant_recommendation: "Assistant Recommendation",
+    research_backup_visual: "Backup Visual",
+    research_backup_source: "Backup Source",
+    research_fallback_visual: "Fallback Visual",
+    research_fallback_source: "Fallback Source"
+  };
+  return labels[key] ?? (key ? key.replace(/_/g, " ") : "");
+};
+const formatReleaseHandoffEventLabel = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  const labels = {
+    handoff_download_resolved: "Download resolved",
+    handoff_capture_resolved: "Capture resolved"
+  };
+  return labels[key] ?? (key ? key.replace(/_/g, " ") : "");
+};
+const formatReleasePairSwitchLabel = (event = "", meta = {}) => {
+  const normalizedEvent = String(event ?? "").trim().toLowerCase();
+  const action = String(meta?.action ?? "").trim().toLowerCase();
+  if (normalizedEvent === "manual_override") return "Manual override";
+  if (normalizedEvent === "research_pick_applied") {
+    if (action === "research_pick") return "Research pair applied";
+    if (action === "research_pick_source") return "Research source updated";
+    if (action === "research_pick_visual") return "Research visual updated";
+    return "Research pick applied";
+  }
+  return "";
+};
+const getCurrentPairBadgeClassName = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  if (key === "main pair") return "segment-current-pair-badge is-main";
+  if (key === "backup pair") return "segment-current-pair-badge is-backup";
+  if (key === "mixed pair") return "segment-current-pair-badge is-mixed";
+  if (key === "custom pair") return "segment-current-pair-badge is-custom";
+  return "segment-current-pair-badge";
+};
+const normalizeComparablePickLabel = (value) => String(value ?? "").trim().toLowerCase();
+const getSegmentResearchEntryComparableLabel = (entry = null) =>
+  String(entry?.title || entry?.label || entry?.domain || entry?.url || entry?.result_id || "").trim();
+const formatSegmentResearchBriefLabel = (item = null) => {
+  const label = String(item?.label ?? "").trim();
+  if (/pass|phase/i.test(label)) return label;
+  const key = String(item?.key ?? "").trim().toLowerCase();
+  const role = String(item?.role ?? "").trim().toLowerCase();
+  if (key === "source" || role === "main_source") return "Main Source";
+  if (key === "visual" || (role === "visual_candidate" && key !== "backup_visual")) return "Main Visual";
+  if (key === "backup_source" || role === "backup_source") return "Backup Source";
+  if (key === "backup_visual") return "Backup Visual";
+  if (key === "download") return "Best Download";
+  if (key === "context") return "Context";
+  return label || "Research";
+};
+const deriveSegmentResearchCurrentPair = (
+  promotedPair = null,
+  {
+    primarySource = null,
+    primaryVisual = null,
+    backupSource = null,
+    backupVisual = null
+  } = {}
+) => {
+  if (!promotedPair?.source && !promotedPair?.visual) return null;
+  const currentSourceLabel = String(promotedPair?.source?.title || promotedPair?.source?.domain || "").trim();
+  const currentVisualLabel = String(promotedPair?.visual?.title || promotedPair?.visual?.domain || "").trim();
+  const primarySourceLabel = getSegmentResearchEntryComparableLabel(primarySource);
+  const primaryVisualLabel = getSegmentResearchEntryComparableLabel(primaryVisual);
+  const backupSourceLabel = getSegmentResearchEntryComparableLabel(backupSource);
+  const backupVisualLabel = getSegmentResearchEntryComparableLabel(backupVisual);
+  const sourceMatchesMain =
+    Boolean(currentSourceLabel) &&
+    Boolean(primarySourceLabel) &&
+    normalizeComparablePickLabel(currentSourceLabel) === normalizeComparablePickLabel(primarySourceLabel);
+  const sourceMatchesBackup =
+    Boolean(currentSourceLabel) &&
+    Boolean(backupSourceLabel) &&
+    normalizeComparablePickLabel(currentSourceLabel) === normalizeComparablePickLabel(backupSourceLabel);
+  const visualMatchesMain =
+    Boolean(currentVisualLabel) &&
+    Boolean(primaryVisualLabel) &&
+    normalizeComparablePickLabel(currentVisualLabel) === normalizeComparablePickLabel(primaryVisualLabel);
+  const visualMatchesBackup =
+    Boolean(currentVisualLabel) &&
+    Boolean(backupVisualLabel) &&
+    normalizeComparablePickLabel(currentVisualLabel) === normalizeComparablePickLabel(backupVisualLabel);
+  const label =
+    sourceMatchesMain && visualMatchesMain
+      ? "Main Pair"
+      : sourceMatchesBackup && visualMatchesBackup
+        ? "Backup Pair"
+        : (sourceMatchesMain || sourceMatchesBackup || visualMatchesMain || visualMatchesBackup)
+          ? "Mixed Pair"
+          : (currentSourceLabel || currentVisualLabel)
+            ? "Custom Pair"
+            : "";
+  if (!label) return null;
+  const hint =
+    label === "Main Pair"
+      ? "Aligned with main picks"
+      : label === "Backup Pair"
+        ? "Using backup picks"
+        : label === "Mixed Pair"
+          ? "Mixed main + backup"
+          : "Custom research mix";
+  return {
+    label,
+    hint
+  };
+};
+const findReleaseResearchBriefEntryByRole = (brief, roles = [], keys = []) => {
+  const items = Array.isArray(brief?.brief?.items) ? brief.brief.items : [];
+  if (items.length === 0) return null;
+  const normalizedRoles = new Set(roles.map((item) => String(item ?? "").trim().toLowerCase()).filter(Boolean));
+  const normalizedKeys = new Set(keys.map((item) => String(item ?? "").trim().toLowerCase()).filter(Boolean));
+  const exact = items.find((item) => {
+    const role = String(item?.role ?? "").trim().toLowerCase();
+    const key = String(item?.key ?? "").trim().toLowerCase();
+    return (normalizedRoles.size > 0 && normalizedRoles.has(role)) || (normalizedKeys.size > 0 && normalizedKeys.has(key));
+  });
+  return exact ?? items[0] ?? null;
+};
+const findReleaseResearchBackupEntry = (brief, primaryEntry = null, kind = "source") => {
+  const items = Array.isArray(brief?.brief?.items) ? brief.brief.items : [];
+  if (items.length === 0) return null;
+  const normalizedKind = String(kind ?? "").trim().toLowerCase();
+  const primaryResultId = String(primaryEntry?.result_id ?? "").trim();
+  const primaryKey = String(primaryEntry?.key ?? "").trim().toLowerCase();
+  const explicit =
+    normalizedKind === "visual"
+      ? findReleaseResearchBriefEntryByRole(brief, ["visual_candidate"], ["backup_visual"])
+      : findReleaseResearchBriefEntryByRole(brief, ["backup_source", "reference", "main_source"], ["backup_source"]);
+  if (!explicit || typeof explicit !== "object") return null;
+  const explicitResultId = String(explicit?.result_id ?? "").trim();
+  const explicitKey = String(explicit?.key ?? "").trim().toLowerCase();
+  if ((explicitResultId && explicitResultId === primaryResultId) || (explicitKey && explicitKey === primaryKey)) {
+    return null;
+  }
+  return explicit;
+};
+const buildReleaseResearchContextPayload = (brief = null, { sourceEntry = null, visualEntry = null } = {}) => {
+  if (!brief) return null;
+  const normalize = (entry) => {
+    if (!entry || typeof entry !== "object") return null;
+    return {
+      key: String(entry?.key ?? "").trim(),
+      label: String(entry?.label ?? "").trim(),
+      title: String(entry?.title || entry?.label || "").trim(),
+      domain: String(entry?.domain ?? "").trim(),
+      role: String(entry?.role ?? "").trim(),
+      reason: String(entry?.reason ?? "").trim(),
+      score: Number(entry?.score ?? 0),
+      url: String(entry?.url ?? "").trim(),
+      result_id: String(entry?.result_id ?? "").trim()
+    };
+  };
+  return {
+    segment_id: String(brief?.segment_id ?? "").trim(),
+    section_title: String(brief?.section_title ?? "").trim(),
+    summary: String(brief?.brief?.summary ?? "").trim(),
+    source_item: normalize(sourceEntry),
+    visual_item: normalize(visualEntry)
+  };
+};
+const buildReleaseResearchScriptNote = (brief = null, entry = null) => {
+  const title = String(entry?.title || entry?.label || "").trim();
+  const domain = String(entry?.domain || "").trim();
+  const sectionTitle = String(brief?.section_title || "").trim();
+  const parts = [];
+  parts.push(sectionTitle ? `Lead with ${sectionTitle}` : "Lead with the selected source");
+  if (title) parts.push(`source cue ${title}`);
+  if (domain) parts.push(`cite ${domain}`);
+  return `${parts.join(", ")}.`.trim();
+};
+const buildReleaseResearchVisualNote = (brief = null, entry = null) => {
+  const title = String(entry?.title || entry?.label || "").trim();
+  const domain = String(entry?.domain || "").trim();
+  const sectionTitle = String(brief?.section_title || "").trim();
+  if (title && domain) return `Use ${title} from ${domain} as the supporting visual for ${sectionTitle || "this segment"}.`;
+  if (title) return `Use ${title} as the supporting visual for ${sectionTitle || "this segment"}.`;
+  return `Use research-backed visual for ${sectionTitle || "this segment"}.`;
+};
+const buildReleaseResearchPickPatch = (brief = null, { sourceEntry = null, visualEntry = null } = {}) => {
+  const patch = {
+    assistant_action: "research_pick",
+    research_context: buildReleaseResearchContextPayload(brief, { sourceEntry, visualEntry })
+  };
+  if (sourceEntry) {
+    patch.script_note = buildReleaseResearchScriptNote(brief, sourceEntry);
+  }
+  if (visualEntry) {
+    patch.visual_note = buildReleaseResearchVisualNote(brief, visualEntry);
+  }
+  if (sourceEntry && visualEntry) {
+    patch.item_status = "visual_ready";
+  }
+  return patch;
+};
+const deriveReleaseTraceBadges = (attachment = {}) => {
+  const trace = attachment?.assistant_trace_json ?? {};
+  const badges = [];
+  const scriptNote = String(attachment?.script_note ?? "").trim();
+  const visualNote = String(attachment?.visual_note ?? "").trim();
+  const tracedScriptNote = String(trace?.script?.note ?? "").trim();
+  const tracedVisualNote = String(trace?.visual?.note ?? "").trim();
+
+  if (
+    String(trace?.research?.section_title ?? "").trim() ||
+    String(trace?.script?.section_title ?? "").trim() ||
+    String(trace?.visual?.section_title ?? "").trim()
+  ) {
+    badges.push("Research-backed");
+  }
+  if (
+    String(trace?.visual?.recommendation?.asset_id ?? "").trim() ||
+    String(trace?.visual?.recommendation?.title ?? "").trim()
+  ) {
+    badges.push("Recommendation-backed");
+  }
+  if (String(trace?.last_action ?? "").trim()) {
+    badges.push("Assistant-updated");
+  }
+  if (
+    Boolean(trace?.manual_override?.script) ||
+    Boolean(trace?.manual_override?.visual) ||
+    (scriptNote && tracedScriptNote && scriptNote !== tracedScriptNote) ||
+    (visualNote && tracedVisualNote && visualNote !== tracedVisualNote)
+  ) {
+    badges.push("Manual override");
+  }
+
+  return Array.from(new Set(badges));
+};
+const deriveLinkedReleaseNextAction = ({ hasScript = false, hasVisual = false, handoffState = "", itemStatus = "" } = {}) => {
+  const normalizedHandoffState = String(handoffState ?? "").trim().toLowerCase();
+  const normalizedItemStatus = String(itemStatus ?? "").trim().toLowerCase();
+  if (!hasScript) return "Draft";
+  if (!hasVisual) return "Fill Visuals";
+  if (normalizedHandoffState === "download_needed") return "Queue Download";
+  if (normalizedHandoffState === "capture_needed") return "Screenshot";
+  if (normalizedHandoffState === "backup_only") return "Review Backup";
+  if (normalizedItemStatus === "selected" || normalizedItemStatus === "scripting") return "Prepare";
+  if (normalizedItemStatus === "visual_ready") return "Mark Ready";
+  if (normalizedHandoffState === "downloaded" || normalizedHandoffState === "captured") return "Open Handoff";
+  return "Open Release";
+};
+const formatRecommendationBucketLabel = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  const labels = {
+    strong: "Strong",
+    good: "Good",
+    possible: "Possible"
+  };
+  return labels[key] ?? (key || "Candidate");
 };
 const formatRecentDocLabel = (doc) => {
   if (!doc) return "";
@@ -408,7 +959,11 @@ const isYtDlpCandidateUrl = (rawUrl) => {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
   if (DIRECT_MEDIA_PATH_RE.test(parsed.pathname + parsed.search)) return true;
-  return YTDLP_CANDIDATE_HOSTS.some((pattern) => pattern.test(parsed.hostname.toLowerCase()));
+  const host = parsed.hostname.toLowerCase();
+  if (host === "vk.com" || host.endsWith(".vk.com") || host === "vk.ru" || host.endsWith(".vk.ru") || host === "vkvideo.ru" || host.endsWith(".vkvideo.ru")) {
+    return isVkVideoUrl(parsed);
+  }
+  return YTDLP_CANDIDATE_HOSTS.some((pattern) => pattern.test(host));
 };
 const formatMediaJobProgress = (job) => {
   const bucket = Number(job?.progress_bucket);
@@ -635,6 +1190,17 @@ const buildSessionPayloadFromState = ({ scriptText, notionUrl, segments }) => {
   };
 };
 const getSessionFingerprint = (snapshot) => JSON.stringify(snapshot ?? {});
+const normalizeSegmentTagList = (value, limit = 12) =>
+  [...new Set(
+    (Array.isArray(value) ? value : [value])
+      .flatMap((item) => String(item ?? "").split(/[\n,;|]+/))
+      .map((item) => item.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+  )].slice(0, limit);
+const normalizeSegmentResearchContextSettings = (segment = {}) => ({
+  research_use_topic_title: Boolean(segment?.research_use_topic_title),
+  research_use_theme_tags: Boolean(segment?.research_use_theme_tags)
+});
 const normalizeSearchDecision = (decision, config) => {
   if (!decision || typeof decision !== "object") return emptySearchDecision();
   const limits = config?.searchLimits ?? defaultConfig.searchLimits;
@@ -1234,7 +1800,7 @@ const getPreviewImageSrc = (value) => {
 const buildScreenshotPreviewImageSrc = (pageUrl) => {
   const normalized = normalizeLinkUrl(pageUrl);
   if (!normalized) return "";
-  return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=10`;
+  return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=11`;
 };
 const getUrlHost = (value) => {
   try {
@@ -1983,6 +2549,10 @@ const emptySegment = (index, section = {}) => ({
   section_id: section.section_id ?? null,
   section_title: section.section_title ?? null,
   section_index: section.section_index ?? null,
+  research_use_topic_title: Boolean(section?.research_use_topic_title),
+  research_use_theme_tags: Boolean(section?.research_use_theme_tags),
+  topic_tags: normalizeSegmentTagList(section.topic_tags ?? section.section_tags ?? []),
+  section_tags: normalizeSegmentTagList(section.section_tags ?? section.topic_tags ?? []),
   visual_decision: emptyVisualDecision(),
   search_decision: emptySearchDecision(),
   search_open: false,
@@ -2038,6 +2608,90 @@ const hasSearchDecisionContent = (decision) => {
   if (Array.isArray(decision.queries) && decision.queries.length > 0) return true;
   return false;
 };
+const inferResearchCandidateRole = (segment, ranked = {}) => {
+  const sourceScore = Number(ranked?.source_score ?? 0);
+  const visualScore = Number(ranked?.visual_score ?? 0);
+  const montageScore = Number(ranked?.montage_score ?? 0);
+  const totalScore = Number(ranked?.total_score ?? 0);
+  const hints = (Array.isArray(ranked?.visual_hints) ? ranked.visual_hints : []).map((item) =>
+    String(item ?? "").trim().toLowerCase()
+  );
+  const hasVisual = hasVisualDecisionContent(segment?.visual_decision);
+  const hasSearch = hasSearchDecisionContent(segment?.search_decision);
+  const visualCandidate =
+    hints.some((item) => ["video", "image", "screenshot", "downloadable"].includes(item)) ||
+    visualScore >= 0.68 ||
+    montageScore >= 0.68;
+
+  if (visualCandidate && (!hasVisual || visualScore >= sourceScore + 0.08)) return "visual_candidate";
+  if (!hasSearch && (sourceScore >= 0.64 || totalScore >= 0.8)) return "main_source";
+  if (sourceScore >= 0.56) return hasSearch ? "backup_source" : "main_source";
+  if (visualCandidate) return "visual_candidate";
+  return "reference";
+};
+const formatResearchCandidateRoleLabel = (value) => {
+  const key = String(value ?? "").trim().toLowerCase();
+  const labels = {
+    main_source: "Source",
+    backup_source: "Source",
+    visual_candidate: "Visual",
+    reference: "Reference"
+  };
+  return labels[key] ?? (key || "Candidate");
+};
+const collectResearchMemoryBadges = (ranked = {}) => {
+  const helpfulCount = Number(
+    Array.isArray(ranked?.reason_tags)
+      ? String(
+          ranked.reason_tags.find((tag) => String(tag ?? "").trim().toLowerCase().startsWith("helpful:")) ?? ""
+        ).split(":")[1]
+      : 0
+  );
+  const usageCount = Number(ranked?.memory_usage_count ?? 0);
+  const badges = [];
+  if (helpfulCount > 0) {
+    badges.push(helpfulCount > 1 ? `Helpful x${helpfulCount}` : "Helpful before");
+  }
+  if (usageCount > 0) {
+    badges.push(usageCount > 1 ? `Used x${usageCount}` : "Used before");
+  }
+  return badges;
+};
+const formatResearchReasonTagLabel = (tag) => {
+  const normalized = String(tag ?? "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "ru_blocked") return "RU blocked";
+  if (normalized === "responsive") return "Responsive";
+  if (normalized === "watermarks") return "Watermarks";
+  if (normalized.startsWith("quality:")) return String(tag).split(":")[1] || "";
+  if (normalized.startsWith("lang:")) {
+    const value = String(tag).split(":")[1] || "";
+    return value ? `Lang ${value.toUpperCase()}` : "";
+  }
+  if (normalized === "high_similarity") return "High similarity";
+  if (normalized.startsWith("similar_segments:")) {
+    const value = String(tag).split(":")[1] || "";
+    return value ? `Similar x${value}` : "";
+  }
+  if (normalized.startsWith("search_match:")) {
+    const value = String(tag).split(":")[1] || "";
+    return value ? `Search x${value}` : "";
+  }
+  if (normalized.startsWith("topic_match:")) {
+    const value = String(tag).split(":")[1] || "";
+    return value ? `Topic x${value}` : "";
+  }
+  if (normalized.startsWith("visual_match:")) {
+    const value = String(tag).split(":")[1] || "";
+    return value ? `Visual x${value}` : "";
+  }
+  return String(tag ?? "").trim().replace(/_/g, " ");
+};
+const getVisibleResearchReasonTags = (ranked = {}) =>
+  (Array.isArray(ranked?.reason_tags) ? ranked.reason_tags : []).filter((tag) => {
+    const normalized = String(tag ?? "").trim().toLowerCase();
+    return normalized && !normalized.startsWith("helpful:") && !normalized.startsWith("used_before:");
+  }).map(formatResearchReasonTagLabel).filter(Boolean);
 const collectScenarioLinks = (segments = []) => {
   const seen = new Set();
   const result = [];
@@ -2058,6 +2712,23 @@ const collectScenarioLinks = (segments = []) => {
   });
   return result;
 };
+const collectSegmentsNeedingVisual = (segments = []) => {
+  const result = [];
+  segments.forEach((segment) => {
+    const blockType = String(segment?.block_type ?? "").trim().toLowerCase();
+    if (!segment || blockType === "links" || isCommentsSegment(segment)) return;
+    if (hasVisualDecisionContent(segment.visual_decision)) return;
+    const links = dedupeLinks(segment.links ?? []).map((item) => normalizeLinkUrl(item?.url ?? item ?? "")).filter(Boolean);
+    result.push({
+      segmentId: segment.segment_id,
+      sectionTitle: getSegmentGroupTitle(segment),
+      quote: getQuotePreview(segment.text_quote, 140),
+      links,
+      isDone: Boolean(segment.is_done)
+    });
+  });
+  return result;
+};
 const LinksCard = React.memo(function LinksCard({
   segment,
   index,
@@ -2065,6 +2736,7 @@ const LinksCard = React.memo(function LinksCard({
   onLinkUpdate,
   onLinkRemove,
   onDownload,
+  onOpenScreenshotLab,
   isDownloadBusy,
   isDownloadSupported,
   isDownloaded
@@ -2115,13 +2787,14 @@ const LinksCard = React.memo(function LinksCard({
   }, [screenshotMode, setScreenshotPreviewState]);
 
   const openScreenshotLab = React.useCallback(() => {
-    const urls = (segment.links ?? [])
-      .map((item) => normalizeLinkUrl(item?.url ?? ""))
-      .filter(Boolean)
-      .join("\n");
+    if (typeof onOpenScreenshotLab === "function") {
+      onOpenScreenshotLab(segment);
+      return;
+    }
+    const urls = (segment.links ?? []).map((item) => normalizeLinkUrl(item?.url ?? "")).filter(Boolean).join("\n");
     const query = urls ? `?urls=${encodeURIComponent(urls)}` : "";
     window.open(`/tools/screenshot-lab${query}`, "_blank", "noopener,noreferrer");
-  }, [segment.links]);
+  }, [onOpenScreenshotLab, segment]);
 
   useEffect(() => {
     if (!open) return;
@@ -2489,7 +3162,7 @@ const MediaTimecodeRow = React.memo(function MediaTimecodeRow({ mediaPath, value
     </div>
   );
 });
-const SegmentCard = React.memo(function SegmentCard({
+const LegacySegmentCard = React.memo(function LegacySegmentCard({
   segment,
   index,
   animationIndex = 0,
@@ -2507,14 +3180,38 @@ const SegmentCard = React.memo(function SegmentCard({
   searchLoading,
   onSearchToggle,
   onSearch,
+  researchRun,
+  researchHistory,
+  researchLoading,
+  onResearchRun,
+  onResearchSelectRun,
+  onResearchApply,
+  onResearchPromoteBundle,
+  onResearchCopyBrief,
+  linkedReleaseInfo,
+  linkedReleaseSnapshot,
+  onOpenLinkedRelease,
+  onOpenLinkedReleaseHandoff,
+  onUseLinkedReleasePrimary,
+  onPromoteLinkedReleasePrimaryPair,
+  onPromoteLinkedReleaseBackupPair,
+  onUseLinkedReleaseBackup,
   onCopy,
   onDoneToggle
 }) {
+  const getResearchResultPhase = React.useCallback((result) => {
+    const phase = String(result?.phase ?? result?.kind ?? "").trim().toLowerCase();
+    return phase || "general";
+  }, []);
   const queriesValue = (segment.search_decision?.queries ?? []).join("\n");
   const queryItems = (segment.search_decision?.queries ?? []).filter(
     (query) => String(query ?? "").trim().length > 0
   );
   const [mediaFilter, setMediaFilter] = React.useState("");
+  const [researchView, setResearchView] = React.useState("all");
+  const [researchPhaseFilter, setResearchPhaseFilter] = React.useState("all");
+  const [researchRoleFilter, setResearchRoleFilter] = React.useState("all");
+  const [researchCompareIds, setResearchCompareIds] = React.useState([]);
   const selectedMediaPaths = normalizeMediaFilePathList(
     segment.visual_decision?.media_file_paths ?? segment.visual_decision?.media_file_path ?? null
   );
@@ -2538,6 +3235,344 @@ const SegmentCard = React.memo(function SegmentCard({
     );
   }, [mediaFileOptions, normalizedMediaFilter]);
   const mediaVisibleLimit = 10;
+  const researchResults = React.useMemo(() => {
+    const resultMap = new Map(
+      (Array.isArray(researchRun?.results) ? researchRun.results : [])
+        .map((item) => [String(item?.id ?? ""), item])
+        .filter(([id]) => Boolean(id))
+    );
+    return (Array.isArray(researchRun?.ranked_results) ? researchRun.ranked_results : [])
+      .map((ranked) => ({
+        ranked,
+        result: resultMap.get(String(ranked?.result_id ?? "")) ?? null
+      }))
+      .filter((item) => item.result)
+      .slice(0, 12);
+  }, [researchRun]);
+  const researchBuckets = React.useMemo(() => {
+    const allItems = Array.isArray(researchResults) ? researchResults : [];
+    const sources = [...allItems]
+      .sort(
+        (a, b) =>
+          Number(b?.ranked?.source_score ?? 0) - Number(a?.ranked?.source_score ?? 0) ||
+          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+      )
+      .slice(0, 6);
+    const visuals = [...allItems]
+      .filter((item) => {
+        const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
+        return (
+          hints.length > 0 ||
+          Number(item?.ranked?.montage_score ?? 0) >= 0.55 ||
+          Number(item?.ranked?.visual_score ?? 0) >= 0.58
+        );
+      })
+      .sort(
+        (a, b) =>
+          Number(b?.ranked?.montage_score ?? b?.ranked?.visual_score ?? 0) -
+            Number(a?.ranked?.montage_score ?? a?.ranked?.visual_score ?? 0) ||
+          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+      )
+      .slice(0, 6);
+    const downloadables = [...allItems]
+      .filter((item) => {
+        const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
+        return hints.includes("downloadable") || Number(item?.ranked?.downloadability_score ?? 0) >= 0.62;
+      })
+      .sort(
+        (a, b) =>
+          Number(b?.ranked?.downloadability_score ?? 0) - Number(a?.ranked?.downloadability_score ?? 0) ||
+          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+      )
+      .slice(0, 6);
+    return {
+      all: allItems.slice(0, 6),
+      sources,
+      visuals,
+      downloadables
+    };
+  }, [researchResults]);
+  const researchViewTabs = React.useMemo(
+    () => [
+      { id: "all", label: "All", count: researchBuckets.all.length },
+      { id: "sources", label: "Top Sources", count: researchBuckets.sources.length },
+      { id: "visuals", label: "Top Visuals", count: researchBuckets.visuals.length },
+      { id: "downloadables", label: "Downloadables", count: researchBuckets.downloadables.length }
+    ],
+    [researchBuckets]
+  );
+  const researchRoleTabs = React.useMemo(() => {
+    const counts = {
+      all: researchResults.length,
+      main_source: 0,
+      backup_source: 0,
+      visual_candidate: 0,
+      reference: 0
+    };
+    researchResults.forEach(({ ranked }) => {
+      const role = inferResearchCandidateRole(segment, ranked);
+      if (Object.prototype.hasOwnProperty.call(counts, role)) {
+        counts[role] += 1;
+      }
+    });
+    return [
+      { id: "all", label: "Any Role", count: counts.all },
+      { id: "main_source", label: "Main Source", count: counts.main_source },
+      { id: "backup_source", label: "Backup", count: counts.backup_source },
+      { id: "visual_candidate", label: "Visual", count: counts.visual_candidate },
+      { id: "reference", label: "Reference", count: counts.reference }
+    ];
+  }, [researchResults, segment]);
+  const researchPhaseTabs = React.useMemo(() => {
+    const counts = {
+      all: researchResults.length,
+      context: 0,
+      source: 0,
+      visual: 0,
+      general: 0
+    };
+    researchResults.forEach(({ result }) => {
+      const phase = getResearchResultPhase(result);
+      if (Object.prototype.hasOwnProperty.call(counts, phase)) {
+        counts[phase] += 1;
+      } else {
+        counts.general += 1;
+      }
+    });
+    return [
+      { id: "all", label: "All Phases", count: counts.all },
+      { id: "context", label: "Context", count: counts.context },
+      { id: "source", label: "Source Pass", count: counts.source },
+      { id: "visual", label: "Visual Pass", count: counts.visual }
+    ].filter((item) => item.id === "all" || item.count > 0);
+  }, [getResearchResultPhase, researchResults]);
+  const visibleResearchResults = React.useMemo(() => {
+    const nextItems = researchBuckets[researchView] ?? researchBuckets.all;
+    const scopedItems = Array.isArray(nextItems) && nextItems.length > 0 ? nextItems : researchBuckets.all;
+    const phaseScoped =
+      researchPhaseFilter === "all"
+        ? scopedItems
+        : scopedItems.filter(({ result }) => getResearchResultPhase(result) === researchPhaseFilter);
+    if (researchRoleFilter === "all") return phaseScoped;
+    return phaseScoped.filter(({ ranked }) => inferResearchCandidateRole(segment, ranked) === researchRoleFilter);
+  }, [getResearchResultPhase, researchBuckets, researchPhaseFilter, researchRoleFilter, researchView, segment]);
+  const bestSourceCandidate = researchBuckets.sources[0]?.result ?? null;
+  const bestVisualCandidate = researchBuckets.visuals[0]?.result ?? null;
+  const bestDownloadableCandidate = researchBuckets.downloadables[0]?.result ?? null;
+  const bestVisibleCandidate = visibleResearchResults[0]?.result ?? null;
+  const bestContextPhaseCandidate =
+    researchResults.find(({ result }) => getResearchResultPhase(result) === "context")?.result ?? null;
+  const bestSourcePhaseCandidate =
+    researchResults.find(({ result }) => getResearchResultPhase(result) === "source")?.result ?? null;
+  const bestVisualPhaseCandidate =
+    researchResults.find(({ result }) => getResearchResultPhase(result) === "visual")?.result ?? null;
+  const bestSourceRanked = researchBuckets.sources[0]?.ranked ?? null;
+  const bestVisualRanked = researchBuckets.visuals[0]?.ranked ?? null;
+  const bestDownloadableRanked = researchBuckets.downloadables[0]?.ranked ?? null;
+  const deepResearchSourceItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find(
+        (item) => String(item?.key ?? "").trim().toLowerCase() === "source"
+      ) ?? null,
+    [researchRun]
+  );
+  const deepResearchVisualItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find(
+        (item) => String(item?.key ?? "").trim().toLowerCase() === "visual"
+      ) ?? null,
+    [researchRun]
+  );
+  const deepResearchPairReady = Boolean(
+    researchRun?.mode === "deep" &&
+    String(deepResearchSourceItem?.result_id ?? "").trim() &&
+    String(deepResearchVisualItem?.result_id ?? "").trim()
+  );
+  const promotedResearchPair = React.useMemo(
+    () => normalizeResearchBundleTrace(segment?.research_bundle_trace),
+    [segment]
+  );
+  const primaryResearchSourceItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find((item) => {
+        const key = String(item?.key ?? "").trim().toLowerCase();
+        const role = String(item?.role ?? "").trim().toLowerCase();
+        return key === "source" || role === "main_source";
+      }) ?? null,
+    [researchRun]
+  );
+  const primaryResearchVisualItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find((item) => {
+        const key = String(item?.key ?? "").trim().toLowerCase();
+        const role = String(item?.role ?? "").trim().toLowerCase();
+        return key === "visual" || (role === "visual_candidate" && key !== "backup_visual");
+      }) ?? null,
+    [researchRun]
+  );
+  const backupResearchSourceItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find((item) => {
+        const key = String(item?.key ?? "").trim().toLowerCase();
+        const role = String(item?.role ?? "").trim().toLowerCase();
+        return key === "backup_source" || role === "backup_source";
+      }) ?? null,
+    [researchRun]
+  );
+  const backupResearchVisualItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find((item) => {
+        const key = String(item?.key ?? "").trim().toLowerCase();
+        return key === "backup_visual";
+      }) ?? null,
+    [researchRun]
+  );
+  const currentSegmentResearchPair = React.useMemo(
+    () =>
+      deriveSegmentResearchCurrentPair(promotedResearchPair, {
+        primarySource: primaryResearchSourceItem,
+        primaryVisual: primaryResearchVisualItem,
+        backupSource: backupResearchSourceItem,
+        backupVisual: backupResearchVisualItem
+      }),
+    [
+      backupResearchSourceItem,
+      backupResearchVisualItem,
+      primaryResearchSourceItem,
+      primaryResearchVisualItem,
+      promotedResearchPair
+    ]
+  );
+  const primaryResearchSourceResultId = String(primaryResearchSourceItem?.result_id ?? "").trim();
+  const primaryResearchVisualResultId = String(primaryResearchVisualItem?.result_id ?? "").trim();
+  const backupResearchSourceResultId = String(backupResearchSourceItem?.result_id ?? "").trim();
+  const backupResearchVisualResultId = String(backupResearchVisualItem?.result_id ?? "").trim();
+  const researchBriefItems = React.useMemo(
+    () =>
+      Array.isArray(researchRun?.brief?.items) && researchRun.brief.items.length > 0
+        ? [
+            ...researchRun.brief.items,
+            ...(Array.isArray(researchRun?.brief?.phase_items) ? researchRun.brief.phase_items : [])
+          ]
+        : [
+        bestSourceCandidate
+          ? {
+              key: "source",
+              label: "Main Source",
+              title: bestSourceCandidate.title || bestSourceCandidate.url,
+              domain: bestSourceCandidate.domain || "source",
+              score: Number(bestSourceRanked?.source_score ?? bestSourceRanked?.total_score ?? 0),
+              role: inferResearchCandidateRole(segment, bestSourceRanked)
+            }
+          : null,
+        bestVisualCandidate
+          ? {
+              key: "visual",
+              label: "Main Visual",
+              title: bestVisualCandidate.title || bestVisualCandidate.url,
+              domain: bestVisualCandidate.domain || "source",
+              score: Number(bestVisualRanked?.montage_score ?? bestVisualRanked?.visual_score ?? bestVisualRanked?.total_score ?? 0),
+              role: inferResearchCandidateRole(segment, bestVisualRanked)
+            }
+          : null,
+        bestDownloadableCandidate
+          ? {
+              key: "download",
+              label: "Best Download",
+              title: bestDownloadableCandidate.title || bestDownloadableCandidate.url,
+              domain: bestDownloadableCandidate.domain || "source",
+              score: Number(bestDownloadableRanked?.downloadability_score ?? bestDownloadableRanked?.total_score ?? 0),
+              role: inferResearchCandidateRole(segment, bestDownloadableRanked)
+            }
+          : null
+      ].filter(Boolean),
+    [
+      bestDownloadableCandidate,
+      bestDownloadableRanked,
+      bestSourceCandidate,
+      bestSourceRanked,
+      bestVisualCandidate,
+      bestVisualRanked,
+      researchRun,
+      segment
+    ]
+  );
+  const researchCompareItems = React.useMemo(() => {
+    if (!researchCompareIds.length) return [];
+    const itemMap = new Map(
+      researchResults.map((item) => [String(item?.result?.id ?? "").trim(), item]).filter(([id]) => Boolean(id))
+    );
+    return researchCompareIds
+      .map((id) => itemMap.get(String(id ?? "").trim()) ?? null)
+      .filter(Boolean)
+      .slice(0, 3);
+  }, [researchCompareIds, researchResults]);
+  const researchHistoryItems = React.useMemo(
+    () => (Array.isArray(researchHistory) ? researchHistory : []).slice(0, 8),
+    [researchHistory]
+  );
+  const researchPhaseSummary = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.summary?.phases) ? researchRun.summary.phases : [])
+        .map((item) => {
+          const phase = String(item?.phase ?? "").trim();
+          const resultCount = Number(item?.result_count ?? 0);
+          if (!phase || resultCount <= 0) return "";
+          return `${phase}:${resultCount}`;
+        })
+        .filter(Boolean)
+        .join(" · "),
+    [researchRun]
+  );
+  const researchPhaseActionHints = React.useMemo(() => {
+    return (Array.isArray(researchRun?.summary?.phases) ? researchRun.summary.phases : [])
+      .map((item) => {
+        const phase = String(item?.phase ?? "").trim().toLowerCase();
+        const resultCount = Number(item?.result_count ?? 0);
+        if (!phase || resultCount <= 0) return null;
+        if (phase === "source") {
+          return {
+            phase,
+            label: "Source Pass",
+            action: "promote source",
+            detail: `${resultCount} result(s)`
+          };
+        }
+        if (phase === "visual") {
+          return {
+            phase,
+            label: "Visual Pass",
+            action: "promote visual",
+            detail: `${resultCount} result(s)`
+          };
+        }
+        if (phase === "context") {
+          return {
+            phase,
+            label: "Context Pass",
+            action: "attach context",
+            detail: `${resultCount} result(s)`
+          };
+        }
+        return {
+          phase,
+          label: phase,
+          action: "review",
+          detail: `${resultCount} result(s)`
+        };
+      })
+      .filter(Boolean);
+  }, [researchRun]);
+  React.useEffect(() => {
+    const allowedIds = new Set(researchResults.map((item) => String(item?.result?.id ?? "").trim()).filter(Boolean));
+    setResearchCompareIds((prev) => prev.filter((id) => allowedIds.has(String(id ?? "").trim())).slice(0, 3));
+  }, [researchResults]);
+  React.useEffect(() => {
+    const allowedPhases = new Set(researchPhaseTabs.map((item) => String(item?.id ?? "").trim()));
+    if (!allowedPhases.has(researchPhaseFilter)) {
+      setResearchPhaseFilter("all");
+    }
+  }, [researchPhaseFilter, researchPhaseTabs]);
   const visibleMediaFileOptions = filteredMediaFileOptions.slice(0, mediaVisibleLimit);
   const hasMoreMediaFiles = filteredMediaFileOptions.length > mediaVisibleLimit;
   const selectedMediaCount = selectedMediaPaths.length;
@@ -2601,6 +3636,7 @@ const SegmentCard = React.memo(function SegmentCard({
   return (
     <article
       className="segment-card"
+      data-segment-id={segment.segment_id}
       style={{ animationDelay: `${animationIndex * 40}ms` }}
     >
       <div className="segment-head">
@@ -2649,232 +3685,513 @@ const SegmentCard = React.memo(function SegmentCard({
         />
         {!isCommentOnlySegment ? (
           <>
-        <div className="decision-grid">
-          <div>
-            <label>{"\u0412\u0438\u0437\u0443\u0430\u043b"}</label>
-            <select
-              value={segment.visual_decision.type}
-              onChange={(event) => onVisualUpdate(index, { type: event.target.value })}
-            >
-              {config.visualTypes.map((type) => (
-                <option key={type} value={type}>
-                  {VISUAL_TYPE_LABELS[type] ?? type}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label>{"\u0424\u043e\u0440\u043c\u0430\u0442"}</label>
-            <select
-              value={segment.visual_decision.format_hint ?? ""}
-              onChange={(event) =>
-                onVisualUpdate(index, {
-                  format_hint: event.target.value ? event.target.value : null
-                })
-              }
-            >
-              <option value="">—</option>
-              {config.formatHints.map((type) => (
-                <option key={type} value={type}>
-                  {FORMAT_HINT_LABELS[type] ?? type}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label>{"\u041f\u0440\u0438\u043e\u0440\u0438\u0442\u0435\u0442"}</label>
-            <select
-              value={segment.visual_decision.priority ?? ""}
-              onChange={(event) =>
-                onVisualUpdate(index, {
-                  priority: event.target.value ? event.target.value : null
-                })
-              }
-            >
-              <option value="">—</option>
-              {config.priorities.map((type) => (
-                <option key={type} value={type}>
-                  {PRIORITY_LABELS[type] ?? type}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label>{"\u0414\u043b\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c (\u0441\u0435\u043a)"}</label>
-            <input
-              type="number"
-              value={segment.visual_decision.duration_hint_sec ?? ""}
-              onChange={(event) =>
-                onVisualUpdate(index, {
-                  duration_hint_sec: event.target.value ? Number(event.target.value) : null
-                })
-              }
-            />
-          </div>
-        </div>
-        <label>{"\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0432\u0438\u0437\u0443\u0430\u043b\u0430"}</label>
-        <textarea
-          value={segment.visual_decision.description}
-          onChange={(event) => onVisualUpdate(index, { description: event.target.value })}
+        <SegmentVisualEditor
+          segment={segment}
+          config={config}
+          index={index}
+          onVisualUpdate={onVisualUpdate}
+          visualTypeLabels={VISUAL_TYPE_LABELS}
+          formatHintLabels={FORMAT_HINT_LABELS}
+          priorityLabels={PRIORITY_LABELS}
+          hasTopicFiles={hasTopicFiles}
+          mediaFilter={mediaFilter}
+          setMediaFilter={setMediaFilter}
+          selectedMediaCount={selectedMediaCount}
+          mediaFileUrl={mediaFileUrl}
+          filteredMediaFileOptions={filteredMediaFileOptions}
+          visibleMediaFileOptions={visibleMediaFileOptions}
+          selectedMediaPaths={selectedMediaPaths}
+          toggleMediaFileSelection={toggleMediaFileSelection}
+          formatBytes={formatBytes}
+          mediaVisibleLimit={mediaVisibleLimit}
+          hasMoreMediaFiles={hasMoreMediaFiles}
+          selectedVideoPaths={selectedVideoPaths}
+          mediaFileTimecodes={mediaFileTimecodes}
+          updateMediaFileTimecode={updateMediaFileTimecode}
+          MediaTimecodeRowComponent={MediaTimecodeRow}
+          normalizeMediaFilePath={normalizeMediaFilePath}
         />
-        <div className="segment-media-picker">
-          <label>{"\u0424\u0430\u0439\u043b\u044b"}</label>
-          <div className="segment-media-picker-row">
-            {hasTopicFiles ? (
-              <input
-                className="segment-media-filter-input"
-                type="search"
-                value={mediaFilter}
-                onChange={(event) => setMediaFilter(event.target.value)}
-                placeholder={"\u041f\u043e\u0438\u0441\u043a \u0444\u0430\u0439\u043b\u0430..."}
-              />
-            ) : null}
-            {selectedMediaCount > 0 ? (
-              <button
-                className="btn ghost small"
-                type="button"
-                onClick={() => onVisualUpdate(index, { media_file_paths: [] })}
-              >
-                {"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c"}
-              </button>
-            ) : null}
-            {mediaFileUrl ? (
-              <a className="btn ghost small" href={mediaFileUrl} target="_blank" rel="noopener noreferrer">
-                {"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0444\u0430\u0439\u043b"}
-              </a>
-            ) : null}
-          </div>
-          {hasTopicFiles ? (
-            filteredMediaFileOptions.length > 0 ? (
-              <div className="segment-media-options" role="listbox" aria-label="media-files">
-                <button
-                  type="button"
-                  className={`segment-media-option${selectedMediaCount === 0 ? " is-selected" : ""}`}
-                  onClick={() => onVisualUpdate(index, { media_file_paths: [] })}
-                >
-                  {"\u2014 \u0411\u0435\u0437 \u0444\u0430\u0439\u043b\u0430"}
-                </button>
-                {visibleMediaFileOptions.map((file) => (
-                  <button
-                    type="button"
-                    key={file.path}
-                    className={`segment-media-option${selectedMediaPaths.includes(normalizeMediaFilePath(file.path) ?? "") ? " is-selected" : ""}`}
-                    onClick={() => toggleMediaFileSelection(file.path)}
-                    title={file.path}
-                  >
-                    <span className="segment-media-option-name">{file.name}</span>
-                    <span className="segment-media-option-size">{formatBytes(file.size)}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="muted segment-media-empty-hint">
-                {"\u041d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e \u043f\u043e \u043f\u043e\u0438\u0441\u043a\u0443"}
-              </div>
-            )
-          ) : (
-            <div className="muted segment-media-empty-hint">
-              {"\u041d\u0435\u0442 \u0444\u0430\u0439\u043b\u043e\u0432 \u0432 \u0442\u0435\u043c\u0435"}
-            </div>
-          )}
-          {hasMoreMediaFiles ? (
-            <div className="muted segment-media-empty-hint">
-              {`\u041f\u043e\u043a\u0430\u0437\u0430\u043d\u043e ${mediaVisibleLimit} \u0438\u0437 ${filteredMediaFileOptions.length}. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u043f\u043e\u0438\u0441\u043a.`}
-            </div>
-          ) : null}
-          {selectedMediaCount > 0 ? (
-            <div className="muted segment-media-picked">{selectedMediaPaths.join("\n")}</div>
-          ) : null}
-          {selectedVideoPaths.length > 0 ? (
-            <>
-              <label>{"\u0422\u0430\u0439\u043c\u043a\u043e\u0434\u044b \u0432\u0438\u0434\u0435\u043e"}</label>
-              <div className="segment-media-timecodes">
-                {selectedVideoPaths.map((mediaPath) => (
-                  <MediaTimecodeRow
-                    key={mediaPath}
-                    mediaPath={mediaPath}
-                    value={mediaFileTimecodes[mediaPath] ?? ""}
-                    onChange={(nextValue) => updateMediaFileTimecode(mediaPath, nextValue)}
-                  />
-                ))}
-              </div>
-            </>
-          ) : null}
-        </div>
-        <div className="search-toggle">
-          <button
-            className="btn ghost small"
-            type="button"
-            onClick={() => onSearchGenerate(index)}
-            disabled={searchLoading}
-          >
-            {searchLoading ? "..." : "\u2728"}
-          </button>
-          <button
-            className="btn ghost small"
-            type="button"
-            onClick={() => onSearchToggle(index)}
-            title={
-              segment.search_open
-                ? "\u0421\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b"
-                : `\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b (${queryItems.length})`
-            }
-            aria-label={
-              segment.search_open
-                ? "\u0421\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b"
-                : `\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b (${queryItems.length})`
-            }
-          >
-            {"\u{1F50D}"}
-          </button>
-        </div>
-        {segment.search_open ? (
-          <>
-            <label>{"\u041f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435 \u0437\u0430\u043f\u0440\u043e\u0441\u044b"}</label>
-            <textarea
-              value={queriesValue}
-              onChange={(event) =>
-                onSearchUpdate(index, {
-                  queries: normalizeQueryList(event.target.value, config.searchLimits?.maxQueries)
-                })
-              }
-              placeholder={"\u041a\u0430\u0436\u0434\u044b\u0439 \u0437\u0430\u043f\u0440\u043e\u0441 \u0441 \u043d\u043e\u0432\u043e\u0439 \u0441\u0442\u0440\u043e\u043a\u0438"}
+        <SegmentResearchToolbar
+          index={index}
+          onSearchGenerate={onSearchGenerate}
+          searchLoading={searchLoading}
+          onSearchToggle={onSearchToggle}
+          isSearchOpen={segment.search_open}
+          queryItemsCount={queryItems.length}
+          onResearchRun={onResearchRun}
+          researchLoading={researchLoading}
+        />
+        {researchLoading || researchRun ? (
+          <div className="segment-research-panel">
+            <SegmentResearchHeader
+              researchLoading={researchLoading}
+              researchRun={researchRun}
+              researchPhaseSummary={researchPhaseSummary}
+              index={index}
+              onResearchCopyBrief={onResearchCopyBrief}
+              researchHistoryItems={researchHistoryItems}
+              onResearchSelectRun={onResearchSelectRun}
             />
-            {queryItems.length ? (
-              <div className="query-list">
-                {queryItems.map((query, queryIndex) => (
-                  <div key={`${segment.segment_id}-query-${queryIndex}`} className="query-row">
-                    <span className="query-text">{query}</span>
-                    <div className="query-actions">
-                      {(config.searchEngines ?? []).map((engine) => (
-                        <button
-                          key={`${engine.id}-${queryIndex}`}
-                          className="btn ghost small"
-                          type="button"
-                          onClick={() => onSearch(engine, query)}
-                        >
-                          {engine.label}
-                        </button>
-                      ))}
-                      <button
-                        className="btn ghost small"
-                        type="button"
-                        onClick={() => onCopy(query)}
-                      >
-                        {"\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <div className="segment-actions">
-              <button className="btn ghost small" onClick={() => onClearSearch(index)}>
-                {"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u043f\u043e\u0438\u0441\u043a\u043e\u0432\u044b\u0435"}
-              </button>
-            </div>
+            <SegmentLinkedReleasePanel
+              segmentId={segment.segment_id}
+              linkedReleaseInfo={linkedReleaseInfo}
+              linkedReleaseSnapshot={linkedReleaseSnapshot}
+              getCurrentPairBadgeClassName={getCurrentPairBadgeClassName}
+              onOpenLinkedRelease={onOpenLinkedRelease}
+              onOpenLinkedReleaseHandoff={onOpenLinkedReleaseHandoff}
+              onUseLinkedReleasePrimary={onUseLinkedReleasePrimary}
+              onPromoteLinkedReleasePrimaryPair={onPromoteLinkedReleasePrimaryPair}
+              onPromoteLinkedReleaseBackupPair={onPromoteLinkedReleaseBackupPair}
+              onUseLinkedReleaseBackup={onUseLinkedReleaseBackup}
+            />
+            <SegmentResearchBrief
+              segmentId={segment.segment_id}
+              researchResultsCount={researchResults.length}
+              guidance={researchRun?.summary?.guidance}
+              researchPhaseActionHints={researchPhaseActionHints}
+              promotedResearchPair={promotedResearchPair}
+              currentSegmentResearchPair={currentSegmentResearchPair}
+              getCurrentPairBadgeClassName={getCurrentPairBadgeClassName}
+              researchBriefItems={researchBriefItems}
+              formatSegmentResearchBriefLabel={formatSegmentResearchBriefLabel}
+              formatResearchCandidateRoleLabel={formatResearchCandidateRoleLabel}
+              primaryResearchSourceResultId={primaryResearchSourceResultId}
+              primaryResearchVisualResultId={primaryResearchVisualResultId}
+              backupResearchSourceResultId={backupResearchSourceResultId}
+              backupResearchVisualResultId={backupResearchVisualResultId}
+              researchLoading={researchLoading}
+              index={index}
+              onResearchPromoteBundle={onResearchPromoteBundle}
+              onResearchApply={onResearchApply}
+            />
+            <SegmentResearchResultsPanel
+              segment={segment}
+              index={index}
+              researchResults={researchResults}
+              researchViewTabs={researchViewTabs}
+              researchView={researchView}
+              setResearchView={setResearchView}
+              researchPhaseTabs={researchPhaseTabs}
+              researchPhaseFilter={researchPhaseFilter}
+              setResearchPhaseFilter={setResearchPhaseFilter}
+              researchRoleTabs={researchRoleTabs}
+              researchRoleFilter={researchRoleFilter}
+              setResearchRoleFilter={setResearchRoleFilter}
+              bestSourceCandidate={bestSourceCandidate}
+              bestVisualCandidate={bestVisualCandidate}
+              bestVisibleCandidate={bestVisibleCandidate}
+              deepResearchPairReady={deepResearchPairReady}
+              deepResearchSourceItem={deepResearchSourceItem}
+              deepResearchVisualItem={deepResearchVisualItem}
+              bestSourcePhaseCandidate={bestSourcePhaseCandidate}
+              bestVisualPhaseCandidate={bestVisualPhaseCandidate}
+              bestContextPhaseCandidate={bestContextPhaseCandidate}
+              researchLoading={researchLoading}
+              researchRun={researchRun}
+              visibleResearchResults={visibleResearchResults}
+              researchCompareIds={researchCompareIds}
+              setResearchCompareIds={setResearchCompareIds}
+              researchCompareItems={researchCompareItems}
+              onResearchPromoteBundle={onResearchPromoteBundle}
+              onResearchApply={onResearchApply}
+              formatResearchCandidateRoleLabel={formatResearchCandidateRoleLabel}
+              inferResearchCandidateRole={inferResearchCandidateRole}
+              getResearchResultPhase={getResearchResultPhase}
+              collectResearchMemoryBadges={collectResearchMemoryBadges}
+              getVisibleResearchReasonTags={getVisibleResearchReasonTags}
+            />
+          </div>
+        ) : null}
+        {segment.search_open ? (
+          <SegmentSearchQueriesPanel
+            segmentId={segment.segment_id}
+            index={index}
+            queriesValue={queriesValue}
+            queryItems={queryItems}
+            searchEngines={config.searchEngines}
+            maxQueries={config.searchLimits?.maxQueries}
+            normalizeQueryList={normalizeQueryList}
+            onSearchUpdate={onSearchUpdate}
+            onSearch={onSearch}
+            onCopy={onCopy}
+            onClearSearch={onClearSearch}
+          />
+        ) : null}
           </>
         ) : null}
+        {!isCommentOnlySegment ? (
+          <div className="segment-tail-actions">
+            <label className="done-toggle-inline segment-done-bottom-toggle" title="\u041e\u0442\u043c\u0435\u0442\u0438\u0442\u044c \u043a\u0430\u043a \u0433\u043e\u0442\u043e\u0432\u043e">
+              <input
+                type="checkbox"
+                checked={isDone}
+                onChange={(event) => onDoneToggle?.(index, event.target.checked)}
+              />
+            </label>
+            <button
+              className="btn ghost icon-round"
+              type="button"
+              onClick={() => onInsertAfter(index)}
+              title={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+              aria-label={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+            >
+              +
+            </button>
+            <button
+              className="btn ghost icon-round"
+              type="button"
+              onClick={() => onRemove(index)}
+              title={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+              aria-label={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+            >
+              -
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+});
+const SegmentCard = React.memo(function SegmentCard({
+  segment,
+  index,
+  animationIndex = 0,
+  config,
+  docId,
+  mediaFiles,
+  onUpdate,
+  onVisualUpdate,
+  onSearchUpdate,
+  onQuoteChange,
+  onInsertAfter,
+  onRemove,
+  onClearSearch,
+  onSearchGenerate,
+  searchLoading,
+  onSearchToggle,
+  onSearch,
+  researchRun,
+  researchLoading,
+  onResearchRun,
+  onResearchCopyBrief,
+  onOpenResearchWorkspace,
+  linkedReleaseInfo,
+  onCopy,
+  onDoneToggle
+}) {
+  const queriesValue = (segment.search_decision?.queries ?? []).join("\n");
+  const queryItems = (segment.search_decision?.queries ?? []).filter(
+    (query) => String(query ?? "").trim().length > 0
+  );
+  const [mediaFilter, setMediaFilter] = React.useState("");
+  const selectedMediaPaths = normalizeMediaFilePathList(
+    segment.visual_decision?.media_file_paths ?? segment.visual_decision?.media_file_path ?? null
+  );
+  const primarySelectedMediaPath = selectedMediaPaths[0] ?? null;
+  const mediaFileUrl = buildMediaFileUrl(docId, primarySelectedMediaPath);
+  const selectedVideoPaths = selectedMediaPaths.filter((mediaPath) => isVideoMediaPath(mediaPath));
+  const mediaFileTimecodes = normalizeMediaFileTimecodes(
+    segment.visual_decision?.media_file_timecodes ?? null,
+    selectedMediaPaths
+  );
+  const mediaFileList = Array.isArray(mediaFiles) ? mediaFiles : [];
+  const mediaTopicFolder = sanitizeMediaTopicName(segment.section_title ?? "");
+  const mediaFileOptions = mediaFileList.filter((file) => getMediaFileTopicFolder(file.path) === mediaTopicFolder);
+  const hasTopicFiles = mediaFileOptions.length > 0;
+  const normalizedMediaFilter = mediaFilter.trim().toLowerCase();
+  const filteredMediaFileOptions = React.useMemo(() => {
+    if (!normalizedMediaFilter) return mediaFileOptions;
+    return mediaFileOptions.filter((file) =>
+      `${file.name} ${file.path}`.toLowerCase().includes(normalizedMediaFilter)
+    );
+  }, [mediaFileOptions, normalizedMediaFilter]);
+  const mediaVisibleLimit = 10;
+  const visibleMediaFileOptions = filteredMediaFileOptions.slice(0, mediaVisibleLimit);
+  const hasMoreMediaFiles = filteredMediaFileOptions.length > mediaVisibleLimit;
+  const selectedMediaCount = selectedMediaPaths.length;
+  const researchResultsCount = Array.isArray(researchRun?.ranked_results) ? researchRun.ranked_results.length : 0;
+  const researchPhaseSummary = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.summary?.phases) ? researchRun.summary.phases : [])
+        .map((item) => {
+          const phase = String(item?.phase ?? "").trim();
+          const resultCount = Number(item?.result_count ?? 0);
+          if (!phase || resultCount <= 0) return "";
+          return `${phase}:${resultCount}`;
+        })
+        .filter(Boolean)
+        .join(" · "),
+    [researchRun]
+  );
+  const promotedResearchPair = React.useMemo(
+    () => normalizeResearchBundleTrace(segment?.research_bundle_trace),
+    [segment]
+  );
+  const primaryResearchSourceItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find((item) => {
+        const key = String(item?.key ?? "").trim().toLowerCase();
+        const role = String(item?.role ?? "").trim().toLowerCase();
+        return key === "source" || role === "main_source";
+      }) ?? null,
+    [researchRun]
+  );
+  const primaryResearchVisualItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find((item) => {
+        const key = String(item?.key ?? "").trim().toLowerCase();
+        const role = String(item?.role ?? "").trim().toLowerCase();
+        return key === "visual" || (role === "visual_candidate" && key !== "backup_visual");
+      }) ?? null,
+    [researchRun]
+  );
+  const backupResearchSourceItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find((item) => {
+        const key = String(item?.key ?? "").trim().toLowerCase();
+        const role = String(item?.role ?? "").trim().toLowerCase();
+        return key === "backup_source" || role === "backup_source";
+      }) ?? null,
+    [researchRun]
+  );
+  const backupResearchVisualItem = React.useMemo(
+    () =>
+      (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find(
+        (item) => String(item?.key ?? "").trim().toLowerCase() === "backup_visual"
+      ) ?? null,
+    [researchRun]
+  );
+  const currentSegmentResearchPair = React.useMemo(
+    () =>
+      deriveSegmentResearchCurrentPair(promotedResearchPair, {
+        primarySource: primaryResearchSourceItem,
+        primaryVisual: primaryResearchVisualItem,
+        backupSource: backupResearchSourceItem,
+        backupVisual: backupResearchVisualItem
+      }),
+    [
+      backupResearchSourceItem,
+      backupResearchVisualItem,
+      primaryResearchSourceItem,
+      primaryResearchVisualItem,
+      promotedResearchPair
+    ]
+  );
+  const toggleMediaFileSelection = React.useCallback((mediaPath) => {
+    const normalizedPath = normalizeMediaFilePath(mediaPath);
+    if (!normalizedPath) return;
+    const alreadySelected = selectedMediaPaths.includes(normalizedPath);
+    const nextMediaPaths = alreadySelected
+      ? selectedMediaPaths.filter((item) => item !== normalizedPath)
+      : [...selectedMediaPaths, normalizedPath];
+    onVisualUpdate(index, { media_file_paths: nextMediaPaths });
+  }, [index, onVisualUpdate, selectedMediaPaths]);
+  const updateMediaFileTimecode = React.useCallback((mediaPath, rawValue) => {
+    const normalizedPath = normalizeMediaFilePath(mediaPath);
+    if (!normalizedPath || !isVideoMediaPath(normalizedPath)) return;
+    const normalizedTimecode = normalizeMediaStartTimecode(rawValue);
+    const nextTimecodes = { ...mediaFileTimecodes };
+    if (!normalizedTimecode) {
+      delete nextTimecodes[normalizedPath];
+    } else {
+      nextTimecodes[normalizedPath] = normalizedTimecode;
+    }
+    onVisualUpdate(index, { media_file_timecodes: nextTimecodes });
+  }, [index, mediaFileTimecodes, onVisualUpdate]);
+  const isDone = Boolean(segment.is_done);
+  const isCommentOnlySegment = isCommentsSegment(segment);
+  const donePreview = isCommentOnlySegment
+    ? (() => {
+        const value = normalizeLineBreaks(segment.text_quote).trim();
+        if (!value) return "\u041f\u0443\u0441\u0442\u043e";
+        return value.length > 220 ? `${value.slice(0, 220).trimEnd()}...` : value;
+      })()
+    : getQuotePreview(segment.text_quote, 78);
+  const statusBadge =
+    segment.segment_status === "new"
+      ? { text: "NEW", className: "badge badge-new" }
+      : segment.segment_status === "changed"
+        ? { text: "CHANGED", className: "badge badge-changed" }
+        : null;
+
+  if (isDone) {
+    return (
+      <article
+        className="segment-card segment-card-done"
+        style={{ animationDelay: `${animationIndex * 40}ms` }}
+      >
+        <div className={`segment-done-row${isCommentOnlySegment ? " segment-done-row-comments" : ""}`}>
+          {!isCommentOnlySegment ? (
+            <label className="done-toggle-inline" title="\u0421\u043d\u044f\u0442\u044c \u043e\u0442\u043c\u0435\u0442\u043a\u0443">
+              <input
+                type="checkbox"
+                checked={true}
+                onChange={(event) => onDoneToggle?.(index, event.target.checked)}
+              />
+            </label>
+          ) : null}
+          <span className="segment-done-preview">{donePreview}</span>
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article
+      className="segment-card"
+      data-segment-id={segment.segment_id}
+      style={{ animationDelay: `${animationIndex * 40}ms` }}
+    >
+      <div className="segment-head">
+        <div>
+          <label>ID</label>
+          <div className="segment-id-row">
+            <input
+              value={segment.segment_id}
+              onChange={(event) => onUpdate(index, { segment_id: event.target.value })}
+            />
+            {statusBadge ? <span className={statusBadge.className}>{statusBadge.text}</span> : null}
+          </div>
+        </div>
+        {!isCommentOnlySegment ? (
+          <div className="segment-head-actions">
+            <button
+              className="btn small ghost"
+              type="button"
+              onClick={() => onInsertAfter(index)}
+              title={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+              aria-label={"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0434\u0431\u043b\u043e\u043a"}
+            >
+              +
+            </button>
+            <button
+              className="btn small ghost"
+              type="button"
+              onClick={() => onRemove(index)}
+              title={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+              aria-label={"\u0423\u0434\u0430\u043b\u0438\u0442\u044c"}
+            >
+              -
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div className="segment-body">
+        <label>
+          {isCommentOnlySegment ? "\u041a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0438" : "\u0426\u0438\u0442\u0430\u0442\u0430"}
+        </label>
+        <textarea
+          value={segment.text_quote}
+          onChange={(event) => onQuoteChange(index, event.target.value)}
+        />
+        {!isCommentOnlySegment ? (
+          <>
+            <SegmentVisualEditor
+              segment={segment}
+              config={config}
+              index={index}
+              onVisualUpdate={onVisualUpdate}
+              visualTypeLabels={VISUAL_TYPE_LABELS}
+              formatHintLabels={FORMAT_HINT_LABELS}
+              priorityLabels={PRIORITY_LABELS}
+              hasTopicFiles={hasTopicFiles}
+              mediaFilter={mediaFilter}
+              setMediaFilter={setMediaFilter}
+              selectedMediaCount={selectedMediaCount}
+              mediaFileUrl={mediaFileUrl}
+              filteredMediaFileOptions={filteredMediaFileOptions}
+              visibleMediaFileOptions={visibleMediaFileOptions}
+              selectedMediaPaths={selectedMediaPaths}
+              toggleMediaFileSelection={toggleMediaFileSelection}
+              formatBytes={formatBytes}
+              mediaVisibleLimit={mediaVisibleLimit}
+              hasMoreMediaFiles={hasMoreMediaFiles}
+              selectedVideoPaths={selectedVideoPaths}
+              mediaFileTimecodes={mediaFileTimecodes}
+              updateMediaFileTimecode={updateMediaFileTimecode}
+              MediaTimecodeRowComponent={MediaTimecodeRow}
+              normalizeMediaFilePath={normalizeMediaFilePath}
+            />
+            <SegmentResearchToolbar
+              index={index}
+              onSearchGenerate={onSearchGenerate}
+              searchLoading={searchLoading}
+              onSearchToggle={onSearchToggle}
+              isSearchOpen={segment.search_open}
+              queryItemsCount={queryItems.length}
+              onResearchRun={onResearchRun}
+              researchLoading={researchLoading}
+              onOpenResearchWorkspace={() => onOpenResearchWorkspace?.(segment.segment_id, researchRun?.run_id ?? "")}
+            />
+            {researchLoading || researchRun || currentSegmentResearchPair || promotedResearchPair ? (
+              <div className="segment-research-summary">
+                <div className="segment-research-summary-head">
+                  <strong>Research</strong>
+                  <span>
+                    {researchLoading
+                      ? "running"
+                      : researchRun
+                        ? `${researchResultsCount} results${researchRun?.mode ? ` · ${researchRun.mode}` : ""}${
+                            researchPhaseSummary ? ` · ${researchPhaseSummary}` : ""
+                          }`
+                        : "Open workspace to run research"}
+                  </span>
+                </div>
+                {linkedReleaseInfo?.title ? (
+                  <div className="segment-research-summary-link">Linked release: {linkedReleaseInfo.title}</div>
+                ) : null}
+                {currentSegmentResearchPair ? (
+                  <div className="segment-research-summary-pair">
+                    <span className={`badge ${getCurrentPairBadgeClassName("current")}`}>Current Pair</span>
+                    <div className="segment-research-summary-copy">
+                      {currentSegmentResearchPair.source?.label ? <span>{currentSegmentResearchPair.source.label}</span> : null}
+                      {currentSegmentResearchPair.visual?.label ? <span>{currentSegmentResearchPair.visual.label}</span> : null}
+                    </div>
+                  </div>
+                ) : null}
+                {promotedResearchPair ? (
+                  <div className="segment-research-summary-pair">
+                    <span className={`badge ${getCurrentPairBadgeClassName("applied")}`}>Promoted</span>
+                    <div className="segment-research-summary-copy">
+                      {promotedResearchPair.source?.label ? <span>{promotedResearchPair.source.label}</span> : null}
+                      {promotedResearchPair.visual?.label ? <span>{promotedResearchPair.visual.label}</span> : null}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="segment-research-summary-actions">
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    onClick={() => onOpenResearchWorkspace?.(segment.segment_id, researchRun?.run_id ?? "")}
+                  >
+                    Open Research
+                  </button>
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    onClick={() => onResearchCopyBrief?.(index)}
+                    disabled={!researchRun}
+                  >
+                    Copy Brief
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {segment.search_open ? (
+              <SegmentSearchQueriesPanel
+                segmentId={segment.segment_id}
+                index={index}
+                queriesValue={queriesValue}
+                queryItems={queryItems}
+                searchEngines={config.searchEngines}
+                maxQueries={config.searchLimits?.maxQueries}
+                normalizeQueryList={normalizeQueryList}
+                onSearchUpdate={onSearchUpdate}
+                onSearch={onSearch}
+                onCopy={onCopy}
+                onClearSearch={onClearSearch}
+              />
+            ) : null}
           </>
         ) : null}
         {!isCommentOnlySegment ? (
@@ -2925,41 +4242,94 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState({});
   const [searchLoading, setSearchLoading] = useState({});
+  const [segmentResearchRuns, setSegmentResearchRuns] = useState({});
+  const [segmentResearchHistory, setSegmentResearchHistory] = useState({});
+  const [segmentResearchLoading, setSegmentResearchLoading] = useState({});
   const [expandedGroups, setExpandedGroups] = useState({});
   const [groupRenderLimits, setGroupRenderLimits] = useState({});
   const [linksPanelOpen, setLinksPanelOpen] = useState(false);
   const [headingSearchOpen, setHeadingSearchOpen] = useState({});
   const [headingEnglishQueries, setHeadingEnglishQueries] = useState({});
   const [headingTranslateLoading, setHeadingTranslateLoading] = useState({});
-  const [mediaJobs, setMediaJobs] = useState([]);
-  const [mediaFiles, setMediaFiles] = useState([]);
-  const [downloadedMediaUrls, setDownloadedMediaUrls] = useState([]);
-  const [mediaQueue, setMediaQueue] = useState({});
-  const [mediaTools, setMediaTools] = useState(null);
-  const [ytDlpVersion, setYtDlpVersion] = useState(null);
-  const [ytDlpVersionLoading, setYtDlpVersionLoading] = useState(false);
-  const [ytDlpUpdateLoading, setYtDlpUpdateLoading] = useState(false);
-  const [mediaPanelOpen, setMediaPanelOpen] = useState(false);
+  const [appMode, setAppMode] = useState(getInitialAppMode);
+  const [integrationOverview, setIntegrationOverview] = useState(null);
+  const [integrationAssets, setIntegrationAssets] = useState([]);
+  const [integrationReleases, setIntegrationReleases] = useState([]);
+  const [integrationBotSessions, setIntegrationBotSessions] = useState([]);
+  const [integrationLoading, setIntegrationLoading] = useState(false);
+  const [sqliteMirrorStatus, setSqliteMirrorStatus] = useState(null);
+  const [runtimeBackupsStatus, setRuntimeBackupsStatus] = useState(null);
+  const [selectedBackupSnapshotId, setSelectedBackupSnapshotId] = useState("");
+  const [selectedBackupSnapshot, setSelectedBackupSnapshot] = useState(null);
+  const [selectedBackupDryRun, setSelectedBackupDryRun] = useState(null);
+  const [backupActionBusy, setBackupActionBusy] = useState(false);
+  const [lastAssistantAutoBackup, setLastAssistantAutoBackup] = useState(null);
+  const [sourceMemorySummary, setSourceMemorySummary] = useState(null);
+  const [releaseOutcomeMemorySummary, setReleaseOutcomeMemorySummary] = useState(null);
+  const [sourceProfiles, setSourceProfiles] = useState(null);
+  const [sourceProfilesDraft, setSourceProfilesDraft] = useState(() => buildSourceProfilesDraft({}));
+  const [sourceProfilesDirty, setSourceProfilesDirty] = useState(false);
+  const [sourceProfilesSaving, setSourceProfilesSaving] = useState(false);
+  const [selectedReleaseId, setSelectedReleaseId] = useState(getInitialReleaseQueryId);
+  const [researchDocQueryId, setResearchDocQueryId] = useState(getInitialResearchDocQueryId);
+  const [selectedResearchSegmentId, setSelectedResearchSegmentId] = useState(getInitialResearchSegmentQueryId);
+  const [selectedResearchRunId, setSelectedResearchRunId] = useState(getInitialResearchRunQueryId);
+  const [lastAttachRecommendationsResult, setLastAttachRecommendationsResult] = useState(null);
+  const [integrationQuery, setIntegrationQuery] = useState("");
+  const [integrationKind, setIntegrationKind] = useState("");
+  const [integrationStatusFilter, setIntegrationStatusFilter] = useState("");
+  const [releaseDraftTitle, setReleaseDraftTitle] = useState("");
+  const [releaseDraftDate, setReleaseDraftDate] = useState("");
+  const [releaseBusy, setReleaseBusy] = useState(false);
+  const [releaseBoardFilter, setReleaseBoardFilter] = useState("all");
+  const [releaseWorkspaceTab, setReleaseWorkspaceTab] = useState("overview");
+  const [selectedReleaseAttachmentIds, setSelectedReleaseAttachmentIds] = useState([]);
+  const [releaseBulkScriptTemplate, setReleaseBulkScriptTemplate] = useState("");
+  const [releaseBulkVisualTemplate, setReleaseBulkVisualTemplate] = useState("");
+  const [assetActionBusy, setAssetActionBusy] = useState({});
   const [collabSessionEnabled, setCollabSessionEnabled] = useState(getInitialCollaborativeMode);
   const [autoOpenLastDocEnabled, setAutoOpenLastDocEnabled] = useState(getInitialAutoOpenLastDoc);
-  const [collabAutoSaving, setCollabAutoSaving] = useState(false);
-  const [collabRevision, setCollabRevision] = useState(0);
-  const collabSaveTimerRef = React.useRef(null);
-  const collabIsApplyingRemoteRef = React.useRef(false);
-  const collabLastSavedFingerprintRef = React.useRef("");
-  const collabAutoSaveInFlightRef = React.useRef(false);
-  const collabPollInFlightRef = React.useRef(false);
-  const collabRevisionRef = React.useRef(0);
-  const initialDocRestoreDoneRef = React.useRef(false);
-  const mediaJobStatusRef = React.useRef(new Map());
-  const mediaJobStatusReadyRef = React.useRef(false);
-  const uiAuditQueueRef = React.useRef([]);
-  const uiAuditTimerRef = React.useRef(null);
-  const uiAuditDocIdRef = React.useRef("");
-  const uiAuditLastInputRef = React.useRef(new Map());
-  useEffect(() => {
-    collabRevisionRef.current = collabRevision;
-  }, [collabRevision]);
+  const buildLatestResearchRunMap = React.useCallback((runs) => {
+    const latestBySegment = {};
+    for (const run of Array.isArray(runs) ? runs : []) {
+      const segmentId = String(run?.segment_id ?? "").trim();
+      if (!segmentId) continue;
+      const current = latestBySegment[segmentId];
+      const currentKey = Date.parse(current?.updated_at ?? current?.created_at ?? "") || 0;
+      const nextKey = Date.parse(run?.updated_at ?? run?.created_at ?? "") || 0;
+      if (!current || nextKey >= currentKey) {
+        latestBySegment[segmentId] = run;
+      }
+    }
+    return latestBySegment;
+  }, []);
+  const buildResearchRunHistoryMap = React.useCallback((runs) => {
+    const bySegment = {};
+    for (const run of Array.isArray(runs) ? runs : []) {
+      const segmentId = String(run?.segment_id ?? "").trim();
+      if (!segmentId) continue;
+      if (!Array.isArray(bySegment[segmentId])) bySegment[segmentId] = [];
+      bySegment[segmentId].push(run);
+    }
+    Object.keys(bySegment).forEach((segmentId) => {
+      bySegment[segmentId] = bySegment[segmentId].sort((a, b) =>
+        String(b?.updated_at ?? b?.created_at ?? "").localeCompare(String(a?.updated_at ?? a?.created_at ?? ""))
+      );
+    });
+    return bySegment;
+  }, []);
+  const mergeResearchRunHistory = React.useCallback((historyMap, run) => {
+    const segmentId = String(run?.segment_id ?? "").trim();
+    if (!segmentId) return historyMap;
+    const current = Array.isArray(historyMap?.[segmentId]) ? historyMap[segmentId] : [];
+    const next = [run, ...current.filter((item) => String(item?.run_id ?? "") !== String(run?.run_id ?? ""))].sort(
+      (a, b) => String(b?.updated_at ?? b?.created_at ?? "").localeCompare(String(a?.updated_at ?? a?.created_at ?? ""))
+    );
+    return {
+      ...(historyMap ?? {}),
+      [segmentId]: next
+    };
+  }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage?.setItem("collabSessionEnabled", collabSessionEnabled ? "1" : "0");
@@ -2994,6 +4364,13 @@ export default function App() {
       window.localStorage?.setItem("theme", theme);
     }
   }, [theme]);
+  useEffect(() => {
+    syncAppLocation(appMode, selectedReleaseId, {
+      docId: appMode === "research" ? researchDocQueryId || docId : "",
+      segmentId: appMode === "research" ? selectedResearchSegmentId : "",
+      runId: appMode === "research" ? selectedResearchRunId : ""
+    });
+  }, [appMode, docId, researchDocQueryId, selectedReleaseId, selectedResearchRunId, selectedResearchSegmentId]);
   const fetchRecentDocuments = React.useCallback(async () => {
     try {
       const { response, data } = await fetchJsonSafe("/api/documents");
@@ -3011,369 +4388,377 @@ export default function App() {
     if (typeof window === "undefined" || !docId) return;
     window.localStorage?.setItem(LAST_USED_DOC_STORAGE_KEY, docId);
   }, [docId]);
+  useUiAuditQueue({
+    docId,
+    buildUiActionPayload,
+    extractUiTargetInfo,
+    sendUiAuditActions,
+    batchSize: UI_AUDIT_BATCH_SIZE,
+    maxQueue: UI_AUDIT_MAX_QUEUE,
+    flushMs: UI_AUDIT_FLUSH_MS,
+    inputThrottleMs: UI_AUDIT_INPUT_THROTTLE_MS
+  });
+  const {
+    mediaJobs,
+    mediaFiles,
+    downloadedMediaUrls,
+    mediaQueue,
+    mediaTools,
+    ytDlpVersion,
+    ytDlpVersionLoading,
+    ytDlpUpdateLoading,
+    mediaPanelOpen,
+    setMediaPanelOpen,
+    refreshMedia,
+    handleCheckYtDlpVersion,
+    handleUpdateYtDlp,
+    activeMediaJobsCount,
+    downloadedMediaSet,
+    isMediaDownloaded,
+    isMediaDownloadBusy,
+    getMediaDownloadState,
+    isMediaDownloadSupported,
+    handleDownloadMedia,
+    handleCancelMediaJob
+  } = useMediaManager({
+    docId,
+    setStatus,
+    fetchJsonSafe,
+    canonicalizeLinkUrl,
+    normalizeLinkUrl,
+    normalizeTopicTitleForDisplay,
+    isYtDlpCandidateUrl
+  });
   useEffect(() => {
-    uiAuditDocIdRef.current = docId || "";
+    setSegmentResearchRuns({});
+    setSegmentResearchHistory({});
+    setSegmentResearchLoading({});
   }, [docId]);
-  const flushUiAuditQueue = React.useCallback(async ({ keepalive = false } = {}) => {
-    if (uiAuditTimerRef.current) {
-      clearTimeout(uiAuditTimerRef.current);
-      uiAuditTimerRef.current = null;
-    }
-    const queue = uiAuditQueueRef.current;
-    if (!Array.isArray(queue) || queue.length === 0) return;
+  const refreshIntegration = React.useCallback(async () => {
+    setIntegrationLoading(true);
+    try {
+      const [
+        overviewResult,
+        assetsResult,
+        releasesResult,
+        sessionsResult,
+        sqliteStatusResult,
+        backupsStatusResult,
+        sourceProfilesResult,
+        sourceMemoryResult,
+        releaseOutcomeMemoryResult
+      ] = await Promise.all([
+        fetchJsonSafe("/api/integration/overview"),
+        fetchJsonSafe("/api/assets?limit=80"),
+        fetchJsonSafe("/api/releases"),
+        fetchJsonSafe("/api/bot/sessions"),
+        fetchJsonSafe("/api/integration/sqlite/status"),
+        fetchJsonSafe("/api/integration/backups/status"),
+        fetchJsonSafe("/api/source-profiles"),
+        fetchJsonSafe("/api/source-memory"),
+        fetchJsonSafe("/api/release-outcome-memory")
+      ]);
 
-    const batch = queue.splice(0, UI_AUDIT_BATCH_SIZE);
-    const ok = await sendUiAuditActions(batch, { keepalive });
-    if (!ok) {
-      uiAuditQueueRef.current = [...batch, ...uiAuditQueueRef.current].slice(-UI_AUDIT_MAX_QUEUE);
-    }
+      if (overviewResult.response.ok) {
+        setIntegrationOverview(overviewResult.data ?? null);
+      }
+      if (assetsResult.response.ok) {
+        setIntegrationAssets(Array.isArray(assetsResult.data?.assets) ? assetsResult.data.assets : []);
+      }
+      if (releasesResult.response.ok) {
+        setIntegrationReleases(Array.isArray(releasesResult.data?.releases) ? releasesResult.data.releases : []);
+      }
+      if (sessionsResult.response.ok) {
+        setIntegrationBotSessions(Array.isArray(sessionsResult.data?.sessions) ? sessionsResult.data.sessions : []);
+      }
+      if (sqliteStatusResult.response.ok) {
+        setSqliteMirrorStatus(sqliteStatusResult.data?.sqlite ?? null);
+      }
+      let nextSelectedBackupId = "";
+      if (backupsStatusResult.response.ok) {
+        const nextBackupsStatus = backupsStatusResult.data?.backups ?? null;
+        setRuntimeBackupsStatus(nextBackupsStatus);
+        const backupItems = Array.isArray(nextBackupsStatus?.backups) ? nextBackupsStatus.backups : [];
+        const preferredBackupId = String(selectedBackupSnapshotId ?? "").trim();
+        nextSelectedBackupId =
+          (preferredBackupId && backupItems.some((item) => String(item?.backup_id ?? "").trim() === preferredBackupId)
+            ? preferredBackupId
+            : String(nextBackupsStatus?.latest?.backup_id ?? backupItems[0]?.backup_id ?? "").trim()) || "";
+        setSelectedBackupSnapshotId(nextSelectedBackupId);
+      } else {
+        setRuntimeBackupsStatus(null);
+        setSelectedBackupSnapshotId("");
+        setSelectedBackupSnapshot(null);
+        setSelectedBackupDryRun(null);
+      }
+      if (sourceProfilesResult.response.ok) {
+        const profiles = sourceProfilesResult.data?.profiles ?? null;
+        setSourceProfiles(profiles);
+        setSourceProfilesDraft((prev) => (sourceProfilesDirty ? prev : buildSourceProfilesDraft(profiles ?? {})));
+      }
+      if (sourceMemoryResult.response.ok) {
+        setSourceMemorySummary(sourceMemoryResult.data?.summary ?? null);
+      }
+      if (releaseOutcomeMemoryResult.response.ok) {
+        setReleaseOutcomeMemorySummary(releaseOutcomeMemoryResult.data?.summary ?? null);
+      }
 
-    if (uiAuditQueueRef.current.length > 0 && !uiAuditTimerRef.current) {
-      uiAuditTimerRef.current = setTimeout(() => {
-        void flushUiAuditQueue();
-      }, UI_AUDIT_FLUSH_MS);
+      if (nextSelectedBackupId) {
+        const [backupInspectResult, backupDryRunResult] = await Promise.all([
+          fetchJsonSafe(`/api/integration/backups/${encodeURIComponent(nextSelectedBackupId)}`),
+          fetchJsonSafe(`/api/integration/backups/${encodeURIComponent(nextSelectedBackupId)}/restore-dry-run`, {
+            method: "POST"
+          })
+        ]);
+        if (backupInspectResult.response.ok) {
+          setSelectedBackupSnapshot(backupInspectResult.data?.backup ?? null);
+        } else {
+          setSelectedBackupSnapshot(null);
+        }
+        if (backupDryRunResult.response.ok) {
+          setSelectedBackupDryRun(backupDryRunResult.data?.dry_run ?? null);
+        } else {
+          setSelectedBackupDryRun(null);
+        }
+      }
+    } catch {
+      setIntegrationOverview(null);
+      setIntegrationAssets([]);
+      setIntegrationReleases([]);
+      setIntegrationBotSessions([]);
+      setSqliteMirrorStatus(null);
+      setRuntimeBackupsStatus(null);
+      setSelectedBackupSnapshot(null);
+      setSelectedBackupDryRun(null);
+      setSourceMemorySummary(null);
+      setReleaseOutcomeMemorySummary(null);
+      setSourceProfiles(null);
+    } finally {
+      setIntegrationLoading(false);
+    }
+  }, [selectedBackupSnapshotId, sourceProfilesDirty]);
+  const updateSourceProfilesDraftField = React.useCallback((field, value) => {
+    setSourceProfilesDraft((prev) => ({
+      ...prev,
+      [field]: value
+    }));
+    setSourceProfilesDirty(true);
+  }, []);
+  const handleResetSourceProfilesDraft = React.useCallback(() => {
+    setSourceProfilesDraft(buildSourceProfilesDraft(sourceProfiles ?? {}));
+    setSourceProfilesDirty(false);
+    setStatus("Source profiles reset to saved values.");
+  }, [sourceProfiles]);
+  const handleSaveSourceProfiles = React.useCallback(async () => {
+    try {
+      setSourceProfilesSaving(true);
+      const domainProfiles = JSON.parse(String(sourceProfilesDraft.domain_profiles_json ?? "{}") || "{}");
+      const channelProfiles = JSON.parse(String(sourceProfilesDraft.channel_profiles_json ?? "{}") || "{}");
+      const payload = {
+        version: Number(sourceProfiles?.version ?? 1) || 1,
+        trusted_domains: parseDomainListFromTextarea(sourceProfilesDraft.trusted_domains),
+        blocked_domains: parseDomainListFromTextarea(sourceProfilesDraft.blocked_domains),
+        video_platform_domains: parseDomainListFromTextarea(sourceProfilesDraft.video_platform_domains),
+        social_domains: parseDomainListFromTextarea(sourceProfilesDraft.social_domains),
+        downloadable_domains: parseDomainListFromTextarea(sourceProfilesDraft.downloadable_domains),
+        screenshot_friendly_domains: parseDomainListFromTextarea(sourceProfilesDraft.screenshot_friendly_domains),
+        domain_profiles: domainProfiles && typeof domainProfiles === "object" && !Array.isArray(domainProfiles) ? domainProfiles : {},
+        channel_profiles: channelProfiles && typeof channelProfiles === "object" && !Array.isArray(channelProfiles) ? channelProfiles : {}
+      };
+      const { response, data } = await fetchJsonSafe("/api/source-profiles", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ profiles: payload })
+      });
+      if (!response.ok) throw new Error(data?.error ?? "Failed to save source profiles");
+      const nextProfiles = data?.profiles ?? null;
+      setSourceProfiles(nextProfiles);
+      setSourceProfilesDraft(buildSourceProfilesDraft(nextProfiles ?? {}));
+      setSourceProfilesDirty(false);
+      setStatus("Source profiles saved.");
+    } catch (error) {
+      setStatus(error?.message ?? "Failed to save source profiles");
+    } finally {
+      setSourceProfilesSaving(false);
+    }
+  }, [sourceProfiles, sourceProfilesDraft]);
+  const handleSelectBackupSnapshot = React.useCallback(async (backupId) => {
+    const normalizedId = String(backupId ?? "").trim();
+    setSelectedBackupSnapshotId(normalizedId);
+    if (!normalizedId) {
+      setSelectedBackupSnapshot(null);
+      setSelectedBackupDryRun(null);
+      return;
+    }
+    try {
+      setBackupActionBusy(true);
+      const [backupInspectResult, backupDryRunResult] = await Promise.all([
+        fetchJsonSafe(`/api/integration/backups/${encodeURIComponent(normalizedId)}`),
+        fetchJsonSafe(`/api/integration/backups/${encodeURIComponent(normalizedId)}/restore-dry-run`, {
+          method: "POST"
+        })
+      ]);
+      if (!backupInspectResult.response.ok) {
+        throw new Error(backupInspectResult.data?.error ?? "Failed to load backup snapshot");
+      }
+      if (!backupDryRunResult.response.ok) {
+        throw new Error(backupDryRunResult.data?.error ?? "Failed to load backup dry-run");
+      }
+      setSelectedBackupSnapshot(backupInspectResult.data?.backup ?? null);
+      setSelectedBackupDryRun(backupDryRunResult.data?.dry_run ?? null);
+    } catch (error) {
+      setSelectedBackupSnapshot(null);
+      setSelectedBackupDryRun(null);
+      setStatus(error?.message ?? "Failed to load backup snapshot");
+    } finally {
+      setBackupActionBusy(false);
     }
   }, []);
-  const enqueueUiAuditAction = React.useCallback(
-    (action) => {
-      if (!action || typeof action !== "object") return;
-      uiAuditQueueRef.current.push(action);
-      if (uiAuditQueueRef.current.length > UI_AUDIT_MAX_QUEUE) {
-        uiAuditQueueRef.current = uiAuditQueueRef.current.slice(-UI_AUDIT_MAX_QUEUE);
-      }
-      if (uiAuditQueueRef.current.length >= UI_AUDIT_BATCH_SIZE) {
-        void flushUiAuditQueue();
-        return;
-      }
-      if (!uiAuditTimerRef.current) {
-        uiAuditTimerRef.current = setTimeout(() => {
-          void flushUiAuditQueue();
-        }, UI_AUDIT_FLUSH_MS);
-      }
-    },
-    [flushUiAuditQueue]
-  );
-  useEffect(() => {
-    if (typeof document === "undefined") return undefined;
-
-    const record = (type, event) => {
-      const payload = buildUiActionPayload(type, event, uiAuditDocIdRef.current);
-      if (!payload) return;
-      enqueueUiAuditAction(payload);
-    };
-
-    const onClick = (event) => record("click", event);
-    const onInput = (event) => {
-      const target = extractUiTargetInfo(event.target);
-      if (!target) return;
-      const key = `${target.tag || "unknown"}|${target.id || ""}|${target.name || ""}|${target.class || ""}`;
-      const now = Date.now();
-      const prevAt = Number(uiAuditLastInputRef.current.get(key) ?? 0);
-      if (now - prevAt < UI_AUDIT_INPUT_THROTTLE_MS) return;
-      uiAuditLastInputRef.current.set(key, now);
-      record("input", event);
-    };
-    const onChange = (event) => record("change", event);
-    const onSubmit = (event) => record("submit", event);
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        void flushUiAuditQueue({ keepalive: true });
-      }
-    };
-    const onBeforeUnload = () => {
-      void flushUiAuditQueue({ keepalive: true });
-    };
-
-    document.addEventListener("click", onClick, true);
-    document.addEventListener("input", onInput, true);
-    document.addEventListener("change", onChange, true);
-    document.addEventListener("submit", onSubmit, true);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("beforeunload", onBeforeUnload);
-
-    return () => {
-      document.removeEventListener("click", onClick, true);
-      document.removeEventListener("input", onInput, true);
-      document.removeEventListener("change", onChange, true);
-      document.removeEventListener("submit", onSubmit, true);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      if (uiAuditTimerRef.current) {
-        clearTimeout(uiAuditTimerRef.current);
-        uiAuditTimerRef.current = null;
-      }
-      uiAuditLastInputRef.current = new Map();
-      void flushUiAuditQueue({ keepalive: true });
-    };
-  }, [enqueueUiAuditAction, flushUiAuditQueue]);
-  useEffect(() => {
-    setMediaQueue({});
-    setDownloadedMediaUrls([]);
-    setYtDlpVersion(null);
-    setMediaPanelOpen(false);
-    mediaJobStatusRef.current = new Map();
-    mediaJobStatusReadyRef.current = false;
-  }, [docId]);
-  const refreshMedia = React.useCallback(async () => {
-    if (!docId) {
-      setMediaJobs([]);
-      setMediaFiles([]);
-      setDownloadedMediaUrls([]);
-      setMediaTools(null);
-      setYtDlpVersion(null);
-      return;
-    }
+  const handleCreateRuntimeBackup = React.useCallback(async () => {
     try {
-      const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/media`);
-      if (!response.ok) return;
-      setMediaJobs(Array.isArray(data?.jobs) ? data.jobs : []);
-      setMediaFiles(Array.isArray(data?.files) ? data.files : []);
-      setDownloadedMediaUrls(Array.isArray(data?.downloaded_urls) ? data.downloaded_urls : []);
-      setMediaTools(data?.tools ?? null);
-    } catch {
-      setMediaJobs([]);
-      setMediaFiles([]);
-      setDownloadedMediaUrls([]);
-      setYtDlpVersion(null);
-    }
-  }, [docId]);
-  useEffect(() => {
-    refreshMedia();
-  }, [refreshMedia]);
-  useEffect(() => {
-    if (!docId) return;
-    const hasActive = mediaJobs.some((job) => job.status === "queued" || job.status === "running");
-    if (!hasActive) return;
-    const timer = setInterval(() => {
-      refreshMedia();
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [docId, mediaJobs, refreshMedia]);
-  useEffect(() => {
-    const nextMap = new Map();
-    mediaJobs.forEach((job) => {
-      nextMap.set(job.id, {
-        status: String(job.status ?? ""),
-        sectionTitle: String(job.section_title ?? ""),
-        error: String(job.error ?? ""),
-        outputCount: Array.isArray(job.output_files) ? job.output_files.length : 0
+      setBackupActionBusy(true);
+      const { response, data } = await fetchJsonSafe("/api/integration/backups/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "manual" })
       });
-    });
-
-    if (!mediaJobStatusReadyRef.current) {
-      mediaJobStatusRef.current = nextMap;
-      mediaJobStatusReadyRef.current = true;
-      return;
-    }
-
-    let statusMessage = "";
-    for (const job of mediaJobs) {
-      const prev = mediaJobStatusRef.current.get(job.id);
-      if (!prev) continue;
-      if (prev.status === job.status) continue;
-
-      const cleanedTitle = normalizeTopicTitleForDisplay(job.section_title ?? "");
-      const title = cleanedTitle || (job.section_title ? String(job.section_title) : job.id);
-      if (job.status === "completed") {
-        const outputCount = Array.isArray(job.output_files) ? job.output_files.length : 0;
-        statusMessage = `Media completed: ${title}${outputCount > 0 ? ` (${outputCount})` : ""}`;
-      } else if (job.status === "failed") {
-        statusMessage = `Media failed: ${title}${job.error ? ` - ${job.error}` : ""}`;
-      } else if (job.status === "canceled") {
-        statusMessage = `Media canceled: ${title}`;
+      if (!response.ok) throw new Error(data?.error ?? "Failed to create backup");
+      const backupId = String(data?.backup?.backup_id ?? "").trim();
+      await refreshIntegration();
+      if (backupId) {
+        await handleSelectBackupSnapshot(backupId);
       }
-
-      if (statusMessage) break;
-    }
-
-    mediaJobStatusRef.current = nextMap;
-    if (statusMessage) {
-      setStatus(statusMessage);
-    }
-  }, [mediaJobs]);
-  const handleCheckYtDlpVersion = React.useCallback(
-    async ({ silent = false } = {}) => {
-      if (ytDlpVersionLoading) return;
-      setYtDlpVersionLoading(true);
-      try {
-        const { response, data } = await fetchJsonSafe("/api/downloader/yt-dlp/version");
-        if (!response.ok) throw new Error(data?.error ?? "Version check failed");
-        const version = typeof data?.version === "string" ? data.version : null;
-        const normalizedVersion = version || "unknown";
-        setYtDlpVersion(normalizedVersion);
-        if (!silent) {
-          if (data?.available) {
-            setStatus(`yt-dlp version: ${normalizedVersion}`);
-          } else {
-            setStatus("yt-dlp unavailable");
-          }
-        }
-      } catch (error) {
-        if (!silent) {
-          setStatus(error.message);
-        }
-      } finally {
-        setYtDlpVersionLoading(false);
-      }
-    },
-    [ytDlpVersionLoading]
-  );
-  const handleUpdateYtDlp = React.useCallback(async () => {
-    if (ytDlpUpdateLoading) return;
-    setYtDlpUpdateLoading(true);
-    try {
-      const { response, data } = await fetchJsonSafe("/api/downloader/yt-dlp:update", {
-        method: "POST"
-      });
-      if (!response.ok) throw new Error(data?.error ?? "yt-dlp update failed");
-      const nextVersion =
-        (typeof data?.after === "string" && data.after) ||
-        (typeof data?.before === "string" && data.before) ||
-        ytDlpVersion ||
-        "unknown";
-      setYtDlpVersion(nextVersion);
-      await refreshMedia();
-      if (data?.changed) {
-        setStatus(`yt-dlp updated: ${data?.before ?? "unknown"} -> ${data?.after ?? "unknown"}`);
-      } else if (data?.up_to_date) {
-        setStatus(`yt-dlp already up to date: ${data?.after ?? data?.before ?? "unknown"}`);
-      } else {
-        setStatus(`yt-dlp update completed: ${data?.after ?? data?.before ?? "unknown"}`);
-      }
+      setStatus(`Backup created: ${backupId || "ok"}`);
     } catch (error) {
-      setStatus(error.message);
+      setStatus(error?.message ?? "Failed to create backup");
     } finally {
-      setYtDlpUpdateLoading(false);
+      setBackupActionBusy(false);
     }
-  }, [refreshMedia, ytDlpUpdateLoading, ytDlpVersion]);
-  useEffect(() => {
-    if (!mediaPanelOpen) return;
-    if (!mediaTools?.available) return;
-    if (ytDlpVersion || ytDlpVersionLoading || ytDlpUpdateLoading) return;
-    handleCheckYtDlpVersion({ silent: true });
-  }, [handleCheckYtDlpVersion, mediaPanelOpen, mediaTools, ytDlpUpdateLoading, ytDlpVersion, ytDlpVersionLoading]);
-  const segmentsCount = segments.filter((segment) => segment.block_type !== "links").length;
-  const activeMediaJobsCount = React.useMemo(
-    () => mediaJobs.filter((job) => job.status === "queued" || job.status === "running").length,
-    [mediaJobs]
-  );
-  const downloadedMediaSet = React.useMemo(() => {
-    const set = new Set();
-    downloadedMediaUrls.forEach((url) => {
-      const key = canonicalizeLinkUrl(url) || normalizeLinkUrl(url);
-      if (key) set.add(key);
-    });
-    return set;
-  }, [downloadedMediaUrls]);
-  const isMediaDownloaded = React.useCallback(
-    (url) => {
-      const key = canonicalizeLinkUrl(url) || normalizeLinkUrl(url);
-      if (!key) return false;
-      return downloadedMediaSet.has(key);
+  }, [handleSelectBackupSnapshot, refreshIntegration]);
+  const handleRestoreRuntimeBackup = React.useCallback(
+    async (backupId) => {
+      const normalizedId = String(backupId ?? selectedBackupSnapshotId ?? "").trim();
+      if (!normalizedId) return;
+      try {
+        setBackupActionBusy(true);
+        const { response, data } = await fetchJsonSafe(
+          `/api/integration/backups/${encodeURIComponent(normalizedId)}/restore`,
+          {
+            method: "POST"
+          }
+        );
+        if (!response.ok) throw new Error(data?.error ?? "Failed to restore backup");
+        await refreshIntegration();
+        await handleSelectBackupSnapshot(normalizedId);
+        const preRestoreId = String(data?.pre_restore_backup?.backup_id ?? "").trim();
+        setStatus(
+          preRestoreId
+            ? `Backup restored: ${normalizedId} · safety snapshot ${preRestoreId}`
+            : `Backup restored: ${normalizedId}`
+        );
+      } catch (error) {
+        setStatus(error?.message ?? "Failed to restore backup");
+      } finally {
+        setBackupActionBusy(false);
+      }
     },
-    [downloadedMediaSet]
+    [handleSelectBackupSnapshot, refreshIntegration, selectedBackupSnapshotId]
   );
-  const groupedSegments = React.useMemo(() => {
-    const map = new Map();
-    segments.forEach((segment, index) => {
-      const key = getSegmentGroupKey(segment);
-      const title = getSegmentGroupTitle(segment);
-      if (!map.has(key)) {
-        map.set(key, {
-          id: key,
-          title,
-          items: [],
-          linkSegment: null,
-          section_id: segment.section_id ?? null,
-          section_title: segment.section_title ?? null,
-          section_index: segment.section_index ?? null
-        });
-      }
-      const group = map.get(key);
-      if (normalizeSegmentBlockType(segment.block_type) === "links") {
-        group.linkSegment = { segment, index };
-        return;
-      }
-      group.items.push({ segment, index });
+  const rememberAssistantAutoBackup = React.useCallback((autoBackup, contextLabel = "assistant action") => {
+    const backupId = String(autoBackup?.backup_id ?? "").trim();
+    if (!backupId) return "";
+    setLastAssistantAutoBackup({
+      backup_id: backupId,
+      created_at: String(autoBackup?.created_at ?? "").trim(),
+      label: String(contextLabel ?? "").trim() || "assistant action"
     });
-    return Array.from(map.values());
-  }, [segments]);
-  const allScenarioLinks = React.useMemo(() => collectScenarioLinks(segments), [segments]);
-  const headingRuEngines = React.useMemo(
-    () => (config.searchEngines ?? []).filter((engine) => HEADING_SEARCH_RU_ENGINE_IDS.has(engine.id)),
-    [config.searchEngines]
+    return backupId;
+  }, []);
+  useEffect(() => {
+    refreshIntegration();
+  }, [refreshIntegration]);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      refreshIntegration();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [refreshIntegration]);
+  useEffect(() => {
+    if (selectedReleaseId) return;
+    const nextReleaseId = integrationReleases[0]?.id ?? "";
+    if (!nextReleaseId) return;
+    setSelectedReleaseId(nextReleaseId);
+  }, [integrationReleases, selectedReleaseId]);
+  const {
+    selectedReleaseDetail,
+    setSelectedReleaseDetail,
+    releaseAssistantPass,
+    setReleaseAssistantPass,
+    releaseRecommendations,
+    setReleaseRecommendations,
+    releaseDraftPack,
+    setReleaseDraftPack,
+    releasePublishChecklist,
+    setReleasePublishChecklist,
+    releaseControlPanel,
+    setReleaseControlPanel,
+    releaseBriefingPanel,
+    releaseResearchBriefs,
+    releaseActivity,
+    loadReleaseDetail,
+    loadReleaseAssistantPass,
+    loadReleaseActivity,
+    loadReleaseRecommendations,
+    loadReleaseDraftPack,
+    loadReleasePublishChecklist,
+    loadReleaseControlPanel,
+    loadReleaseBriefingPanel,
+    reloadReleaseWorkspaceData,
+    syncReleaseWorkspaceDataFromAction
+  } = useReleaseWorkspaceData({
+    selectedReleaseId,
+    appMode,
+    fetchJsonSafe,
+    refreshIntegration
+  });
+
+  const reloadCurrentReleaseWorkspace = React.useCallback(
+    async (options = {}) => {
+      if (!selectedReleaseId) return null;
+      return reloadReleaseWorkspaceData(selectedReleaseId, options);
+    },
+    [reloadReleaseWorkspaceData, selectedReleaseId]
+  );
+  const syncCurrentReleaseActionData = React.useCallback(
+    async (data, options = {}) => {
+      if (!selectedReleaseId) return null;
+      return syncReleaseWorkspaceDataFromAction(data, {
+        releaseId: selectedReleaseId,
+        ...options
+      });
+    },
+    [selectedReleaseId, syncReleaseWorkspaceDataFromAction]
   );
   useEffect(() => {
-    setExpandedGroups((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      groupedSegments.forEach((group) => {
-        if (!(group.id in next)) {
-          next[group.id] = false;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [groupedSegments]);
-  useEffect(() => {
-    setGroupRenderLimits((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      const ids = new Set(groupedSegments.map((group) => group.id));
-      groupedSegments.forEach((group) => {
-        if (!(group.id in next)) {
-          next[group.id] = GROUP_RENDER_CHUNK;
-          changed = true;
-        }
-      });
-      Object.keys(next).forEach((id) => {
-        if (!ids.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [groupedSegments]);
-  useEffect(() => {
-    setHeadingSearchOpen((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      const ids = new Set(groupedSegments.map((group) => group.id));
-      groupedSegments.forEach((group) => {
-        if (!(group.id in next)) {
-          next[group.id] = false;
-          changed = true;
-        }
-      });
-      Object.keys(next).forEach((id) => {
-        if (!ids.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-    setHeadingEnglishQueries((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      const ids = new Set(groupedSegments.map((group) => group.id));
-      groupedSegments.forEach((group) => {
-        if (!(group.id in next)) {
-          next[group.id] = group.title === "Без темы" ? "" : group.title;
-          changed = true;
-        }
-      });
-      Object.keys(next).forEach((id) => {
-        if (!ids.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [groupedSegments]);
+    setReleaseWorkspaceTab("overview");
+    setSelectedReleaseAttachmentIds([]);
+    setLastAttachRecommendationsResult(null);
+  }, [selectedReleaseId]);
+  const segmentsCount = segments.filter((segment) => segment.block_type !== "links").length;
+  const { groupedSegments, allScenarioLinks, segmentsNeedingVisual, headingRuEngines } = useScenarioGroups({
+    segments,
+    config,
+    headingSearchRuEngineIds: HEADING_SEARCH_RU_ENGINE_IDS,
+    groupRenderChunk: GROUP_RENDER_CHUNK,
+    getSegmentGroupKey,
+    getSegmentGroupTitle,
+    collectScenarioLinks,
+    collectSegmentsNeedingVisual,
+    setExpandedGroups,
+    setGroupRenderLimits,
+    setHeadingSearchOpen,
+    setHeadingEnglishQueries
+  });
   const canGenerate = Boolean(String(scriptText).trim()) && !loading;
   const canSaveBase = Boolean(docId) && segmentsCount > 0 && !loading;
   const buildSessionPayload = React.useCallback(
@@ -3385,25 +4770,29 @@ export default function App() {
       }),
     [notionUrl, scriptText, segments]
   );
-  const hasUnsavedChanges = React.useMemo(() => {
-    if (!docId) return false;
-    const fingerprint = getSessionFingerprint(buildSessionPayload());
-    return fingerprint !== collabLastSavedFingerprintRef.current;
-  }, [buildSessionPayload, docId, collabRevision, collabAutoSaving, loading, status]);
+  const {
+    collabAutoSaving,
+    collabRevision,
+    collabAutoSaveInFlightRef,
+    collabPollInFlightRef,
+    collabRevisionRef,
+    hasUnsavedChanges,
+    initialDocRestoreDoneRef,
+    isSnapshotDirty,
+    rememberSessionSnapshot,
+    runWithRemoteApply,
+    saveSessionSnapshot
+  } = useCollaborativeSession({
+    docId,
+    buildSessionPayload,
+    fetchJsonSafe,
+    getSessionFingerprint,
+    autosaveDebounceMs: COLLAB_AUTOSAVE_DEBOUNCE_MS,
+    onError: (error) => setStatus(error?.message ?? "Collaborative autosave failed.")
+  });
   const canSave = canSaveBase && hasUnsavedChanges;
   const canLoadNotion = Boolean(notionUrl.trim()) && !loading;
   const canRefreshNotion = canLoadNotion;
-  const rememberSessionSnapshot = React.useCallback((snapshot, revision = 0) => {
-    collabLastSavedFingerprintRef.current = getSessionFingerprint(snapshot);
-    const normalizedRevision = Number(revision);
-    if (Number.isFinite(normalizedRevision) && normalizedRevision > 0) {
-      collabRevisionRef.current = normalizedRevision;
-      setCollabRevision(normalizedRevision);
-      return;
-    }
-    collabRevisionRef.current = 0;
-    setCollabRevision(0);
-  }, []);
   const applyLoadedSnapshot = React.useCallback(
     (targetId, data) => {
       const rawText = data?.document?.raw_text ?? "";
@@ -3419,39 +4808,26 @@ export default function App() {
         mergeLinkSegmentsIntoSegments(mergedWithTopics, linksFromMerged)
       );
 
-      collabIsApplyingRemoteRef.current = true;
       const snapshot = buildSessionPayloadFromState({
         scriptText: rawText,
         notionUrl: loadedNotion,
         segments: ordered
       });
-      rememberSessionSnapshot(snapshot, data?.revision);
-
-      setDocId(targetId);
-      setScriptText(rawText);
-      setNotionUrl(loadedNotion);
-      setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
-      setSegments(ordered);
-      setRecentDocId(targetId);
-      setTimeout(() => {
-        collabIsApplyingRemoteRef.current = false;
-      }, 0);
-    },
-    [config, rememberSessionSnapshot]
-  );
-  const saveSessionSnapshot = React.useCallback(
-    async (snapshot, source = "manual") => {
-      if (!docId) throw new Error("Документ не выбран.");
-      const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/session`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...snapshot, source })
+      runWithRemoteApply(() => {
+        rememberSessionSnapshot(snapshot, data?.revision);
+        setDocId(targetId);
+        setScriptText(rawText);
+        setNotionUrl(loadedNotion);
+        setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
+        setSegments(ordered);
+        setSegmentResearchRuns(buildLatestResearchRunMap(data?.research_runs));
+        setSegmentResearchHistory(buildResearchRunHistoryMap(data?.research_runs));
+        setSegmentResearchLoading({});
+        setRecentDocId(targetId);
+        setResearchDocQueryId(targetId);
       });
-      if (!response.ok) throw new Error(data?.error ?? "Session save error");
-      rememberSessionSnapshot(snapshot, data?.revision);
-      return data;
     },
-    [docId, rememberSessionSnapshot]
+    [buildLatestResearchRunMap, buildResearchRunHistoryMap, config, rememberSessionSnapshot, runWithRemoteApply]
   );
   const upsertDocumentForText = React.useCallback(
     async (rawTextValue, notionUrlValue = "") => {
@@ -3522,6 +4898,9 @@ export default function App() {
     initialDocRestoreDoneRef.current = true;
     setDocId("");
     setRecentDocId("");
+    setResearchDocQueryId("");
+    setSelectedResearchSegmentId("");
+    setSelectedResearchRunId("");
     setScriptText("");
     setNotionUrl("");
     setNotionHasUpdates(false);
@@ -3664,6 +5043,7 @@ export default function App() {
   };
   useEffect(() => {
     if (initialDocRestoreDoneRef.current) return;
+    if (appMode === "research") return;
     if (!autoOpenLastDocEnabled) return;
     if (recentDocs.length === 0) return;
     const hasDraft =
@@ -3685,44 +5065,59 @@ export default function App() {
     initialDocRestoreDoneRef.current = true;
     setRecentDocId(targetDocId);
     void loadDocumentById(targetDocId);
-  }, [autoOpenLastDocEnabled, docId, loadDocumentById, notionUrl, recentDocs, scriptText, segments.length]);
+  }, [appMode, autoOpenLastDocEnabled, docId, loadDocumentById, notionUrl, recentDocs, scriptText, segments.length]);
   useEffect(() => {
-    if (collabSaveTimerRef.current) {
-      clearTimeout(collabSaveTimerRef.current);
-      collabSaveTimerRef.current = null;
+    if (appMode !== "research") return;
+    const targetDocId = String(researchDocQueryId ?? "").trim();
+    if (!targetDocId || targetDocId === docId) return;
+    void loadDocumentById(targetDocId);
+  }, [appMode, docId, loadDocumentById, researchDocQueryId]);
+  useEffect(() => {
+    if (appMode !== "research") return;
+    const researchSegments = segments.filter(
+      (item) => normalizeSegmentBlockType(item?.block_type) !== "links" && !isCommentsSegment(item)
+    );
+    if (!researchSegments.length) return;
+    const hasSelectedSegment = researchSegments.some(
+      (item) => String(item?.segment_id ?? "").trim() === String(selectedResearchSegmentId ?? "").trim()
+    );
+    if (!hasSelectedSegment) {
+      setSelectedResearchSegmentId(String(researchSegments[0]?.segment_id ?? "").trim());
     }
-    if (!docId) {
-      setCollabAutoSaving(false);
-      return;
+  }, [appMode, segments, selectedResearchSegmentId]);
+  useEffect(() => {
+    if (appMode !== "research") return;
+    const segmentId = String(selectedResearchSegmentId ?? "").trim();
+    if (!segmentId) return;
+    const requestedRunId = String(selectedResearchRunId ?? "").trim();
+    const historyItems = segmentResearchHistory[segmentId] ?? [];
+    if (requestedRunId) {
+      const hasRequestedRun = historyItems.some((item) => String(item?.run_id ?? "").trim() === requestedRunId);
+      if (hasRequestedRun) return;
     }
-    if (collabIsApplyingRemoteRef.current) return;
-
-    const snapshot = buildSessionPayload();
-    const fingerprint = getSessionFingerprint(snapshot);
-    if (fingerprint === collabLastSavedFingerprintRef.current) return;
-
-    collabSaveTimerRef.current = setTimeout(async () => {
-      collabSaveTimerRef.current = null;
-      if (collabAutoSaveInFlightRef.current) return;
-      collabAutoSaveInFlightRef.current = true;
-      setCollabAutoSaving(true);
-      try {
-        await saveSessionSnapshot(snapshot, "auto");
-      } catch (error) {
-        setStatus(error.message);
-      } finally {
-        collabAutoSaveInFlightRef.current = false;
-        setCollabAutoSaving(false);
-      }
-    }, COLLAB_AUTOSAVE_DEBOUNCE_MS);
-
-    return () => {
-      if (collabSaveTimerRef.current) {
-        clearTimeout(collabSaveTimerRef.current);
-        collabSaveTimerRef.current = null;
-      }
-    };
-  }, [buildSessionPayload, docId, saveSessionSnapshot]);
+    const currentRunId = String(segmentResearchRuns[segmentId]?.run_id ?? "").trim();
+    if (currentRunId !== requestedRunId) {
+      setSelectedResearchRunId(currentRunId);
+    }
+  }, [appMode, segmentResearchHistory, segmentResearchRuns, selectedResearchRunId, selectedResearchSegmentId]);
+  useEffect(() => {
+    if (appMode !== "research") return;
+    const segmentId = String(selectedResearchSegmentId ?? "").trim();
+    const runId = String(selectedResearchRunId ?? "").trim();
+    if (!segmentId || !runId) return;
+    const selectedRun = (segmentResearchHistory[segmentId] ?? []).find(
+      (item) => String(item?.run_id ?? "").trim() === runId
+    );
+    if (!selectedRun) return;
+    setSegmentResearchRuns((prev) => {
+      const currentRunId = String(prev?.[segmentId]?.run_id ?? "").trim();
+      if (currentRunId === runId) return prev;
+      return {
+        ...prev,
+        [segmentId]: selectedRun
+      };
+    });
+  }, [appMode, segmentResearchHistory, selectedResearchRunId, selectedResearchSegmentId]);
   useEffect(() => {
     if (!COLLAB_REMOTE_POLL_ENABLED || !collabSessionEnabled || !docId) return;
     let stopped = false;
@@ -3736,9 +5131,7 @@ export default function App() {
         const remoteRevision = Number(data?.revision ?? 0);
         if (!Number.isFinite(remoteRevision) || remoteRevision <= collabRevisionRef.current) return;
 
-        const localFingerprint = getSessionFingerprint(buildSessionPayload());
-        const isDirty = localFingerprint !== collabLastSavedFingerprintRef.current;
-        if (isDirty) return;
+        if (isSnapshotDirty(buildSessionPayload())) return;
 
         await loadDocumentById(docId, { silent: true });
       } catch {
@@ -3757,7 +5150,7 @@ export default function App() {
       stopped = true;
       clearInterval(timer);
     };
-  }, [buildSessionPayload, collabSessionEnabled, docId, loadDocumentById]);
+  }, [buildSessionPayload, collabSessionEnabled, docId, isSnapshotDirty, loadDocumentById]);
   const handleGenerate = async () => {
     setLoading(true);
     setStatus("\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u043e\u0432...");
@@ -3975,7 +5368,11 @@ export default function App() {
         ? {
             section_id: last.section_id ?? null,
             section_title: last.section_title ?? null,
-            section_index: last.section_index ?? null
+            section_index: last.section_index ?? null,
+            research_use_topic_title: Boolean(last?.research_use_topic_title),
+            research_use_theme_tags: Boolean(last?.research_use_theme_tags),
+            topic_tags: normalizeSegmentTagList(last.topic_tags ?? last.section_tags ?? []),
+            section_tags: normalizeSegmentTagList(last.section_tags ?? last.topic_tags ?? [])
           }
         : {};
       return [...prev, emptySegment(prev.length + 1, section)];
@@ -4049,31 +5446,46 @@ export default function App() {
     setSegments((prev) => prev.filter((_, idx) => idx !== index));
   }, []);
   const handleToggleSegmentDone = React.useCallback((index, isDone) => {
-    setSegments((prev) =>
-      prev.map((segment, idx) =>
+    setSegments((prev) => {
+      const next = prev.map((segment, idx) =>
         idx === index ? { ...segment, is_done: Boolean(isDone) } : segment
-      )
-    );
-  }, []);
+      );
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        saveSessionSnapshot(snapshot, "toggle_done").catch(() => null);
+      }
+      return next;
+    });
+  }, [docId, notionUrl, saveSessionSnapshot, scriptText]);
   const handleToggleGroupDone = React.useCallback((groupId, isDone) => {
-    setSegments((prev) =>
-      prev.map((segment) => {
+    setSegments((prev) => {
+      const next = prev.map((segment) => {
         if (normalizeSegmentBlockType(segment.block_type) === "links") return segment;
         if (getSegmentGroupKey(segment) !== groupId) return segment;
         return { ...segment, is_done: Boolean(isDone) };
-      })
-    );
-  }, []);
+      });
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        saveSessionSnapshot(snapshot, "toggle_group_done").catch(() => null);
+      }
+      return next;
+    });
+  }, [docId, notionUrl, saveSessionSnapshot, scriptText]);
   const handleMarkAllDone = React.useCallback(() => {
-    setSegments((prev) =>
-      prev.map((segment) =>
+    setSegments((prev) => {
+      const next = prev.map((segment) =>
         normalizeSegmentBlockType(segment.block_type) === "links"
           ? segment
           : { ...segment, is_done: true }
-      )
-    );
+      );
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        saveSessionSnapshot(snapshot, "mark_all_done").catch(() => null);
+      }
+      return next;
+    });
     setStatus("Все сегменты отмечены как сделано.");
-  }, []);
+  }, [docId, notionUrl, saveSessionSnapshot, scriptText]);
   const handleAddLinksBlock = React.useCallback((group) => {
     setSegments((prev) => {
       const exists = prev.some(
@@ -4089,6 +5501,10 @@ export default function App() {
         section_id: group.section_id ?? null,
         section_title: isUntitled ? null : group.section_title ?? group.title ?? null,
         section_index: group.section_index ?? null,
+        research_use_topic_title: Boolean(group?.research_use_topic_title),
+        research_use_theme_tags: Boolean(group?.research_use_theme_tags),
+        topic_tags: normalizeSegmentTagList(group.topic_tags ?? group.section_tags ?? []),
+        section_tags: normalizeSegmentTagList(group.section_tags ?? group.topic_tags ?? []),
         segment_status: null,
         visual_decision: emptyVisualDecision(),
         search_decision: emptySearchDecision(),
@@ -4144,6 +5560,10 @@ export default function App() {
         section_id: source.section_id ?? null,
         section_title: source.section_title ?? null,
         section_index: source.section_index ?? null,
+        research_use_topic_title: Boolean(source?.research_use_topic_title),
+        research_use_theme_tags: Boolean(source?.research_use_theme_tags),
+        topic_tags: normalizeSegmentTagList(source.topic_tags ?? source.section_tags ?? []),
+        section_tags: normalizeSegmentTagList(source.section_tags ?? source.topic_tags ?? []),
         links: Array.isArray(source?.links) ? dedupeLinks(source.links) : [],
         visual_decision: {
           ...sourceVisual,
@@ -4306,91 +5726,6 @@ export default function App() {
       document.body.removeChild(textarea);
     }
   }, []);
-  const isMediaDownloadBusy = React.useCallback(
-    (url) => {
-      const normalized = canonicalizeLinkUrl(url) || normalizeLinkUrl(url);
-      if (!normalized) return false;
-      if (mediaQueue[normalized]) return true;
-      return mediaJobs.some((job) => {
-        if (job.status !== "queued" && job.status !== "running") return false;
-        const jobUrl = canonicalizeLinkUrl(job.url) || normalizeLinkUrl(job.url);
-        return jobUrl === normalized;
-      });
-    },
-    [mediaJobs, mediaQueue]
-  );
-  const isMediaDownloadSupported = React.useCallback(
-    (url) => {
-      if (!mediaTools?.available) return false;
-      return isYtDlpCandidateUrl(url);
-    },
-    [mediaTools]
-  );
-  const handleDownloadMedia = React.useCallback(
-    async (url, sectionTitle = null) => {
-      const normalized = normalizeLinkUrl(url);
-      if (!docId || !normalized) return;
-      if (!isYtDlpCandidateUrl(normalized)) {
-        setStatus("Ссылка не подходит под фильтр yt-dlp.");
-        return;
-      }
-      if (isMediaDownloaded(normalized)) {
-        setStatus("\u0421\u0441\u044b\u043b\u043a\u0430 \u0443\u0436\u0435 \u043f\u043e\u043c\u0435\u0447\u0435\u043d\u0430 \u043a\u0430\u043a \u0441\u043a\u0430\u0447\u0430\u043d\u043d\u0430\u044f.");
-        return;
-      }
-      const key = canonicalizeLinkUrl(normalized) || normalized;
-      if (mediaQueue[key]) return;
-      setMediaQueue((prev) => ({ ...prev, [key]: true }));
-      setStatus(`Media download: ${normalized}`);
-      try {
-        const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/media:download`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ url: normalized, section_title: sectionTitle ?? null })
-        });
-        if (!response.ok) throw new Error(data?.error ?? "Media download error");
-        if (data?.already_downloaded) {
-          await refreshMedia();
-          setStatus("\u0423\u0436\u0435 \u0441\u043a\u0430\u0447\u0430\u043d\u043e.");
-          return;
-        }
-        if (data?.job?.id) {
-          mediaJobStatusRef.current.set(String(data.job.id), {
-            status: String(data.job.status ?? "queued"),
-            sectionTitle: String(data.job.section_title ?? sectionTitle ?? ""),
-            error: "",
-            outputCount: 0
-          });
-        }
-        await refreshMedia();
-        setStatus(`Media queued: ${data?.job?.id ?? normalized}`);
-      } catch (error) {
-        setStatus(error.message);
-      } finally {
-        setMediaQueue((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
-      }
-    },
-    [docId, isMediaDownloaded, mediaQueue, refreshMedia]
-  );
-  const handleCancelMediaJob = React.useCallback(
-    async (jobId) => {
-      if (!docId || !jobId) return;
-      try {
-        const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/media/${jobId}:cancel`, {
-          method: "POST"
-        });
-        if (!response.ok) throw new Error(data?.error ?? "Cancel failed");
-        await refreshMedia();
-      } catch (error) {
-        setStatus(error.message);
-      }
-    },
-    [docId, refreshMedia]
-  );
   const handleSearch = React.useCallback(
     (engine, query) => {
       if (!engine || !query) return;
@@ -4535,9 +5870,413 @@ export default function App() {
     },
     [config, docId, searchLoading, segments]
   );
+  const handleRunSegmentResearch = React.useCallback(
+    async (index, mode = "deep", options = {}) => {
+      const segment = segments[index];
+      if (!segment) return;
+      if (!docId) {
+        setStatus("Сначала создайте или загрузите документ.");
+        return;
+      }
+      const segmentId = String(segment.segment_id ?? "").trim();
+      if (!segmentId || segmentResearchLoading[segmentId]) return;
+      const normalizedMode = String(mode ?? "deep").trim().toLowerCase() === "fast" ? "fast" : "deep";
+      const excludeSeen = Boolean(options?.excludeSeen);
+      const override = options?.segmentOverride && typeof options.segmentOverride === "object" ? options.segmentOverride : {};
+      setSegmentResearchLoading((prev) => ({ ...prev, [segmentId]: true }));
+      setStatus(`${excludeSeen ? "Research rerun" : "Research"}: ${segmentId}...`);
+      try {
+        const { response, data } = await fetchJsonSafe(
+          `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              mode: normalizedMode,
+              exclude_seen: excludeSeen,
+              segment_override: {
+                segment_id: segment.segment_id,
+                section_id: override?.section_id ?? segment.section_id ?? null,
+                section_title: override?.section_title ?? segment.section_title ?? null,
+                text_quote: override?.text_quote ?? segment.text_quote ?? "",
+                research_use_topic_title: override?.research_use_topic_title ?? Boolean(segment?.research_use_topic_title),
+                research_use_theme_tags: override?.research_use_theme_tags ?? Boolean(segment?.research_use_theme_tags),
+                topic_tags: normalizeSegmentTagList(override?.topic_tags ?? segment.topic_tags ?? segment.section_tags ?? []),
+                section_tags: normalizeSegmentTagList(override?.section_tags ?? segment.section_tags ?? segment.topic_tags ?? [])
+              }
+            })
+          }
+        );
+        if (!response.ok) throw new Error(data?.error ?? "Не удалось запустить research");
+        if (data?.run) {
+          setSegmentResearchRuns((prev) => ({ ...prev, [segmentId]: data.run }));
+          setSegmentResearchHistory((prev) => mergeResearchRunHistory(prev, data.run));
+          setStatus(
+            `${excludeSeen ? "Research rerun" : "Research"}: ${segmentId} · ${
+              Array.isArray(data.run.ranked_results) ? data.run.ranked_results.length : 0
+            } candidates`
+          );
+        }
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        setSegmentResearchLoading((prev) => {
+          const next = { ...prev };
+          delete next[segmentId];
+          return next;
+        });
+      }
+    },
+    [docId, mergeResearchRunHistory, segmentResearchLoading, segments]
+  );
+  const handleSelectSegmentResearchRun = React.useCallback(
+    (index, runId) => {
+      const segment = segments[index];
+      if (!segment || !runId) return;
+      const segmentId = String(segment.segment_id ?? "").trim();
+      const selected = (segmentResearchHistory[segmentId] ?? []).find(
+        (item) => String(item?.run_id ?? "") === String(runId)
+      );
+      if (!selected) return;
+      setSegmentResearchRuns((prev) => ({
+        ...prev,
+        [segmentId]: selected
+      }));
+      setStatus(`Research: loaded ${segmentId} · ${String(selected.updated_at ?? selected.created_at ?? "").slice(0, 16).replace("T", " ")}`);
+    },
+    [segmentResearchHistory, segments]
+  );
+  const handleApplySegmentResearch = React.useCallback(
+    async (index, action, resultId) => {
+      const segment = segments[index];
+      if (!segment || !docId || !resultId || !action) return;
+      const segmentId = String(segment.segment_id ?? "").trim();
+      const run = segmentResearchRuns[segmentId];
+      const runId = String(run?.run_id ?? "").trim();
+      if (!runId) {
+        setStatus("Сначала запусти Research для сегмента.");
+        return;
+      }
+      setSegmentResearchLoading((prev) => ({ ...prev, [segmentId]: true }));
+      try {
+        const { response, data } = await fetchJsonSafe(
+          `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research/apply`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              run_id: runId,
+              result_id: resultId,
+              action
+            })
+          }
+        );
+        if (!response.ok) throw new Error(data?.error ?? "Не удалось применить research result");
+        if (data?.run) {
+          setSegmentResearchRuns((prev) => ({ ...prev, [segmentId]: data.run }));
+          setSegmentResearchHistory((prev) => mergeResearchRunHistory(prev, data.run));
+        }
+        if (action === "screenshot" && data?.screenshot_lab_url) {
+          window.open(data.screenshot_lab_url, "_blank", "noopener,noreferrer");
+        }
+        if (action === "download" && data?.download_url) {
+          await handleDownloadMedia(data.download_url, segment.section_title ?? null);
+        }
+        if ((action === "promote_to_decision" || action === "use_as_source") && data?.decision) {
+          setSegments((prev) =>
+            prev.map((item) =>
+              String(item?.segment_id ?? "") === segmentId
+                ? {
+                    ...item,
+                    visual_decision: normalizeVisualDecision(data.decision.visual_decision, config),
+                    search_decision: normalizeSearchDecision(data.decision.search_decision, config),
+                    research_sources: normalizeResearchSources(data.decision.research_sources),
+                    research_bundle_trace: normalizeResearchBundleTrace(data.decision.research_bundle_trace)
+                  }
+                : item
+            )
+          );
+        }
+        if (action === "attach_asset" || action === "promote_to_decision" || action === "mark_helpful") {
+          await refreshIntegration();
+        }
+        if (action === "promote_to_decision" && data?.promoted_role) {
+          setStatus(`Research promoted: ${String(data.promoted_role).replace(/_/g, " ")}`);
+        } else if (action === "mark_helpful") {
+          setStatus("Research candidate marked as helpful.");
+        } else {
+          setStatus(`Research action: ${action}`);
+        }
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        setSegmentResearchLoading((prev) => {
+          const next = { ...prev };
+          delete next[segmentId];
+          return next;
+        });
+      }
+    },
+    [config, docId, handleDownloadMedia, mergeResearchRunHistory, refreshIntegration, segmentResearchRuns, segments]
+  );
+  const handleApplyManySegmentResearch = React.useCallback(
+    async (index, resultIds, action = "use_as_source") => {
+      const segment = segments[index];
+      const normalizedResultIds = [...new Set(
+        (Array.isArray(resultIds) ? resultIds : []).map((item) => String(item ?? "").trim()).filter(Boolean)
+      )];
+      if (!segment || !docId || !normalizedResultIds.length) return;
+      const segmentId = String(segment.segment_id ?? "").trim();
+      const run = segmentResearchRuns[segmentId];
+      const runId = String(run?.run_id ?? "").trim();
+      if (!runId) {
+        setStatus("Сначала запусти Research для сегмента.");
+        return;
+      }
+      setSegmentResearchLoading((prev) => ({ ...prev, [segmentId]: true }));
+      try {
+        const { response, data } = await fetchJsonSafe(
+          `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research/apply-many`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              run_id: runId,
+              action,
+              result_ids: normalizedResultIds
+            })
+          }
+        );
+        if (!response.ok) throw new Error(data?.error ?? "Не удалось применить выбранные research links");
+        if (data?.run) {
+          setSegmentResearchRuns((prev) => ({ ...prev, [segmentId]: data.run }));
+          setSegmentResearchHistory((prev) => mergeResearchRunHistory(prev, data.run));
+        }
+        if (data?.decision) {
+          setSegments((prev) =>
+            prev.map((item) =>
+              String(item?.segment_id ?? "") === segmentId
+                ? {
+                    ...item,
+                    visual_decision: normalizeVisualDecision(data.decision.visual_decision, config),
+                    search_decision: normalizeSearchDecision(data.decision.search_decision, config),
+                    research_sources: normalizeResearchSources(data.decision.research_sources),
+                    research_bundle_trace: normalizeResearchBundleTrace(data.decision.research_bundle_trace)
+                  }
+                : item
+            )
+          );
+        }
+        setStatus(`Added ${Number(data?.applied?.length ?? normalizedResultIds.length)} research link(s) to segment.`);
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        setSegmentResearchLoading((prev) => {
+          const next = { ...prev };
+          delete next[segmentId];
+          return next;
+        });
+      }
+    },
+    [config, docId, mergeResearchRunHistory, segmentResearchRuns, segments]
+  );
+  const handlePromoteSegmentResearchBundle = React.useCallback(
+    async (index, sourceResultId, visualResultId) => {
+      const segment = segments[index];
+      if (!segment || !docId || !sourceResultId || !visualResultId) return;
+      const segmentId = String(segment.segment_id ?? "").trim();
+      const run = segmentResearchRuns[segmentId];
+      const runId = String(run?.run_id ?? "").trim();
+      if (!runId) {
+        setStatus("Сначала запусти Research для сегмента.");
+        return;
+      }
+      setSegmentResearchLoading((prev) => ({ ...prev, [segmentId]: true }));
+      try {
+        const { response, data } = await fetchJsonSafe(
+          `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research/apply-bundle`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              run_id: runId,
+              source_result_id: sourceResultId,
+              visual_result_id: visualResultId
+            })
+          }
+        );
+        if (!response.ok) throw new Error(data?.error ?? "Не удалось применить research bundle");
+        if (data?.run) {
+          setSegmentResearchRuns((prev) => ({ ...prev, [segmentId]: data.run }));
+          setSegmentResearchHistory((prev) => mergeResearchRunHistory(prev, data.run));
+        }
+        if (data?.decision) {
+          setSegments((prev) =>
+            prev.map((item) =>
+              String(item?.segment_id ?? "") === segmentId
+                ? {
+                    ...item,
+                    visual_decision: normalizeVisualDecision(data.decision.visual_decision, config),
+                    search_decision: normalizeSearchDecision(data.decision.search_decision, config),
+                    research_sources: normalizeResearchSources(data.decision.research_sources),
+                    research_bundle_trace: normalizeResearchBundleTrace(data.decision.research_bundle_trace)
+                  }
+                : item
+            )
+          );
+        }
+        await refreshIntegration();
+        const appliedCount = Number(data?.bundle?.applied?.length ?? 0);
+        setStatus(appliedCount > 1 ? "Research bundle promoted: source + visual" : "Research promoted");
+      } catch (error) {
+        setStatus(error?.message ?? "Не удалось применить research bundle");
+      } finally {
+        setSegmentResearchLoading((prev) => {
+          const next = { ...prev };
+          delete next[segmentId];
+          return next;
+        });
+      }
+    },
+    [config, docId, mergeResearchRunHistory, refreshIntegration, segmentResearchRuns, segments]
+  );
   const handleCopy = React.useCallback((query) => {
     copyToClipboard(query);
   }, [copyToClipboard]);
+  const handleCopySegmentResearchBrief = React.useCallback(
+    async (index) => {
+      const segment = segments[index];
+      const segmentId = String(segment?.segment_id ?? "").trim();
+      if (!docId || !segmentId) return;
+      try {
+        const response = await fetch(
+          `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research/brief?format=md`
+        );
+        if (!response.ok) {
+          throw new Error("Не удалось получить research brief");
+        }
+        const text = await response.text();
+        if (!String(text ?? "").trim()) {
+          throw new Error("Research brief пуст");
+        }
+        copyToClipboard(text, `Research brief: ${segmentId} скопирован.`);
+      } catch (error) {
+        setStatus(error?.message ?? "Не удалось скопировать research brief");
+      }
+    },
+    [copyToClipboard, docId, segments]
+  );
+  const handleUpdateResearchThemeTags = React.useCallback(
+    async (segmentId, value) => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      if (!normalizedSegmentId) return;
+      const nextTags = normalizeSegmentTagList(value);
+      const sourceSegment = segments.find((item) => String(item?.segment_id ?? "").trim() === normalizedSegmentId);
+      if (!sourceSegment) {
+        setStatus("Не удалось обновить теги темы.");
+        return;
+      }
+      const sectionId = String(sourceSegment?.section_id ?? "").trim();
+      const titleKey = normalizeSectionTitleForMerge(sourceSegment?.section_title ?? "");
+      let applied = 0;
+      const next = segments.map((item) => {
+        const sameSectionId = sectionId && String(item?.section_id ?? "").trim() === sectionId;
+        const sameTitle = !sectionId && titleKey && normalizeSectionTitleForMerge(item?.section_title ?? "") === titleKey;
+        if (!sameSectionId && !sameTitle) return item;
+        applied += 1;
+        return {
+          ...item,
+          topic_tags: [...nextTags],
+          section_tags: [...nextTags]
+        };
+      });
+      setSegments(next);
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        await saveSessionSnapshot(snapshot, "theme_tags").catch(() => null);
+      }
+      setStatus(applied ? "Теги темы обновлены." : "Не удалось обновить теги темы.");
+    },
+    [docId, notionUrl, saveSessionSnapshot, scriptText, segments]
+  );
+  const handleUpdateResearchThemeContext = React.useCallback(
+    async (segmentId, payload = {}) => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      if (!normalizedSegmentId) return;
+      const nextTags = normalizeSegmentTagList(payload?.themeTags ?? []);
+      const nextUseTopicTitle = Boolean(payload?.research_use_topic_title);
+      const nextUseThemeTags = Boolean(payload?.research_use_theme_tags);
+      const sourceSegment = segments.find((item) => String(item?.segment_id ?? "").trim() === normalizedSegmentId);
+      if (!sourceSegment) {
+        setStatus("Не удалось обновить research context темы.");
+        return;
+      }
+      const sectionId = String(sourceSegment?.section_id ?? "").trim();
+      const titleKey = normalizeSectionTitleForMerge(sourceSegment?.section_title ?? "");
+      let applied = 0;
+      const next = segments.map((item) => {
+        const sameSectionId = sectionId && String(item?.section_id ?? "").trim() === sectionId;
+        const sameTitle = !sectionId && titleKey && normalizeSectionTitleForMerge(item?.section_title ?? "") === titleKey;
+        if (!sameSectionId && !sameTitle) return item;
+        applied += 1;
+        return {
+          ...item,
+          research_use_topic_title: nextUseTopicTitle,
+          research_use_theme_tags: nextUseThemeTags,
+          topic_tags: [...nextTags],
+          section_tags: [...nextTags]
+        };
+      });
+      setSegments(next);
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        await saveSessionSnapshot(snapshot, "theme_context").catch(() => null);
+      }
+      setStatus(applied ? "Research context темы обновлён." : "Не удалось обновить research context темы.");
+    },
+    [docId, notionUrl, saveSessionSnapshot, scriptText, segments]
+  );
+  const handleCopyReleaseResearchBrief = React.useCallback(
+    async (segmentId, runId = "") => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      const normalizedRunId = String(runId ?? "").trim();
+      const activeDocId = String(selectedReleaseDetail?.document_id || docId || "").trim();
+      if (!activeDocId || !normalizedSegmentId) return;
+      try {
+        const params = new URLSearchParams({ format: "md" });
+        if (normalizedRunId) params.set("run_id", normalizedRunId);
+        const response = await fetch(
+          `/api/documents/${encodeURIComponent(activeDocId)}/segments/${encodeURIComponent(normalizedSegmentId)}/research/brief?${params.toString()}`
+        );
+        if (!response.ok) {
+          throw new Error("Не удалось получить release segment brief");
+        }
+        const text = await response.text();
+        if (!String(text ?? "").trim()) {
+          throw new Error("Release segment brief пуст");
+        }
+        copyToClipboard(text, `Release segment brief: ${normalizedSegmentId} скопирован.`);
+      } catch (error) {
+        setStatus(error?.message ?? "Не удалось скопировать release segment brief");
+      }
+    },
+    [copyToClipboard, docId, selectedReleaseDetail?.document_id]
+  );
+  const handleOpenResearchWorkspace = React.useCallback(
+    (segmentId, runId = "") => {
+      if (typeof window === "undefined") return;
+      const query = new URLSearchParams();
+      if (docId) query.set("doc_id", String(docId));
+      if (segmentId) query.set("segment_id", String(segmentId));
+      if (runId) query.set("run_id", String(runId));
+      const queryText = query.toString();
+      window.open(`/research${queryText ? `?${queryText}` : ""}`, "_blank", "noopener,noreferrer");
+    },
+    [docId]
+  );
+  const handleExitResearchMode = React.useCallback(() => {
+    setAppMode("workspace");
+  }, []);
   const handleCopyForFigma = React.useCallback(() => {
     const { blocks } = splitScriptIntoHeadingBlocks(scriptText);
     const topics = blocks
@@ -4549,270 +6288,1322 @@ export default function App() {
     }
     copyToClipboard(topics.join("\n"), `For Figma: скопировано тем (${topics.length}).`);
   }, [copyToClipboard, scriptText]);
+  const openScreenshotLabWithContext = React.useCallback(
+    (urls, options = {}) => {
+      const normalizedUrls = Array.isArray(urls)
+        ? urls.map((item) => normalizeLinkUrl(item ?? "")).filter(Boolean)
+        : String(urls ?? "")
+            .split(/\r?\n/)
+            .map((item) => normalizeLinkUrl(item))
+            .filter(Boolean);
+      if (!normalizedUrls.length) {
+        setStatus("Ссылок для screenshot mode пока нет.");
+        return;
+      }
+      const query = new URLSearchParams({
+        urls: normalizedUrls.join("\n"),
+        mode: "screenshot"
+      });
+      if (options.docId) query.set("doc_id", String(options.docId));
+      if (options.releaseId) query.set("release_id", String(options.releaseId));
+      if (options.segmentId) query.set("segment_id", String(options.segmentId));
+      if (options.note) query.set("note", String(options.note));
+      window.open(`/tools/screenshot-lab?${query.toString()}`, "_blank", "noopener,noreferrer");
+    },
+    [setStatus]
+  );
   const handleOpenAllLinksScreenshotMode = React.useCallback(() => {
-    const urls = allScenarioLinks
-      .map((item) => normalizeLinkUrl(item?.url ?? ""))
-      .filter(Boolean)
-      .join("\n");
-    if (!urls) {
-      setStatus("Ссылок для screenshot mode пока нет.");
+    openScreenshotLabWithContext(
+      allScenarioLinks.map((item) => item?.url ?? ""),
+      {
+        docId,
+        releaseId: selectedReleaseId,
+        note: docId ? `Scenario links for ${docId}` : "Scenario links"
+      }
+    );
+  }, [allScenarioLinks, docId, openScreenshotLabWithContext, selectedReleaseId]);
+  const handleOpenSegmentScreenshotMode = React.useCallback(
+    (segmentOrNeed) => {
+      const target = segmentOrNeed?.segmentId
+        ? segmentOrNeed
+        : {
+            segmentId: segmentOrNeed?.segment_id ?? "",
+            sectionTitle: getSegmentGroupTitle(segmentOrNeed),
+            quote: getQuotePreview(segmentOrNeed?.text_quote ?? "", 140),
+            links: dedupeLinks(segmentOrNeed?.links ?? [])
+              .map((item) => normalizeLinkUrl(item?.url ?? item ?? ""))
+              .filter(Boolean)
+          };
+      if (!target?.links?.length) {
+        setStatus("У этого сегмента пока нет ссылок для screenshot flow.");
+        return;
+      }
+      openScreenshotLabWithContext(target.links, {
+        docId,
+        releaseId: selectedReleaseId,
+        segmentId: target.segmentId,
+        note: [target.sectionTitle, target.quote].filter(Boolean).join(" | ")
+      });
+    },
+    [docId, openScreenshotLabWithContext, selectedReleaseId]
+  );
+  const selectedReleaseAssets = Array.isArray(selectedReleaseDetail?.assets) ? selectedReleaseDetail.assets : [];
+  const handleOpenReleaseScreenshotMode = React.useCallback(() => {
+    const urls = selectedReleaseAssets
+      .map((item) => normalizeLinkUrl(item?.asset?.source_url ?? ""))
+      .filter(Boolean);
+    openScreenshotLabWithContext(urls, {
+      docId: docId || selectedReleaseDetail?.document_id || "",
+      releaseId: selectedReleaseId,
+      note: selectedReleaseDetail?.title ? `Release ${selectedReleaseDetail.title}` : "Release links"
+    });
+  }, [docId, openScreenshotLabWithContext, selectedReleaseAssets, selectedReleaseDetail, selectedReleaseId]);
+  const handleOpenProducerMode = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", "producer");
+    if (selectedReleaseId) {
+      url.searchParams.set("release", selectedReleaseId);
+    }
+    window.open(`${url.pathname}${url.search}${url.hash}`, "_blank", "noopener,noreferrer");
+  }, [selectedReleaseId]);
+  const handleOpenOnAirMode = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", "onair");
+    if (selectedReleaseId) {
+      url.searchParams.set("release", selectedReleaseId);
+    }
+    window.open(`${url.pathname}${url.search}${url.hash}`, "_blank", "noopener,noreferrer");
+  }, [selectedReleaseId]);
+  const handleExitProducerMode = React.useCallback(() => {
+    setAppMode("workspace");
+  }, []);
+  const handleToggleFullscreen = React.useCallback(() => {
+    if (typeof document === "undefined") return;
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => null);
       return;
     }
-    const query = new URLSearchParams({
-      urls,
-      mode: "screenshot"
+    document.exitFullscreen?.().catch(() => null);
+  }, []);
+
+  const {
+    handleCreateRelease,
+    handleAttachAssetToRelease,
+    handleDetachAssetFromRelease,
+    handleUpdateRelease,
+    handleReorderReleaseAsset,
+    handleUpdateReleaseAttachment
+  } = useReleaseMutations({
+    fetchJsonSafe,
+    docId,
+    selectedReleaseId,
+    selectedReleaseDetail,
+    releaseDraftTitle,
+    releaseDraftDate,
+    setReleaseDraftTitle,
+    setReleaseDraftDate,
+    setSelectedReleaseId,
+    setReleaseBusy,
+    setAssetActionBusy,
+    setStatus,
+    refreshIntegration,
+    reloadCurrentReleaseWorkspace,
+    syncReleaseWorkspaceDataFromAction
+  });
+
+  const scrollToWorkspaceSelector = React.useCallback((selector) => {
+    if (typeof document === "undefined") return;
+    const node = document.querySelector(selector);
+    node?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, []);
+  const handleOpenOwnerFocusRelease = React.useCallback(
+    (releaseId) => {
+      const normalizedId = String(releaseId ?? "").trim();
+      if (!normalizedId) return;
+      setSelectedReleaseId(normalizedId);
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          scrollToWorkspaceSelector(".newsroom-panel");
+        }, 60);
+      }
+    },
+    [scrollToWorkspaceSelector]
+  );
+  const handleOpenOwnerStorageHealth = React.useCallback(() => {
+    scrollToWorkspaceSelector(".storage-health-card");
+  }, [scrollToWorkspaceSelector]);
+  const handleOpenOwnerSourceIntelligence = React.useCallback(() => {
+    scrollToWorkspaceSelector(".source-profiles-card");
+  }, [scrollToWorkspaceSelector]);
+  const handleOpenOwnerNeedsVisual = React.useCallback(() => {
+    scrollToWorkspaceSelector(".needs-visual-card");
+  }, [scrollToWorkspaceSelector]);
+  const handleOpenReleaseResearchSegment = React.useCallback(
+    (segmentId, runId = "") => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      const normalizedRunId = String(runId ?? "").trim();
+      if (!normalizedSegmentId) return;
+      const targetGroup = groupedSegments.find((group) =>
+        Array.isArray(group?.items) && group.items.some(({ segment }) => String(segment?.segment_id ?? "").trim() === normalizedSegmentId)
+      );
+      if (!targetGroup) {
+        setStatus("Не удалось найти сегмент в текущем документе.");
+        return;
+      }
+      const targetIndex = segments.findIndex(
+        (segment) => String(segment?.segment_id ?? "").trim() === normalizedSegmentId
+      );
+      const groupId = String(targetGroup.id ?? "").trim();
+      setExpandedGroups((prev) => ({ ...prev, [groupId]: true }));
+      setGroupRenderLimits((prev) => ({
+        ...prev,
+        [groupId]: Math.max(prev?.[groupId] ?? GROUP_RENDER_CHUNK, targetGroup.items.length)
+      }));
+      if (targetIndex >= 0 && normalizedRunId) {
+        const selectedRun = (segmentResearchHistory[normalizedSegmentId] ?? []).find(
+          (item) => String(item?.run_id ?? "").trim() === normalizedRunId
+        );
+        if (selectedRun) {
+          setSegmentResearchRuns((prev) => ({
+            ...prev,
+            [normalizedSegmentId]: selectedRun
+          }));
+          setStatus(
+            `Research run loaded: ${normalizedSegmentId} · ${String(
+              selectedRun.updated_at ?? selectedRun.created_at ?? ""
+            )
+              .slice(0, 16)
+              .replace("T", " ")}`
+          );
+        } else {
+          setStatus(`Не удалось найти research run ${normalizedRunId} для сегмента ${normalizedSegmentId}.`);
+        }
+      }
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          const node = document.querySelector(`[data-segment-id="${normalizedSegmentId.replace(/"/g, '\\"')}"]`);
+          node?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        }, 80);
+      }
+    },
+    [groupedSegments, segmentResearchHistory, segments]
+  );
+  const handleOpenReleaseFromSegment = React.useCallback(
+    (segmentId, options = {}) => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      if (!normalizedSegmentId) return;
+      const normalizedAttachmentId = String(options?.attachmentId ?? "").trim();
+      const matchingBrief = Array.isArray(releaseResearchBriefs?.items)
+        ? releaseResearchBriefs.items.find((item) => String(item?.segment_id ?? "").trim() === normalizedSegmentId)
+        : null;
+      const releaseDocumentId = String(selectedReleaseDetail?.document_id || docId || "").trim();
+      const targetRelease =
+        integrationReleases.find((release) => String(release?.document_id ?? "").trim() === releaseDocumentId) ||
+        integrationReleases.find((release) => String(release?.id ?? "").trim() === String(selectedReleaseId ?? "").trim()) ||
+        null;
+      if (!matchingBrief && !targetRelease) {
+        setStatus("Не удалось найти связанный выпуск для сегмента.");
+        return;
+      }
+      if (targetRelease?.id) {
+        setSelectedReleaseId(String(targetRelease.id));
+      }
+      if (normalizedAttachmentId) {
+        setReleaseWorkspaceTab("rundown");
+        setSelectedReleaseAttachmentIds([normalizedAttachmentId]);
+      }
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          scrollToWorkspaceSelector(".newsroom-panel");
+        }, 60);
+      }
+    },
+    [
+      docId,
+      integrationReleases,
+      releaseResearchBriefs,
+      scrollToWorkspaceSelector,
+      selectedReleaseDetail?.document_id,
+      selectedReleaseId,
+      setReleaseWorkspaceTab
+    ]
+  );
+
+  const handleRefreshProducerView = React.useCallback(async () => {
+    await reloadCurrentReleaseWorkspace({
+      integration: true,
+      recommendations: false,
+      draftPack: false,
+      publishChecklist: true,
+      controlPanel: true,
+      briefingPanel: true,
+      activity: true
     });
-    window.open(`/tools/screenshot-lab?${query.toString()}`, "_blank", "noopener,noreferrer");
-  }, [allScenarioLinks]);
+  }, [reloadCurrentReleaseWorkspace]);
+  const handleOpenAssetScreenshotMode = React.useCallback(
+    (asset) => {
+      const url = normalizeLinkUrl(asset?.source_url ?? "");
+      if (!url) {
+        setStatus("У этого asset нет ссылки для screenshot flow.");
+        return;
+      }
+      openScreenshotLabWithContext([url], {
+        docId,
+        releaseId: selectedReleaseId,
+        note: asset?.title || asset?.file_name || asset?.id || "Asset screenshot"
+      });
+    },
+    [docId, openScreenshotLabWithContext, selectedReleaseId]
+  );
   const handleThemeToggle = React.useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
+  const handleAssetStatusUpdate = React.useCallback(
+    async (assetId, nextStatus) => {
+      const normalizedStatus = String(nextStatus ?? "").trim();
+      if (!assetId || !normalizedStatus) return;
+      setAssetActionBusy((prev) => ({ ...prev, [assetId]: true }));
+      try {
+        const { response } = await fetchJsonSafe(`/api/assets/${encodeURIComponent(assetId)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status: normalizedStatus })
+        });
+        if (!response.ok) throw new Error("Не удалось обновить статус asset");
+        if (selectedReleaseId) {
+          await reloadCurrentReleaseWorkspace({
+            integration: true,
+            detail: true,
+            assistantPass: true,
+            recommendations: true,
+            draftPack: true,
+            activity: true
+          });
+        } else {
+          await refreshIntegration();
+        }
+        setStatus(`Asset ${assetId} -> ${normalizedStatus}`);
+      } catch (error) {
+        setStatus(error?.message ?? "Не удалось обновить asset");
+      } finally {
+        setAssetActionBusy((prev) => ({ ...prev, [assetId]: false }));
+      }
+    },
+    [loadReleaseActivity, loadReleaseAssistantPass, loadReleaseDetail, loadReleaseDraftPack, loadReleaseRecommendations, refreshIntegration, selectedReleaseId]
+  );
+  const handlePinReleaseResearchRun = React.useCallback(
+    async (segmentId, runId = "") => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      if (!selectedReleaseId || !normalizedSegmentId) return;
+      const normalizedRunId = String(runId ?? "").trim();
+      const currentPins =
+        selectedReleaseDetail?.meta_json?.research_run_pins &&
+        typeof selectedReleaseDetail.meta_json.research_run_pins === "object" &&
+        !Array.isArray(selectedReleaseDetail.meta_json.research_run_pins)
+          ? selectedReleaseDetail.meta_json.research_run_pins
+          : {};
+      const nextPins = Object.fromEntries(
+        Object.entries(currentPins)
+          .map(([key, value]) => [String(key ?? "").trim(), String(value ?? "").trim()])
+          .filter(([key, value]) => Boolean(key) && Boolean(value))
+      );
+      if (normalizedRunId) nextPins[normalizedSegmentId] = normalizedRunId;
+      else delete nextPins[normalizedSegmentId];
+      await handleUpdateRelease({
+        meta_json: {
+          research_run_pins: nextPins
+        }
+      });
+      setStatus(
+        normalizedRunId
+          ? `Pinned research run ${normalizedRunId} for ${normalizedSegmentId}`
+          : `Unpinned research run for ${normalizedSegmentId}`
+      );
+    },
+    [handleUpdateRelease, selectedReleaseDetail, selectedReleaseId]
+  );
+  const handleExportReleaseBrief = React.useCallback(
+    async (format = "md") => {
+      if (!selectedReleaseId) {
+        setStatus("Сначала выбери выпуск.");
+        return;
+      }
+      try {
+        const normalizedFormat = String(format).toLowerCase();
+        setStatus(
+          normalizedFormat === "shotlist"
+            ? "Экспорт shotlist..."
+            : normalizedFormat === "media-package"
+              ? "Экспорт media package..."
+              : normalizedFormat === "copy-plan"
+                ? "Экспорт copy plan..."
+              : `Экспорт release brief ${String(format).toUpperCase()}...`
+        );
+        const response = await fetch(
+          `/api/releases/${encodeURIComponent(selectedReleaseId)}/export?format=${encodeURIComponent(normalizedFormat)}`
+        );
+        if (!response.ok) {
+          const rawText = await response.text().catch(() => "");
+          let data = null;
+          if (shouldLookLikeJson(rawText)) {
+            try {
+              data = JSON.parse(rawText);
+            } catch {
+              data = null;
+            }
+          }
+          throw new Error(data?.error ?? "Ошибка экспорта выпуска");
+        }
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download =
+          getFileNameFromDisposition(response.headers.get("content-disposition")) ||
+          `${selectedReleaseId}-${
+            normalizedFormat === "shotlist"
+              ? "shotlist"
+              : normalizedFormat === "media-package"
+                ? "media-package"
+                : normalizedFormat === "copy-plan"
+                  ? "copy-plan"
+                  : "brief"
+          }.${normalizedFormat === "json" || normalizedFormat === "media-package" ? "json" : "md"}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        setStatus(`Экспорт готов: ${link.download}`);
+      } catch (error) {
+        setStatus(error?.message ?? "Не удалось экспортировать выпуск");
+      }
+    },
+    [selectedReleaseId]
+  );
+  const {
+    handleAttachOrphanScreenshots: releaseActionAttachOrphanScreenshots,
+    handleAttachRecommendedBatch: releaseActionAttachRecommendedBatch,
+    handleFillMissingVisualsWithRecommendations: releaseActionFillMissingVisualsWithRecommendations,
+    handleBulkUpdateReleaseItems: releaseActionBulkUpdateReleaseItems,
+    handleBulkApplyNoteTemplates: releaseActionBulkApplyNoteTemplates,
+    handleBulkUpdateSelectedAssetStatus: releaseActionBulkUpdateSelectedAssetStatus,
+    handleBulkDetachReleaseItems: releaseActionBulkDetachReleaseItems,
+    handleApplySelectionDraftPack: releaseActionApplySelectionDraftPack,
+    handleFillSelectedVisualsWithRecommendations: releaseActionFillSelectedVisualsWithRecommendations,
+    handlePrepareSelectedReleaseItems: releaseActionPrepareSelectedReleaseItems,
+    handlePrepareReleaseAttachment: releaseActionPrepareReleaseAttachment,
+    handleDraftReleaseAttachment: releaseActionDraftReleaseAttachment,
+    handleFillReleaseAttachmentVisuals: releaseActionFillReleaseAttachmentVisuals,
+    handlePrepareRelease: releaseActionPrepareRelease,
+    handleMarkReleaseAirReady: releaseActionMarkReleaseAirReady,
+    handlePublishRelease: releaseActionPublishRelease,
+    handleApplyReleaseDraftPack: releaseActionApplyReleaseDraftPack
+  } = useReleaseAssistantActions({
+    fetchJsonSafe,
+    selectedReleaseId,
+    selectedReleaseAttachmentIds,
+    releaseBulkScriptTemplate,
+    releaseBulkVisualTemplate,
+    setReleaseBusy,
+    setStatus,
+    setLastAttachRecommendationsResult,
+    setSelectedReleaseAttachmentIds,
+    setReleasePublishChecklist,
+    setReleaseControlPanel,
+    rememberAssistantAutoBackup,
+    syncCurrentReleaseActionData,
+    reloadCurrentReleaseWorkspace
+  });
+  const handleAttachOrphanScreenshots = releaseActionAttachOrphanScreenshots;
+  const handleAttachRecommendedBatch = releaseActionAttachRecommendedBatch;
+  const handleFillMissingVisualsWithRecommendations = releaseActionFillMissingVisualsWithRecommendations;
+  const toggleReleaseAttachmentSelection = React.useCallback((attachmentId) => {
+    const normalizedId = String(attachmentId ?? "").trim();
+    if (!normalizedId) return;
+    setSelectedReleaseAttachmentIds((prev) =>
+      prev.includes(normalizedId) ? prev.filter((item) => item !== normalizedId) : [...prev, normalizedId]
+    );
+  }, []);
+  const handleSelectAllReleaseItems = React.useCallback(() => {
+    const currentItems = Array.isArray(selectedReleaseDetail?.assets) ? selectedReleaseDetail.assets : [];
+    setSelectedReleaseAttachmentIds(
+      currentItems.map((item) => String(item?.attachment?.id ?? "").trim()).filter(Boolean)
+    );
+  }, [selectedReleaseDetail]);
+  const handleClearReleaseSelection = React.useCallback(() => {
+    setSelectedReleaseAttachmentIds([]);
+  }, []);
+  const handleFocusReleaseAttachment = React.useCallback((attachmentId) => {
+    const normalizedId = String(attachmentId ?? "").trim();
+    if (!normalizedId) return;
+    setReleaseWorkspaceTab("rundown");
+    setSelectedReleaseAttachmentIds([normalizedId]);
+  }, []);
+  const handleSelectReleaseItemsByFilter = React.useCallback((mode) => {
+    const currentItems = Array.isArray(selectedReleaseDetail?.assets) ? selectedReleaseDetail.assets : [];
+    const nextIds = currentItems
+      .filter((item) => {
+        if (mode === "missing_script") {
+          return !String(item?.attachment?.script_note ?? "").trim();
+        }
+        if (mode === "missing_visual") {
+          return !String(item?.attachment?.visual_note ?? "").trim();
+        }
+        return false;
+      })
+      .map((item) => String(item?.attachment?.id ?? "").trim())
+      .filter(Boolean);
+    setSelectedReleaseAttachmentIds(nextIds);
+  }, [selectedReleaseDetail]);
+  const handleBulkUpdateReleaseItems = React.useCallback(
+    async (patch = {}, successLabel = "release items updated") => {
+      await releaseActionBulkUpdateReleaseItems(patch, successLabel);
+    },
+    [releaseActionBulkUpdateReleaseItems]
+  );
+  const handleBulkApplyNoteTemplates = React.useCallback(
+    async ({ overwrite = false } = {}) => {
+      await releaseActionBulkApplyNoteTemplates({ overwrite });
+    },
+    [releaseActionBulkApplyNoteTemplates]
+  );
+  const handleBulkUpdateSelectedAssetStatus = React.useCallback(
+    async (nextStatus, successLabel = "assets updated") => {
+      await releaseActionBulkUpdateSelectedAssetStatus(nextStatus, successLabel);
+    },
+    [releaseActionBulkUpdateSelectedAssetStatus]
+  );
+  const handleBulkDetachReleaseItems = React.useCallback(async () => {
+    await releaseActionBulkDetachReleaseItems();
+  }, [releaseActionBulkDetachReleaseItems]);
+  const handleApplySelectionDraftPack = React.useCallback(
+    async (mode = "missing_only") => {
+      await releaseActionApplySelectionDraftPack(mode);
+    },
+    [releaseActionApplySelectionDraftPack]
+  );
+  const handleFillSelectedVisualsWithRecommendations = React.useCallback(
+    async () => {
+      await releaseActionFillSelectedVisualsWithRecommendations();
+    },
+    [releaseActionFillSelectedVisualsWithRecommendations]
+  );
+  const handlePrepareSelectedReleaseItems = React.useCallback(
+    async () => {
+      await releaseActionPrepareSelectedReleaseItems();
+    },
+    [releaseActionPrepareSelectedReleaseItems]
+  );
+  const handlePrepareReleaseAttachment = React.useCallback(
+    async (attachmentId) => {
+      await releaseActionPrepareReleaseAttachment(attachmentId);
+    },
+    [releaseActionPrepareReleaseAttachment]
+  );
+  const handleDraftReleaseAttachment = React.useCallback(
+    async (attachmentId, mode = "missing_only") => {
+      await releaseActionDraftReleaseAttachment(attachmentId, mode);
+    },
+    [releaseActionDraftReleaseAttachment]
+  );
+  const handleFillReleaseAttachmentVisuals = React.useCallback(
+    async (attachmentId) => {
+      await releaseActionFillReleaseAttachmentVisuals(attachmentId);
+    },
+    [releaseActionFillReleaseAttachmentVisuals]
+  );
+  const handlePrepareRelease = React.useCallback(
+    async () => {
+      await releaseActionPrepareRelease();
+    },
+    [releaseActionPrepareRelease]
+  );
+  const handleMarkReleaseAirReady = React.useCallback(
+    async () => {
+      await releaseActionMarkReleaseAirReady();
+    },
+    [releaseActionMarkReleaseAirReady]
+  );
+  const handlePublishRelease = React.useCallback(
+    async () => {
+      await releaseActionPublishRelease();
+    },
+    [releaseActionPublishRelease]
+  );
+  const handleApplyReleaseDraftPack = React.useCallback(
+    async (mode = "missing_only") => {
+      await releaseActionApplyReleaseDraftPack(mode);
+    },
+    [releaseActionApplyReleaseDraftPack]
+  );
+  const normalizedIntegrationQuery = integrationQuery.trim().toLowerCase();
+  const inboxAssets = integrationAssets
+    .filter(
+      (asset) =>
+        Number(asset.attachment_count ?? 0) === 0 ||
+        String(asset.processing_state ?? "").startsWith("pending")
+    )
+    .slice(0, 12);
+  const filteredLibraryAssets = integrationAssets.filter((asset) => {
+    if (integrationKind && asset.kind !== integrationKind) return false;
+    if (integrationStatusFilter && asset.status !== integrationStatusFilter) return false;
+    if (!normalizedIntegrationQuery) return true;
+    const haystack = [
+      asset.title,
+      asset.description,
+      asset.source_url,
+      asset.file_name,
+      asset.source_domain,
+      asset.meta_json?.section_title
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(normalizedIntegrationQuery);
+  });
+  const {
+    selectedReleaseAttachmentIdSet,
+    selectedReleaseItems,
+    filteredReleaseAssets,
+    releaseBoardColumns,
+    releaseBoardCounts,
+    releaseSummary,
+    releaseOrphanScreenshots,
+    releaseAssistantFindings
+  } = useReleaseBoardState({
+    selectedReleaseAssets,
+    selectedReleaseAttachmentIds,
+    setSelectedReleaseAttachmentIds,
+    releaseBoardFilter,
+    normalizeLinkUrl,
+    integrationAssets,
+    selectedReleaseDetail,
+    docId,
+    selectedReleaseId,
+    segmentsNeedingVisual
+  });
+  const effectiveReleaseAssistantFindings = Array.isArray(releaseAssistantPass?.findings)
+    ? releaseAssistantPass.findings
+    : releaseAssistantFindings;
+  const effectiveOrphanScreenshotsCount =
+    Number(releaseAssistantPass?.summary?.orphan_screenshots) || releaseOrphanScreenshots.length;
+  const recommendedReleaseAssets = Array.isArray(releaseRecommendations?.candidates)
+    ? releaseRecommendations.candidates
+    : [];
+  const releaseRecommendationSummary = releaseRecommendations?.summary ?? {
+    total_candidates: 0,
+    strong: 0,
+    good: 0,
+    possible: 0,
+    missing_visual_focus: 0
+  };
+  const releaseDraftPackSummary = releaseDraftPack?.summary ?? {
+    total: 0,
+    script_candidates: 0,
+    visual_candidates: 0
+  };
+  const releaseDraftPackItems = Array.isArray(releaseDraftPack?.items) ? releaseDraftPack.items : [];
+  const releasePublishChecklistSummary = releasePublishChecklist?.summary ?? {
+    total_checks: 0,
+    passed: 0,
+    warnings: 0,
+    blocking_failures: 0
+  };
+  const releasePublishChecklistItems = Array.isArray(releasePublishChecklist?.checks)
+    ? releasePublishChecklist.checks
+    : [];
+  const effectiveReleaseControlPanel = releaseControlPanel ?? {
+    status_code: "not_ready",
+    title: "Not Ready",
+    detail: "Control panel is loading.",
+    can_mark_air_ready: false,
+    can_publish: false,
+    actions: []
+  };
+  const effectiveReleaseBriefingPanel = releaseBriefingPanel ?? {
+    headline: "Release briefing is loading.",
+    summary_text: "",
+    risks: [],
+    next_steps: [],
+    status_code: effectiveReleaseControlPanel.status_code
+  };
+  const effectiveReleaseResearchBriefs = releaseResearchBriefs ?? {
+    summary: { total: 0 },
+    items: []
+  };
+  const linkedReleaseSegmentIds = React.useMemo(
+    () =>
+      new Set(
+        (Array.isArray(effectiveReleaseResearchBriefs?.items) ? effectiveReleaseResearchBriefs.items : [])
+          .map((item) => String(item?.segment_id ?? "").trim())
+          .filter(Boolean)
+      ),
+    [effectiveReleaseResearchBriefs]
+  );
+  const linkedReleaseHandoffByAttachmentId = React.useMemo(() => {
+    const map = new Map();
+    const register = (item) => {
+      const attachmentId = String(item?.attachment_id ?? "").trim();
+      if (!attachmentId || map.has(attachmentId)) return;
+      map.set(attachmentId, {
+        ready_state: String(item?.effective_ready_state ?? item?.ready_state ?? "").trim().toLowerCase(),
+        picked_from: String(item?.picked_from ?? "").trim().toLowerCase()
+      });
+    };
+    [
+      ...(Array.isArray(effectiveReleaseBriefingPanel?.handoff_queue) ? effectiveReleaseBriefingPanel.handoff_queue : []),
+      ...(Array.isArray(effectiveReleaseControlPanel?.handoff_queue) ? effectiveReleaseControlPanel.handoff_queue : []),
+      ...(Array.isArray(effectiveReleaseBriefingPanel?.copy_plan_highlights)
+        ? effectiveReleaseBriefingPanel.copy_plan_highlights
+        : [])
+    ].forEach(register);
+    return map;
+  }, [effectiveReleaseBriefingPanel, effectiveReleaseControlPanel]);
+  const linkedReleaseResolvedHandoffByAttachmentId = React.useMemo(() => {
+    const map = new Map();
+    (Array.isArray(releaseActivity) ? releaseActivity : []).forEach((item) => {
+      const event = String(item?.event ?? "").trim().toLowerCase();
+      if (!["handoff_download_resolved", "handoff_capture_resolved"].includes(event)) return;
+      const attachmentId = String(item?.attachment_id ?? item?.meta_json?.attachment_id ?? "").trim();
+      if (!attachmentId || map.has(attachmentId)) return;
+      map.set(attachmentId, {
+        state: event === "handoff_download_resolved" ? "downloaded" : "captured",
+        event,
+        created_at: String(item?.created_at ?? "").trim()
+      });
+    });
+    return map;
+  }, [releaseActivity]);
+  const linkedReleasePairSwitchByAttachmentId = React.useMemo(() => {
+    const map = new Map();
+    (Array.isArray(releaseActivity) ? releaseActivity : []).forEach((item) => {
+      const event = String(item?.event ?? "").trim().toLowerCase();
+      if (!["research_pick_applied", "manual_override"].includes(event)) return;
+      const attachmentId = String(item?.attachment_id ?? item?.meta_json?.attachment_id ?? "").trim();
+      if (!attachmentId || map.has(attachmentId)) return;
+      map.set(attachmentId, item);
+    });
+    return map;
+  }, [releaseActivity]);
+  const linkedReleaseSnapshotBySegmentId = React.useMemo(() => {
+    const map = new Map();
+    selectedReleaseAssets.forEach((item) => {
+      const segmentId = String(item?.asset?.meta_json?.segment_id ?? "").trim();
+      if (!segmentId || map.has(segmentId)) return;
+      const attachment = item?.attachment ?? {};
+      const asset = item?.asset ?? {};
+      const attachmentId = String(attachment?.id ?? "").trim();
+      const handoffInfo = linkedReleaseHandoffByAttachmentId.get(attachmentId) ?? null;
+      const localMediaPath = String(asset?.local_path ?? asset?.screenshot_path ?? "").trim();
+      const resolvedEvent = linkedReleaseResolvedHandoffByAttachmentId.get(attachmentId) ?? null;
+      const pairSwitchEvent = linkedReleasePairSwitchByAttachmentId.get(attachmentId) ?? null;
+      const traceBadges = deriveReleaseTraceBadges(attachment).slice(0, 2);
+      const hasScript = Boolean(String(attachment?.script_note ?? "").trim());
+      const hasVisual = Boolean(String(attachment?.visual_note ?? "").trim());
+      const trace = attachment?.assistant_trace_json ?? {};
+      const researchBrief = Array.isArray(effectiveReleaseResearchBriefs?.items)
+        ? effectiveReleaseResearchBriefs.items.find((entry) => String(entry?.segment_id ?? "").trim() === segmentId) ?? null
+        : null;
+      const primarySourceEntry = findReleaseResearchBriefEntryByRole(
+        researchBrief,
+        ["main_source", "backup_source", "reference"],
+        ["source"]
+      );
+      const primaryVisualEntry = findReleaseResearchBriefEntryByRole(
+        researchBrief,
+        ["visual_candidate"],
+        ["visual", "download"]
+      );
+      const backupSourceEntry = findReleaseResearchBackupEntry(researchBrief, primarySourceEntry, "source");
+      const backupVisualEntry = findReleaseResearchBackupEntry(researchBrief, primaryVisualEntry, "visual");
+      const resolvedState =
+        String(resolvedEvent?.state ?? "").trim().toLowerCase() || (localMediaPath ? "ready" : "");
+      const handoffState = String(handoffInfo?.ready_state ?? resolvedState ?? "").trim().toLowerCase();
+      const itemStatus = String(attachment?.item_status ?? "planned");
+      const currentSourceLabel = String(trace?.script?.title || primarySourceEntry?.title || primarySourceEntry?.label || "").trim();
+      const currentVisualLabel = String(
+        trace?.visual?.recommendation?.title || trace?.visual?.title || primaryVisualEntry?.title || primaryVisualEntry?.label || ""
+      ).trim();
+      const primarySourceLabel = String(primarySourceEntry?.title || primarySourceEntry?.label || primarySourceEntry?.domain || "").trim();
+      const primaryVisualLabel = String(primaryVisualEntry?.title || primaryVisualEntry?.label || primaryVisualEntry?.domain || "").trim();
+      const backupSourceLabel = String(backupSourceEntry?.title || backupSourceEntry?.label || backupSourceEntry?.domain || "").trim();
+      const backupVisualLabel = String(backupVisualEntry?.title || backupVisualEntry?.label || backupVisualEntry?.domain || "").trim();
+      const sourceMatchesMain =
+        Boolean(currentSourceLabel) &&
+        Boolean(primarySourceLabel) &&
+        normalizeComparablePickLabel(currentSourceLabel) === normalizeComparablePickLabel(primarySourceLabel);
+      const sourceMatchesBackup =
+        Boolean(currentSourceLabel) &&
+        Boolean(backupSourceLabel) &&
+        normalizeComparablePickLabel(currentSourceLabel) === normalizeComparablePickLabel(backupSourceLabel);
+      const visualMatchesMain =
+        Boolean(currentVisualLabel) &&
+        Boolean(primaryVisualLabel) &&
+        normalizeComparablePickLabel(currentVisualLabel) === normalizeComparablePickLabel(primaryVisualLabel);
+      const visualMatchesBackup =
+        Boolean(currentVisualLabel) &&
+        Boolean(backupVisualLabel) &&
+        normalizeComparablePickLabel(currentVisualLabel) === normalizeComparablePickLabel(backupVisualLabel);
+      const currentPairLabel =
+        sourceMatchesMain && visualMatchesMain
+          ? "Main Pair"
+          : sourceMatchesBackup && visualMatchesBackup
+            ? "Backup Pair"
+            : (sourceMatchesMain || sourceMatchesBackup || visualMatchesMain || visualMatchesBackup)
+              ? "Mixed Pair"
+              : (currentSourceLabel || currentVisualLabel)
+                ? "Custom Pair"
+                : "";
+      const currentSourceBasis = String(trace?.script?.source_type || "").trim().toLowerCase();
+      const currentVisualBasis = String(
+        trace?.visual?.source_type || (String(trace?.visual?.recommendation?.asset_id ?? "").trim() ? "assistant_recommendation" : "")
+      )
+        .trim()
+        .toLowerCase();
+      const currentPairHint =
+        currentPairLabel === "Main Pair"
+          ? "Aligned with main picks"
+          : currentPairLabel === "Backup Pair"
+            ? "Using backup picks"
+            : currentPairLabel === "Mixed Pair"
+              ? "Mixed main + backup"
+              : currentVisualBasis === "assistant_recommendation"
+                ? "Recommendation-backed override"
+                : currentSourceBasis === "manual_override" || currentVisualBasis === "manual_override"
+                  ? "Custom override"
+                  : currentPairLabel
+                    ? "Custom research mix"
+                    : "";
+      map.set(segmentId, {
+        attachment_id: attachmentId,
+        item_status: itemStatus,
+        item_status_label: formatReleaseItemStatusLabel(itemStatus),
+        has_script: hasScript,
+        has_visual: hasVisual,
+        current_source_label: currentSourceLabel,
+        current_source_basis: currentSourceBasis,
+        current_source_basis_label: formatReleasePickedFromLabel(trace?.script?.source_type || ""),
+        current_visual_label: currentVisualLabel,
+        current_visual_basis: currentVisualBasis,
+        current_visual_basis_label: formatReleasePickedFromLabel(
+          trace?.visual?.source_type || (String(trace?.visual?.recommendation?.asset_id ?? "").trim() ? "assistant_recommendation" : "")
+        ),
+        current_pair_label: currentPairLabel,
+        current_pair_hint: currentPairHint,
+        handoff_state: handoffState,
+        handoff_state_label: formatReleaseReadyStateLabel(handoffState),
+        handoff_basis: String(handoffInfo?.picked_from ?? "").trim().toLowerCase(),
+        handoff_basis_label: formatReleasePickedFromLabel(handoffInfo?.picked_from ?? ""),
+        last_handoff_event: String(resolvedEvent?.event ?? "").trim().toLowerCase(),
+        last_handoff_event_label: formatReleaseHandoffEventLabel(resolvedEvent?.event ?? ""),
+        last_handoff_event_relative: formatRelativeEventLabel(resolvedEvent?.created_at ?? ""),
+        last_handoff_event_at: formatDateTimeShort(resolvedEvent?.created_at ?? ""),
+        last_pair_switch_label: formatReleasePairSwitchLabel(pairSwitchEvent?.event, pairSwitchEvent?.meta_json),
+        last_pair_switch_relative: formatRelativeEventLabel(pairSwitchEvent?.created_at ?? ""),
+        last_pair_switch_at: formatDateTimeShort(pairSwitchEvent?.created_at ?? ""),
+        trace_badges: traceBadges,
+        research_brief: researchBrief,
+        primary_source_entry: primarySourceEntry,
+        primary_visual_entry: primaryVisualEntry,
+        backup_source_entry: backupSourceEntry,
+        backup_visual_entry: backupVisualEntry,
+        primary_source_label: primarySourceLabel,
+        primary_visual_label: primaryVisualLabel,
+        backup_source_label: backupSourceLabel,
+        backup_visual_label: backupVisualLabel,
+        next_action_label: deriveLinkedReleaseNextAction({
+          hasScript,
+          hasVisual,
+          handoffState,
+          itemStatus
+        })
+      });
+    });
+    return map;
+  }, [
+    selectedReleaseAssets,
+    linkedReleaseHandoffByAttachmentId,
+    linkedReleaseResolvedHandoffByAttachmentId,
+    linkedReleasePairSwitchByAttachmentId,
+    effectiveReleaseResearchBriefs
+  ]);
+  const releaseBoardGroups = React.useMemo(() => {
+    const groups = new Map(releaseBoardColumns.map((status) => [status, []]));
+    filteredReleaseAssets.forEach((item) => {
+      const key = String(item?.attachment?.item_status ?? "planned");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    });
+    return groups;
+  }, [filteredReleaseAssets, releaseBoardColumns]);
+  const releaseScreenshotSourceCount = selectedReleaseAssets.filter((item) =>
+    normalizeLinkUrl(item?.asset?.source_url ?? "")
+  ).length;
+  const handleUseLinkedReleaseBackup = React.useCallback(
+    async (segmentId, kind = "source") => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      const normalizedKind = String(kind ?? "").trim().toLowerCase();
+      if (!normalizedSegmentId || !["source", "visual"].includes(normalizedKind)) return;
+      const snapshot = linkedReleaseSnapshotBySegmentId.get(normalizedSegmentId) ?? null;
+      const attachmentId = String(snapshot?.attachment_id ?? "").trim();
+      const releaseItem =
+        attachmentId && Array.isArray(selectedReleaseAssets)
+          ? selectedReleaseAssets.find((item) => String(item?.attachment?.id ?? "").trim() === attachmentId) ?? null
+          : null;
+      const brief = snapshot?.research_brief ?? null;
+      const sourceEntry = normalizedKind === "source" ? snapshot?.backup_source_entry ?? null : null;
+      const visualEntry = normalizedKind === "visual" ? snapshot?.backup_visual_entry ?? null : null;
+      if (!attachmentId || !releaseItem?.asset?.id || !releaseItem?.attachment?.id || !brief || (!sourceEntry && !visualEntry)) {
+        setStatus("Не удалось применить backup research для сюжета.");
+        return;
+      }
+      const patch = buildReleaseResearchPickPatch(brief, { sourceEntry, visualEntry });
+      await handleUpdateReleaseAttachment(releaseItem.asset.id, releaseItem.attachment.id, patch);
+    },
+    [handleUpdateReleaseAttachment, linkedReleaseSnapshotBySegmentId, selectedReleaseAssets]
+  );
+  const handleUseLinkedReleasePrimary = React.useCallback(
+    async (segmentId, kind = "source") => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      const normalizedKind = String(kind ?? "").trim().toLowerCase();
+      if (!normalizedSegmentId || !["source", "visual"].includes(normalizedKind)) return;
+      const snapshot = linkedReleaseSnapshotBySegmentId.get(normalizedSegmentId) ?? null;
+      const attachmentId = String(snapshot?.attachment_id ?? "").trim();
+      const releaseItem =
+        attachmentId && Array.isArray(selectedReleaseAssets)
+          ? selectedReleaseAssets.find((item) => String(item?.attachment?.id ?? "").trim() === attachmentId) ?? null
+          : null;
+      const brief = snapshot?.research_brief ?? null;
+      const sourceEntry = normalizedKind === "source" ? snapshot?.primary_source_entry ?? null : null;
+      const visualEntry = normalizedKind === "visual" ? snapshot?.primary_visual_entry ?? null : null;
+      if (!attachmentId || !releaseItem?.asset?.id || !releaseItem?.attachment?.id || !brief || (!sourceEntry && !visualEntry)) {
+        setStatus("Не удалось применить основной research для сюжета.");
+        return;
+      }
+      const patch = buildReleaseResearchPickPatch(brief, { sourceEntry, visualEntry });
+      await handleUpdateReleaseAttachment(releaseItem.asset.id, releaseItem.attachment.id, patch);
+    },
+    [handleUpdateReleaseAttachment, linkedReleaseSnapshotBySegmentId, selectedReleaseAssets]
+  );
+  const handlePromoteLinkedReleasePrimaryPair = React.useCallback(
+    async (segmentId) => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      if (!normalizedSegmentId) return;
+      const snapshot = linkedReleaseSnapshotBySegmentId.get(normalizedSegmentId) ?? null;
+      const attachmentId = String(snapshot?.attachment_id ?? "").trim();
+      const releaseItem =
+        attachmentId && Array.isArray(selectedReleaseAssets)
+          ? selectedReleaseAssets.find((item) => String(item?.attachment?.id ?? "").trim() === attachmentId) ?? null
+          : null;
+      const brief = snapshot?.research_brief ?? null;
+      const sourceEntry = snapshot?.primary_source_entry ?? null;
+      const visualEntry = snapshot?.primary_visual_entry ?? null;
+      if (!attachmentId || !releaseItem?.asset?.id || !releaseItem?.attachment?.id || !brief || !sourceEntry || !visualEntry) {
+        setStatus("Не удалось применить основную research pair для сюжета.");
+        return;
+      }
+      const patch = buildReleaseResearchPickPatch(brief, { sourceEntry, visualEntry });
+      await handleUpdateReleaseAttachment(releaseItem.asset.id, releaseItem.attachment.id, patch);
+    },
+    [handleUpdateReleaseAttachment, linkedReleaseSnapshotBySegmentId, selectedReleaseAssets]
+  );
+  const handlePromoteLinkedReleaseBackupPair = React.useCallback(
+    async (segmentId) => {
+      const normalizedSegmentId = String(segmentId ?? "").trim();
+      if (!normalizedSegmentId) return;
+      const snapshot = linkedReleaseSnapshotBySegmentId.get(normalizedSegmentId) ?? null;
+      const attachmentId = String(snapshot?.attachment_id ?? "").trim();
+      const releaseItem =
+        attachmentId && Array.isArray(selectedReleaseAssets)
+          ? selectedReleaseAssets.find((item) => String(item?.attachment?.id ?? "").trim() === attachmentId) ?? null
+          : null;
+      const brief = snapshot?.research_brief ?? null;
+      const sourceEntry = snapshot?.backup_source_entry ?? null;
+      const visualEntry = snapshot?.backup_visual_entry ?? null;
+      if (!attachmentId || !releaseItem?.asset?.id || !releaseItem?.attachment?.id || !brief || !sourceEntry || !visualEntry) {
+        setStatus("Не удалось применить backup research pair для сюжета.");
+        return;
+      }
+      const patch = buildReleaseResearchPickPatch(brief, { sourceEntry, visualEntry });
+      await handleUpdateReleaseAttachment(releaseItem.asset.id, releaseItem.attachment.id, patch);
+    },
+    [handleUpdateReleaseAttachment, linkedReleaseSnapshotBySegmentId, selectedReleaseAssets]
+  );
+
+  const releaseWorkspaceProps = {
+    selectedReleaseDetail,
+    releaseBusy,
+    handleUpdateRelease,
+    handleExportReleaseBrief,
+    releaseSummary,
+    releaseWorkspaceTab,
+    setReleaseWorkspaceTab,
+    effectiveReleaseAssistantFindings,
+    setReleaseBoardFilter,
+    segmentsNeedingVisual,
+    handleOpenSegmentScreenshotMode,
+    handleAttachOrphanScreenshots,
+    effectiveOrphanScreenshotsCount,
+    handleFillMissingVisualsWithRecommendations,
+    handlePrepareRelease,
+    handleMarkReleaseAirReady,
+    handlePublishRelease,
+    recommendedReleaseAssets,
+    releaseRecommendationSummary,
+    lastAttachRecommendationsResult,
+    handleAttachRecommendedBatch,
+    handleAttachAssetToRelease,
+    assetActionBusy,
+    selectedReleaseId,
+    handleOpenAssetScreenshotMode,
+    handleDownloadMedia,
+    getMediaDownloadState,
+    formatRecommendationBucketLabel,
+    releaseDraftPackSummary,
+    releaseDraftPackItems,
+    releasePublishChecklistSummary,
+    releasePublishChecklistItems,
+    releaseReadyToAir: Boolean(releasePublishChecklist?.is_ready_to_air),
+    releaseControlPanel: effectiveReleaseControlPanel,
+    releaseBriefingPanel: effectiveReleaseBriefingPanel,
+    releaseResearchBriefs: effectiveReleaseResearchBriefs,
+    sourceProfiles,
+    releaseOutcomeMemorySummary,
+    runtimeBackupsStatus,
+    lastAssistantAutoBackup,
+    handleApplyReleaseDraftPack,
+    handleSelectBackupSnapshot,
+    releaseActivity,
+    formatRelativeEventLabel,
+    formatDateTimeShort,
+    releaseBoardFilter,
+    releaseBoardCounts,
+    releaseBoardColumns,
+    releaseBoardGroups,
+    formatReleaseItemStatusLabel,
+    selectedReleaseItems,
+    selectedReleaseAssets,
+    handleSelectAllReleaseItems,
+    handleSelectReleaseItemsByFilter,
+    handleClearReleaseSelection,
+    handleFocusReleaseAttachment,
+    handleBulkUpdateReleaseItems,
+    handleBulkUpdateSelectedAssetStatus,
+    handleBulkDetachReleaseItems,
+    releaseBulkScriptTemplate,
+    setReleaseBulkScriptTemplate,
+    releaseBulkVisualTemplate,
+    setReleaseBulkVisualTemplate,
+    handleBulkApplyNoteTemplates,
+    handlePrepareSelectedReleaseItems,
+    handlePrepareReleaseAttachment,
+    handleApplySelectionDraftPack,
+    handleDraftReleaseAttachment,
+    handleFillSelectedVisualsWithRecommendations,
+    handleFillReleaseAttachmentVisuals,
+    handleCopyReleaseResearchBrief,
+    handleOpenReleaseResearchSegment,
+    handlePinReleaseResearchRun,
+    handleOpenReleaseFromSegment,
+    selectedReleaseAttachmentIdSet,
+    toggleReleaseAttachmentSelection,
+    formatAssetKindLabel,
+    handleUpdateReleaseAttachment,
+    handleReorderReleaseAsset,
+    handleAssetStatusUpdate,
+    handleDetachAssetFromRelease
+  };
+  const researchWorkspaceDocId = String(researchDocQueryId || docId || "").trim();
+  const researchWorkspaceSegmentId = String(selectedResearchSegmentId ?? "").trim();
+  const researchWorkspaceLinkedReleaseInfo =
+    researchWorkspaceSegmentId && linkedReleaseSegmentIds.has(researchWorkspaceSegmentId) && selectedReleaseDetail
+      ? {
+          id: selectedReleaseDetail.id,
+          title: selectedReleaseDetail.title,
+          status: selectedReleaseDetail.status,
+          air_date: selectedReleaseDetail.air_date
+        }
+      : null;
+  const researchWorkspaceLinkedReleaseSnapshot =
+    researchWorkspaceSegmentId ? linkedReleaseSnapshotBySegmentId.get(researchWorkspaceSegmentId) ?? null : null;
+  const storageHealthHighlights = React.useMemo(() => {
+    const highlights = [];
+    if (runtimeBackupsStatus?.auto_backup_enabled === false) {
+      highlights.push("Auto-backup policy is disabled.");
+    }
+    const latestBackupAt = String(runtimeBackupsStatus?.latest?.created_at ?? "").trim();
+    if (!latestBackupAt) {
+      highlights.push("No runtime backups created yet.");
+    } else {
+      const ageMs = Date.now() - (Date.parse(latestBackupAt) || 0);
+      if (ageMs > 24 * 60 * 60 * 1000) {
+        highlights.push("Latest backup is older than 24 hours.");
+      }
+    }
+    if (Number(sqliteMirrorStatus?.wal_size_bytes ?? 0) > 64 * 1024 * 1024) {
+      highlights.push(`WAL is large: ${formatBytes(sqliteMirrorStatus?.wal_size_bytes ?? 0)}.`);
+    }
+    if (Number(runtimeBackupsStatus?.total_backups ?? 0) >= Number(runtimeBackupsStatus?.keep_count ?? 0) && Number(runtimeBackupsStatus?.keep_count ?? 0) > 0) {
+      highlights.push(`Retention active: keeping last ${runtimeBackupsStatus.keep_count} backups.`);
+    }
+    return highlights;
+  }, [runtimeBackupsStatus, sqliteMirrorStatus]);
+  if (appMode === "producer") {
+    return (
+      <React.Suspense fallback={<LazySectionFallback label="Loading producer view..." />}>
+        <ReleaseProducerMode
+          theme={theme}
+          handleThemeToggle={handleThemeToggle}
+          integrationReleases={integrationReleases}
+          selectedReleaseId={selectedReleaseId}
+          setSelectedReleaseId={setSelectedReleaseId}
+          selectedReleaseDetail={selectedReleaseDetail}
+          releaseSummary={releaseSummary}
+          releaseControlPanel={effectiveReleaseControlPanel}
+          releaseBriefingPanel={effectiveReleaseBriefingPanel}
+          releasePublishChecklistSummary={releasePublishChecklistSummary}
+          releasePublishChecklistItems={releasePublishChecklistItems}
+          effectiveReleaseAssistantFindings={effectiveReleaseAssistantFindings}
+          selectedReleaseAssets={selectedReleaseAssets}
+          releaseActivity={releaseActivity}
+          releaseBusy={releaseBusy}
+          handleRefreshProducerView={handleRefreshProducerView}
+          handlePrepareRelease={handlePrepareRelease}
+          handleMarkReleaseAirReady={handleMarkReleaseAirReady}
+          handlePublishRelease={handlePublishRelease}
+          handleOpenReleaseScreenshotMode={handleOpenReleaseScreenshotMode}
+          handleExportReleaseBrief={handleExportReleaseBrief}
+          handleOpenOnAirMode={handleOpenOnAirMode}
+          formatReleaseItemStatusLabel={formatReleaseItemStatusLabel}
+          formatDateTimeShort={formatDateTimeShort}
+          formatRelativeEventLabel={formatRelativeEventLabel}
+          handleExitProducerMode={handleExitProducerMode}
+        />
+      </React.Suspense>
+    );
+  }
+  if (appMode === "onair") {
+    return (
+      <React.Suspense fallback={<LazySectionFallback label="Loading on-air view..." />}>
+        <ReleaseOnAirMode
+          selectedReleaseDetail={selectedReleaseDetail}
+          releaseControlPanel={effectiveReleaseControlPanel}
+          releaseBriefingPanel={effectiveReleaseBriefingPanel}
+          releasePublishChecklistItems={releasePublishChecklistItems}
+          selectedReleaseAssets={selectedReleaseAssets}
+          releaseActivity={releaseActivity}
+          releaseBusy={releaseBusy}
+          handleRefreshProducerView={handleRefreshProducerView}
+          handlePrepareRelease={handlePrepareRelease}
+          handleMarkReleaseAirReady={handleMarkReleaseAirReady}
+          handlePublishRelease={handlePublishRelease}
+          handleOpenProducerMode={handleOpenProducerMode}
+          handleExitProducerMode={handleExitProducerMode}
+          formatReleaseItemStatusLabel={formatReleaseItemStatusLabel}
+          formatDateTimeShort={formatDateTimeShort}
+          handleToggleFullscreen={handleToggleFullscreen}
+        />
+      </React.Suspense>
+    );
+  }
+
+  if (appMode === "research") {
+    return (
+      <div className="app">
+        <React.Suspense fallback={<LazySectionFallback label="Loading research workspace..." />}>
+          <ResearchWorkspace
+            docId={researchWorkspaceDocId}
+            segments={segments}
+            selectedSegmentId={selectedResearchSegmentId}
+            setSelectedSegmentId={setSelectedResearchSegmentId}
+            selectedRunId={selectedResearchRunId}
+            setSelectedRunId={setSelectedResearchRunId}
+            segmentResearchRuns={segmentResearchRuns}
+            segmentResearchHistory={segmentResearchHistory}
+            segmentResearchLoading={segmentResearchLoading}
+            onResearchRun={handleRunSegmentResearch}
+            onResearchSelectRun={handleSelectSegmentResearchRun}
+            onResearchApply={handleApplySegmentResearch}
+            onResearchApplyMany={handleApplyManySegmentResearch}
+            onResearchPromoteBundle={handlePromoteSegmentResearchBundle}
+            onResearchCopyBrief={handleCopySegmentResearchBrief}
+            onUpdateResearchThemeContext={handleUpdateResearchThemeContext}
+            linkedReleaseInfo={researchWorkspaceLinkedReleaseInfo}
+            linkedReleaseSnapshot={researchWorkspaceLinkedReleaseSnapshot}
+            onOpenLinkedRelease={handleOpenReleaseFromSegment}
+            onOpenLinkedReleaseHandoff={handleOpenReleaseFromSegment}
+            onUseLinkedReleasePrimary={handleUseLinkedReleasePrimary}
+            onPromoteLinkedReleasePrimaryPair={handlePromoteLinkedReleasePrimaryPair}
+            onPromoteLinkedReleaseBackupPair={handlePromoteLinkedReleaseBackupPair}
+            onUseLinkedReleaseBackup={handleUseLinkedReleaseBackup}
+            onExitResearchMode={handleExitResearchMode}
+            inferResearchCandidateRole={inferResearchCandidateRole}
+            deriveSegmentResearchCurrentPair={deriveSegmentResearchCurrentPair}
+            normalizeResearchBundleTrace={normalizeResearchBundleTrace}
+            getCurrentPairBadgeClassName={getCurrentPairBadgeClassName}
+            formatSegmentResearchBriefLabel={formatSegmentResearchBriefLabel}
+            formatResearchCandidateRoleLabel={formatResearchCandidateRoleLabel}
+            collectResearchMemoryBadges={collectResearchMemoryBadges}
+            getVisibleResearchReasonTags={getVisibleResearchReasonTags}
+          />
+        </React.Suspense>
+      </div>
+    );
+  }
+
+  if (appMode === "newsops") {
+    return (
+      <div className="app">
+        <AppNewsOpsSection
+          integrationLoading={integrationLoading}
+          refreshIntegration={refreshIntegration}
+          integrationOverview={integrationOverview}
+          integrationReleases={integrationReleases}
+          integrationBotSessions={integrationBotSessions}
+          segmentsNeedingVisual={segmentsNeedingVisual}
+          sourceMemorySummary={sourceMemorySummary}
+          releaseOutcomeMemorySummary={releaseOutcomeMemorySummary}
+          runtimeBackupsStatus={runtimeBackupsStatus}
+          sqliteMirrorStatus={sqliteMirrorStatus}
+          storageHealthHighlights={storageHealthHighlights}
+          selectedReleaseId={selectedReleaseId}
+          selectedReleaseDetail={selectedReleaseDetail}
+          releaseControlPanel={releaseControlPanel}
+          releasePublishChecklist={releasePublishChecklist}
+          releaseBriefingPanel={releaseBriefingPanel}
+          releaseActivity={releaseActivity}
+          formatDateTimeShort={formatDateTimeShort}
+          handleOpenOwnerFocusRelease={handleOpenOwnerFocusRelease}
+          handleOpenOwnerStorageHealth={handleOpenOwnerStorageHealth}
+          handleOpenOwnerSourceIntelligence={handleOpenOwnerSourceIntelligence}
+          handleOpenOwnerNeedsVisual={handleOpenOwnerNeedsVisual}
+          integrationAssets={integrationAssets}
+          formatAssetKindLabel={formatAssetKindLabel}
+          handleOpenSegmentScreenshotMode={handleOpenSegmentScreenshotMode}
+          sourceProfilesDirty={sourceProfilesDirty}
+          sourceProfilesDraft={sourceProfilesDraft}
+          updateSourceProfilesDraftField={updateSourceProfilesDraftField}
+          sourceProfilesSaving={sourceProfilesSaving}
+          handleResetSourceProfilesDraft={handleResetSourceProfilesDraft}
+          handleSaveSourceProfiles={handleSaveSourceProfiles}
+          backupActionBusy={backupActionBusy}
+          handleCreateRuntimeBackup={handleCreateRuntimeBackup}
+          handleRestoreRuntimeBackup={handleRestoreRuntimeBackup}
+          selectedBackupSnapshotId={selectedBackupSnapshotId}
+          handleSelectBackupSnapshot={handleSelectBackupSnapshot}
+          selectedBackupSnapshot={selectedBackupSnapshot}
+          selectedBackupDryRun={selectedBackupDryRun}
+          formatBytes={formatBytes}
+        />
+      </div>
+    );
+  }
+
+  if (appMode === "newsroom" || appMode === "inbox" || appMode === "library" || appMode === "releases") {
+    return (
+      <div className="app">
+        <React.Suspense fallback={<LazySectionFallback label={`Loading ${appMode === "newsroom" ? "newsroom" : appMode}...`} />}>
+          <NewsroomWorkspace
+            appMode={appMode === "newsroom" ? "workspace" : appMode}
+            integrationQuery={integrationQuery}
+            setIntegrationQuery={setIntegrationQuery}
+            integrationKind={integrationKind}
+            setIntegrationKind={setIntegrationKind}
+            integrationStatusFilter={integrationStatusFilter}
+            setIntegrationStatusFilter={setIntegrationStatusFilter}
+            integrationOverview={integrationOverview}
+            inboxAssets={inboxAssets}
+            filteredLibraryAssets={filteredLibraryAssets}
+            formatAssetKindLabel={formatAssetKindLabel}
+            formatDateTimeShort={formatDateTimeShort}
+            handleAssetStatusUpdate={handleAssetStatusUpdate}
+            assetActionBusy={assetActionBusy}
+            handleAttachAssetToRelease={handleAttachAssetToRelease}
+            selectedReleaseId={selectedReleaseId}
+            releaseDraftTitle={releaseDraftTitle}
+            setReleaseDraftTitle={setReleaseDraftTitle}
+            releaseDraftDate={releaseDraftDate}
+            setReleaseDraftDate={setReleaseDraftDate}
+            handleCreateRelease={handleCreateRelease}
+            releaseBusy={releaseBusy}
+            integrationReleases={integrationReleases}
+            setSelectedReleaseId={setSelectedReleaseId}
+            handleOpenReleaseScreenshotMode={handleOpenReleaseScreenshotMode}
+            releaseScreenshotSourceCount={releaseScreenshotSourceCount}
+            handleOpenProducerMode={handleOpenProducerMode}
+            handleOpenOnAirMode={handleOpenOnAirMode}
+            handleOpenAssetScreenshotMode={handleOpenAssetScreenshotMode}
+            releaseWorkspaceProps={releaseWorkspaceProps}
+            sourceProfiles={sourceProfiles}
+          />
+        </React.Suspense>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
-      <header className="hero">
-        <div>
-          <div className="hero-top">
-            <button
-              className="theme-toggle"
-              type="button"
-              onClick={handleThemeToggle}
-              aria-label={"\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0442\u0435\u043c\u0443"}
-              title={"\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0442\u0435\u043c\u0443"}
-            >
-              <span className="theme-dot" aria-hidden="true" />
-              {theme === "dark"
-                ? "\u0422\u0435\u043c\u043d\u0430\u044f"
-                : "\u0421\u0432\u0435\u0442\u043b\u0430\u044f"}
-            </button>
-          </div>
-          <p className="eyebrow">{"\u041f\u043e\u0438\u0441\u043a \u043a\u043e\u043d\u0442\u0435\u043d\u0442\u0430"}</p>
-          <h1 className="hero-title">
-            <span>USACHEV</span>
-            <span>TODAY</span>
-          </h1>
-        </div>
-        <div className="hero-card">
-          <div className="hero-stat">
-            <span>Документ</span>
-            <strong>{docId ? docId : "—"}</strong>
-          </div>
-
-          <div className="hero-stat">
-            <span>Статус</span>
-            <strong>{status || "\u0413\u043e\u0442\u043e\u0432"}</strong>
-          </div>
-          <div className="hero-recent">
-            <label>Недавние документы</label>
-            <div className="doc-loader recent-loader">
-              <select
-                value={recentDocId}
-                onChange={handleRecentSelect}
-                disabled={loading || recentDocs.length === 0}
-                aria-label="Недавние документы"
-              >
-                <option value="">
-                  {recentDocs.length > 0 ? "Недавние документы" : "Нет недавних документов"}
-                </option>
-                {recentDocs.map((doc) => (
-                  <option key={doc.id} value={doc.id}>
-                    {formatRecentDocLabel(doc)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              className="btn ghost small"
-              type="button"
-              onClick={() => setAutoOpenLastDocEnabled((prev) => !prev)}
-            >
-              {autoOpenLastDocEnabled
-                ? "Авто-открытие последнего: ON"
-                : "Авто-открытие последнего: OFF"}
-            </button>
-          </div>
-        </div>
-      </header>
+      <AppHeroHeader
+        theme={theme}
+        handleThemeToggle={handleThemeToggle}
+        handleOpenNewsroom={() => window.open("/newsroom", "_blank", "noopener,noreferrer")}
+        docId={docId}
+        status={status}
+        recentDocId={recentDocId}
+        handleRecentSelect={handleRecentSelect}
+        loading={loading}
+        recentDocs={recentDocs}
+        formatRecentDocLabel={formatRecentDocLabel}
+        autoOpenLastDocEnabled={autoOpenLastDocEnabled}
+        setAutoOpenLastDocEnabled={setAutoOpenLastDocEnabled}
+      />
+      <React.Suspense fallback={<LazySectionFallback label="Loading scenario editor..." />}>
+        <ScenarioEditorPanel
+          scenarioPanelOpen={scenarioPanelOpen}
+          setScenarioPanelOpen={setScenarioPanelOpen}
+          handleStartNewScenario={handleStartNewScenario}
+          loading={loading}
+          notionUrl={notionUrl}
+          setNotionUrl={setNotionUrl}
+          handleLoadNotion={handleLoadNotion}
+          canLoadNotion={canLoadNotion}
+          handleRefreshNotion={handleRefreshNotion}
+          canRefreshNotion={canRefreshNotion}
+          scriptText={scriptText}
+          setScriptText={setScriptText}
+          handleGenerate={handleGenerate}
+          canGenerate={canGenerate}
+          notionHasUpdates={notionHasUpdates}
+          handleMarkAllDone={handleMarkAllDone}
+          segmentsCount={segmentsCount}
+        />
+      </React.Suspense>
       <section className="panel">
-        <div className="panel-header">
-          <h2>{"\u0421\u0446\u0435\u043d\u0430\u0440\u0438\u0439"}</h2>
-          <div className="panel-actions panel-actions-scenario-toggle">
-            <button
-              className="btn ghost small segment-group-expand-icon scenario-panel-toggle"
-              type="button"
-              onClick={() => setScenarioPanelOpen((prev) => !prev)}
-              title={scenarioPanelOpen ? "\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c" : "\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c"}
-              aria-label={scenarioPanelOpen ? "\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c" : "\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c"}
-              aria-expanded={scenarioPanelOpen}
-            >
-              {scenarioPanelOpen ? "▴" : "▾"}
-            </button>
-          </div>
-        </div>
-        {scenarioPanelOpen ? (
-          <>
-            <div className="panel-actions panel-actions-scenario">
-              <button className="btn ghost" onClick={handleStartNewScenario} disabled={loading}>
-                {"\u041d\u043e\u0432\u044b\u0439 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439"}
-              </button>
-              <div className="doc-loader notion-loader">
-                <input
-                  className="notion-url-input"
-                  type="url"
-                  value={notionUrl}
-                  onChange={(event) => setNotionUrl(event.target.value)}
-                  placeholder={"\u0421\u0441\u044b\u043b\u043a\u0430 \u043d\u0430 Notion"}
-                />
-                <button
-                  className="btn ghost notion-load-btn"
-                  onClick={handleLoadNotion}
-                  disabled={!canLoadNotion}
-                >
-                  {"\u0417\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c Notion"}
-                </button>
-                <button
-                  className="btn ghost icon-btn notion-refresh-btn"
-                  onClick={handleRefreshNotion}
-                  disabled={!canRefreshNotion}
-                  title={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
-                  aria-label={"\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 Notion"}
-                  type="button"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M4 12a8 8 0 0 1 13.66-5.66L20 8V3h-5l2.22 2.22A10 10 0 1 0 22 12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <textarea
-              className="script-input"
-              placeholder={"\u0412\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u0433\u043e\u0442\u043e\u0432\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u044f..."}
-              value={scriptText}
-              onChange={(event) => setScriptText(event.target.value)}
-            />
-            <div className="panel-actions panel-actions-scenario panel-actions-scenario-footer">
-              <button className="btn ghost" onClick={handleGenerate} disabled={!canGenerate}>
-                {"\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c"}
-                {notionHasUpdates ? <span className="badge">NEW</span> : null}
-              </button>
-              <button
-                className="btn ghost"
-                type="button"
-                onClick={handleMarkAllDone}
-                disabled={segmentsCount === 0}
-              >
-                {"\u0413\u043e\u0442\u043e\u0432\u043e"}
-              </button>
-            </div>
-          </>
-        ) : null}
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Блоки сценария</h2>
-          <div className="panel-actions panel-actions-blocks">
-            <button
-              className={`btn save-btn${hasUnsavedChanges ? " is-dirty" : ""}`}
-              onClick={handleSave}
-              disabled={!canSave}
-            >
-              {"\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c"}
-            </button>
-            <button className="btn ghost" onClick={handleAddSegment}>
-              {"\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0441\u0435\u0433\u043c\u0435\u043d\u0442"}
-            </button>
-            <button
-              className="btn ghost"
-              type="button"
-              onClick={() => setLinksPanelOpen((prev) => !prev)}
-            >
-              {linksPanelOpen
-                ? `\u0421\u043a\u0440\u044b\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0438 (${allScenarioLinks.length})`
-                : `\u0412\u0441\u0435 \u0441\u0441\u044b\u043b\u043a\u0438 (${allScenarioLinks.length})`}
-            </button>
-            <button className="btn ghost" type="button" onClick={handleCopyForFigma}>
-              For Figma
-            </button>
-            <button className="btn ghost" type="button" onClick={() => handleExport("jsonl")}>
-              {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 JSONL"}
-            </button>
-            <button className="btn ghost" type="button" onClick={() => handleExport("md")}>
-              {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 MD"}
-            </button>
-            <button className="btn ghost" type="button" onClick={() => handleExport("xml")}>
-              {"\u042d\u043a\u0441\u043f\u043e\u0440\u0442 XML"}
-            </button>
-            <button className="btn ghost" type="button" onClick={handleConfigureXmlMediaRoot}>
-              XML путь
-            </button>
-          </div>
-        </div>
+        <ScenarioBlocksHeader
+          hasUnsavedChanges={hasUnsavedChanges}
+          handleSave={handleSave}
+          canSave={canSave}
+          handleAddSegment={handleAddSegment}
+          linksPanelOpen={linksPanelOpen}
+          allScenarioLinksCount={allScenarioLinks.length}
+          handleToggleLinksPanel={() => setLinksPanelOpen((prev) => !prev)}
+          handleCopyForFigma={handleCopyForFigma}
+          handleExport={handleExport}
+          handleConfigureXmlMediaRoot={handleConfigureXmlMediaRoot}
+        />
         {linksPanelOpen ? (
-          <div className="all-links-panel">
-            <div className="all-links-panel-head">
-              <div className="all-links-panel-title">
-                <strong>Все ссылки сценария</strong>
-                <span>{allScenarioLinks.length}</span>
-              </div>
-              <div className="query-actions">
-                <button
-                  className="btn ghost small"
-                  type="button"
-                  onClick={handleOpenAllLinksScreenshotMode}
-                  disabled={allScenarioLinks.length === 0}
-                >
-                  {"📸 Screenshot mode"}
-                </button>
-              </div>
-            </div>
-            {allScenarioLinks.length === 0 ? (
-              <div className="links-empty">Ссылок пока нет.</div>
-            ) : (
-              <div className="all-links-list">
-                {allScenarioLinks.map((item, index) => (
-                  <div key={`${item.url}-${index}`} className="all-links-row">
-                    <div className="all-links-meta">
-                      <a href={item.url} target="_blank" rel="noopener noreferrer">
-                        {getReadableLinkLabel(item.url)}
-                      </a>
-                      <span>{item.sectionTitle}</span>
-                    </div>
-                    <div className="query-actions">
-                      {(isMediaDownloadSupported(item.url) || isMediaDownloaded(item.url)) ? (
-                        isMediaDownloaded(item.url) ? (
-                          <button className="btn ghost small" type="button" disabled>
-                            {"\u0421\u043a\u0430\u0447\u0430\u043d\u043e"}
-                          </button>
-                        ) : (
-                          <button
-                            className="btn ghost small"
-                            type="button"
-                            onClick={() => handleDownloadMedia(item.url, item.sectionTitle)}
-                            disabled={isMediaDownloadBusy(item.url)}
-                          >
-                            Скачать
-                          </button>
-                        )
-                      ) : null}
-                      <button
-                        className="btn ghost small"
-                        type="button"
-                        onClick={() => handleCopy(item.url)}
-                      >
-                        Копировать
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <ScenarioLinksPanel
+            allScenarioLinks={allScenarioLinks}
+            handleOpenAllLinksScreenshotMode={handleOpenAllLinksScreenshotMode}
+            getReadableLinkLabel={getReadableLinkLabel}
+            isMediaDownloadSupported={isMediaDownloadSupported}
+            isMediaDownloaded={isMediaDownloaded}
+            handleDownloadMedia={handleDownloadMedia}
+            isMediaDownloadBusy={isMediaDownloadBusy}
+            handleCopy={handleCopy}
+          />
         ) : null}
         {segments.length === 0 ? (
           <div className="empty-state">
@@ -4835,291 +7626,100 @@ export default function App() {
                 docId && (group.section_id || (group.title && group.title !== "Без темы"))
               );
               return (
-                <div key={`${group.id}-${groupIndex}`} className="segment-group">
-                  <div className="segment-group-header">
-                    <div className="segment-group-title">
-                      <div className="segment-group-title-row">
-                        <h3>{group.title === "Без темы" ? "Без темы" : group.title}</h3>
-                        <label
-                          className="done-toggle-inline segment-group-done-toggle"
-                          title="Отметить тему как готово"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={groupDone}
-                            onChange={(event) => handleToggleGroupDone(group.id, event.target.checked)}
-                          />
-                        </label>
-                      </div>
-                      <div className="segment-group-controls">
-                        <div className="segment-group-actions">
-                          {!group.linkSegment ? (
-                            <button
-                              className="btn ghost small"
-                              type="button"
-                              onClick={() => handleAddLinksBlock(group)}
-                            >
-                              {"\u{1F517}+"}
-                            </button>
-                          ) : null}
-                          {group.items.length > 0 ? (
-                            <button
-                              className="btn ghost small"
-                              type="button"
-                              onClick={() => handleAiHelp(group.id)}
-                              disabled={!docId || loading || groupLoading}
-                              title="AI Help"
-                              aria-label="AI Help"
-                            >
-                              {groupLoading ? "..." : "✨"}
-                            </button>
-                          ) : null}
-                          <button
-                            className="btn ghost small segment-group-heading-toggle"
-                            type="button"
-                            onClick={() => toggleHeadingSearch(group.id, headingRuQuery, headingEnQuery)}
-                            disabled={!headingRuQuery}
-                            title="Поиск по заголовку"
-                            aria-label="Поиск по заголовку"
-                          >
-                            {"🔍"}
-                          </button>
-                          <button
-                            className="btn ghost small"
-                            type="button"
-                            onClick={() =>
-                              handleExport("xml", {
-                                scope: "section",
-                                section_id: group.section_id ?? "",
-                                section_title: group.title === "Без темы" ? "" : group.title
-                              })
-                            }
-                            disabled={!canExportGroupXml}
-                            title="Экспорт XML темы"
-                            aria-label="Экспорт XML темы"
-                          >
-                            XML
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="segment-group-right">
-                      <button
-                        className="btn ghost small segment-group-expand segment-group-expand-icon"
-                        type="button"
-                        onClick={() => toggleGroup(group.id)}
-                        title={isExpanded ? "Свернуть" : "Развернуть"}
-                        aria-label={isExpanded ? "Свернуть" : "Развернуть"}
-                        aria-expanded={isExpanded}
-                      >
-                        {isExpanded ? "▴" : "▾"}
-                      </button>
-                    </div>
-                  </div>
-                  {isHeadingSearchOpen ? (
-                    <div className="heading-search-panel">
-                      <div className="heading-search-grid">
-                        <div className="heading-search-col">
-                          <label>RU (как в заголовке)</label>
-                          <input value={headingRuQuery} readOnly />
-                          <div className="query-actions">
-                            {headingRuEngines.map((engine) => (
-                              <button
-                                key={`${group.id}-${engine.id}-ru`}
-                                className="btn ghost small"
-                                type="button"
-                                onClick={() => handleSearch(engine, headingRuQuery)}
-                                disabled={!headingRuQuery}
-                              >
-                                {engine.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="heading-search-col">
-                          <label>EN query</label>
-                          <input
-                            value={headingEnQuery}
-                            onChange={(event) => handleHeadingEnglishQueryChange(group.id, event.target.value)}
-                            placeholder="English query"
-                          />
-                          <div className="query-actions">
-                            <button
-                              className="btn ghost small"
-                              type="button"
-                              onClick={() => translateHeadingQuery(group.id, headingRuQuery, { force: true })}
-                              disabled={!headingRuQuery || Boolean(headingTranslateLoading[group.id])}
-                            >
-                              {headingTranslateLoading[group.id] ? "Перевод..." : "Перевести EN"}
-                            </button>
-                            {HEADING_EN_SEARCH_ENGINES.map((engine) => (
-                              <button
-                                key={`${group.id}-${engine.id}-en`}
-                                className="btn ghost small"
-                                type="button"
-                                onClick={() => handleSearch(engine, headingEnQuery)}
-                                disabled={!headingEnQuery.trim()}
-                              >
-                                {engine.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                  {isExpanded ? (
-                    <>
-                      {group.linkSegment ? (
-                        <LinksCard
-                          segment={group.linkSegment.segment}
-                          index={group.linkSegment.index}
-                          onLinkAdd={handleLinkAdd}
-                          onLinkUpdate={handleLinkUpdate}
-                          onLinkRemove={handleLinkRemove}
-                          onDownload={handleDownloadMedia}
-                          isDownloadBusy={isMediaDownloadBusy}
-                          isDownloadSupported={isMediaDownloadSupported}
-                          isDownloaded={isMediaDownloaded}
-                        />
-                      ) : null}
-                      <div className="segments-grid">
-                        {visibleItems.map(({ segment, index }, localIndex) => (
-                          <SegmentCard
-                            key={`${segment.segment_id}-${index}`}
-                            segment={segment}
-                            index={index}
-                            animationIndex={localIndex}
-                            config={config}
-                            docId={docId}
-                            mediaFiles={mediaFiles}
-                            onUpdate={updateSegment}
-                            onVisualUpdate={updateVisual}
-                            onSearchUpdate={updateSearch}
-                            onQuoteChange={handleQuoteChange}
-                            onInsertAfter={handleInsertAfter}
-                            onRemove={handleRemoveSegment}
-                            onClearSearch={handleClearSearch}
-                            onSearchGenerate={handleGenerateSearch}
-                            searchLoading={Boolean(searchLoading[segment.segment_id])}
-                            onSearchToggle={handleSearchToggle}
-                            onSearch={handleSearch}
-                            onCopy={handleCopy}
-                            onDoneToggle={handleToggleSegmentDone}
-                          />
-                        ))}
-                      </div>
-                      {remaining > 0 ? (
-                        <div className="segment-group-footer">
-                          <button
-                            className="btn ghost small"
-                            type="button"
-                            onClick={() => handleShowMore(group.id)}
-                          >
-                            Показать ещё
-                          </button>
-                          <span>
-                            Показано {visibleItems.length} из {group.items.length}
-                          </span>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
+                <ScenarioGroupSection
+                  key={`${group.id}-${groupIndex}`}
+                  group={group}
+                  groupIndex={groupIndex}
+                  isExpanded={isExpanded}
+                  visibleItems={visibleItems}
+                  remaining={remaining}
+                  groupDone={groupDone}
+                  groupLoading={groupLoading}
+                  headingRuQuery={headingRuQuery}
+                  headingEnQuery={headingEnQuery}
+                  isHeadingSearchOpen={isHeadingSearchOpen}
+                  canExportGroupXml={canExportGroupXml}
+                  headingRuEngines={headingRuEngines}
+                  headingEnEngines={HEADING_EN_SEARCH_ENGINES}
+                  headingTranslateLoading={Boolean(headingTranslateLoading[group.id])}
+                  handleToggleGroupDone={handleToggleGroupDone}
+                  handleAddLinksBlock={handleAddLinksBlock}
+                  docId={docId}
+                  loading={loading}
+                  handleAiHelp={handleAiHelp}
+                  toggleHeadingSearch={toggleHeadingSearch}
+                  handleExport={handleExport}
+                  toggleGroup={toggleGroup}
+                  handleSearch={handleSearch}
+                  handleHeadingEnglishQueryChange={handleHeadingEnglishQueryChange}
+                  translateHeadingQuery={translateHeadingQuery}
+                  handleShowMore={handleShowMore}
+                  LinksCardComponent={LinksCard}
+                  SegmentCardComponent={SegmentCard}
+                  handleLinkAdd={handleLinkAdd}
+                  handleLinkUpdate={handleLinkUpdate}
+                  handleLinkRemove={handleLinkRemove}
+                  handleOpenSegmentScreenshotMode={handleOpenSegmentScreenshotMode}
+                  handleDownloadMedia={handleDownloadMedia}
+                  isMediaDownloadBusy={isMediaDownloadBusy}
+                  isMediaDownloadSupported={isMediaDownloadSupported}
+                  isMediaDownloaded={isMediaDownloaded}
+                  config={config}
+                  mediaFiles={mediaFiles}
+                  updateSegment={updateSegment}
+                  updateVisual={updateVisual}
+                  updateSearch={updateSearch}
+                  handleQuoteChange={handleQuoteChange}
+                  handleInsertAfter={handleInsertAfter}
+                  handleRemoveSegment={handleRemoveSegment}
+                  handleClearSearch={handleClearSearch}
+                  handleGenerateSearch={handleGenerateSearch}
+                  searchLoading={searchLoading}
+                  handleSearchToggle={handleSearchToggle}
+                  segmentResearchRuns={segmentResearchRuns}
+                  segmentResearchHistory={segmentResearchHistory}
+                  segmentResearchLoading={segmentResearchLoading}
+                  handleRunSegmentResearch={handleRunSegmentResearch}
+                  handleSelectSegmentResearchRun={handleSelectSegmentResearchRun}
+                  handleApplySegmentResearch={handleApplySegmentResearch}
+                  handlePromoteSegmentResearchBundle={handlePromoteSegmentResearchBundle}
+                  handleCopySegmentResearchBrief={handleCopySegmentResearchBrief}
+                  handleOpenResearchWorkspace={handleOpenResearchWorkspace}
+                  linkedReleaseSegmentIds={linkedReleaseSegmentIds}
+                  selectedReleaseDetail={selectedReleaseDetail}
+                  linkedReleaseSnapshotBySegmentId={linkedReleaseSnapshotBySegmentId}
+                  handleOpenReleaseFromSegment={handleOpenReleaseFromSegment}
+                  handleUseLinkedReleasePrimary={handleUseLinkedReleasePrimary}
+                  handlePromoteLinkedReleasePrimaryPair={handlePromoteLinkedReleasePrimaryPair}
+                  handlePromoteLinkedReleaseBackupPair={handlePromoteLinkedReleaseBackupPair}
+                  handleUseLinkedReleaseBackup={handleUseLinkedReleaseBackup}
+                  handleCopy={handleCopy}
+                  handleToggleSegmentDone={handleToggleSegmentDone}
+                />
               );
             })}
           </div>
         )}
       </section>
-      <section className="panel media-panel-shell">
-        <div className="panel-header">
-          <h2>{"\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0417\u0430\u0433\u0440\u0443\u0437\u043e\u043a"}</h2>
-          <div className="panel-actions">
-            <button
-              className="btn ghost"
-              type="button"
-              onClick={() => setMediaPanelOpen((prev) => !prev)}
-              disabled={!docId}
-            >
-              {mediaPanelOpen ? "\u0421\u043a\u0440\u044b\u0442\u044c" : "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c"}
-            </button>
-          </div>
-        </div>
-        {docId && mediaPanelOpen ? (
-          <div className="media-panel">
-            <div className="media-panel-head">
-              <strong>{"\u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0417\u0430\u0433\u0440\u0443\u0437\u043e\u043a"}</strong>
-              <div className="media-panel-head-right">
-                <span>
-                  {mediaTools?.available
-                    ? `yt-dlp ready${ytDlpVersion ? ` (${ytDlpVersion})` : ""}`
-                    : "yt-dlp unavailable"}
-                </span>
-                <div className="query-actions">
-                  <button
-                    className="btn ghost small"
-                    type="button"
-                    onClick={() => handleCheckYtDlpVersion()}
-                    disabled={!mediaTools?.available || ytDlpVersionLoading || ytDlpUpdateLoading}
-                  >
-                    {ytDlpVersionLoading ? "Проверка..." : "Версия yt-dlp"}
-                  </button>
-                  <button
-                    className="btn ghost small"
-                    type="button"
-                    onClick={handleUpdateYtDlp}
-                    disabled={!mediaTools?.available || ytDlpUpdateLoading || activeMediaJobsCount > 0}
-                  >
-                    {ytDlpUpdateLoading ? "Обновление..." : "Обновить yt-dlp"}
-                  </button>
-                </div>
-              </div>
-            </div>
-            {mediaJobs.length > 0 ? (
-              <div className="media-jobs-list">
-                {mediaJobs.slice(0, 8).map((job) => (
-                  <div key={job.id} className="media-job-row">
-                    <div className="media-job-meta">
-                      <strong>{job.id}</strong>
-                      <span>{job.status}</span>
-                      {job.section_title ? <span>{job.section_title}</span> : null}
-                      {formatMediaJobProgress(job) ? <span>{formatMediaJobProgress(job)}</span> : null}
-                      {job.error ? <span className="muted">{job.error}</span> : null}
-                    </div>
-                    {(job.status === "queued" || job.status === "running") ? (
-                      <button
-                        className="btn ghost small"
-                        type="button"
-                        onClick={() => handleCancelMediaJob(job.id)}
-                      >
-                        Cancel
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {mediaFiles.length > 0 ? (
-              <div className="media-files-list">
-                {mediaFiles.slice(0, 20).map((file) => (
-                  <div key={file.path} className="media-file-row">
-                    <a
-                      href={`/api/documents/${docId}/media/file?path=${encodeURIComponent(file.path)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {file.path}
-                    </a>
-                    <span className="muted">{formatBytes(file.size)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="muted">Downloaded files will appear here.</div>
-            )}
-          </div>
-        ) : null}
-      </section>
+      <React.Suspense fallback={<LazySectionFallback label="Loading media history..." />}>
+        <MediaHistoryPanel
+          docId={docId}
+          mediaPanelOpen={mediaPanelOpen}
+          setMediaPanelOpen={setMediaPanelOpen}
+          mediaTools={mediaTools}
+          ytDlpVersion={ytDlpVersion}
+          ytDlpVersionLoading={ytDlpVersionLoading}
+          ytDlpUpdateLoading={ytDlpUpdateLoading}
+          handleCheckYtDlpVersion={handleCheckYtDlpVersion}
+          handleUpdateYtDlp={handleUpdateYtDlp}
+          activeMediaJobsCount={activeMediaJobsCount}
+          mediaJobs={mediaJobs}
+          formatMediaJobProgress={formatMediaJobProgress}
+          handleCancelMediaJob={handleCancelMediaJob}
+          mediaFiles={mediaFiles}
+          formatBytes={formatBytes}
+        />
+      </React.Suspense>
     </div>
   );
 }
@@ -5129,13 +7729,18 @@ function mergeSegmentsAndDecisions(segments = [], decisions = [], config = defau
       item.segment_id,
       {
         visual: item.visual_decision ?? item.visual,
-        search: item.search_decision ?? item.search
+        search: item.search_decision ?? item.search,
+        research_sources: normalizeResearchSources(item.research_sources),
+        research_bundle_trace: normalizeResearchBundleTrace(item.research_bundle_trace)
       }
     ])
   );
   return segments.map((segment) => ({
     ...segment,
     block_type: normalizeSegmentBlockType(segment.block_type),
+    ...normalizeSegmentResearchContextSettings(segment),
+    topic_tags: normalizeSegmentTagList(segment.topic_tags ?? segment.section_tags ?? []),
+    section_tags: normalizeSegmentTagList(segment.section_tags ?? segment.topic_tags ?? []),
     links: Array.isArray(segment.links) ? dedupeLinks(segment.links) : [],
     visual_decision: (() => {
       const normalized = normalizeVisualDecision(
@@ -5151,6 +7756,12 @@ function mergeSegmentsAndDecisions(segments = [], decisions = [], config = defau
       decisionMap.get(segment.segment_id)?.search ?? segment.search_decision,
       config
     ),
+    research_sources: normalizeResearchSources(
+      decisionMap.get(segment.segment_id)?.research_sources ?? segment.research_sources
+    ),
+    research_bundle_trace: normalizeResearchBundleTrace(
+      decisionMap.get(segment.segment_id)?.research_bundle_trace ?? segment.research_bundle_trace
+    ),
     search_open: Boolean(segment.search_open),
     is_done: Boolean(segment.is_done)
   }));
@@ -5163,6 +7774,10 @@ function splitSegmentsAndDecisions(segments = []) {
     section_id: segment.section_id ?? null,
     section_title: segment.section_title ?? null,
     section_index: segment.section_index ?? null,
+    research_use_topic_title: Boolean(segment?.research_use_topic_title),
+    research_use_theme_tags: Boolean(segment?.research_use_theme_tags),
+    topic_tags: normalizeSegmentTagList(segment.topic_tags ?? segment.section_tags ?? []),
+    section_tags: normalizeSegmentTagList(segment.section_tags ?? segment.topic_tags ?? []),
     links: Array.isArray(segment.links) ? dedupeLinks(segment.links) : [],
     segment_status: segment.segment_status ?? null,
     is_done: Boolean(segment.is_done),
@@ -5178,12 +7793,11 @@ function splitSegmentsAndDecisions(segments = []) {
       normalizeSegmentBlockType(segment.block_type) === "links"
         ? emptySearchDecision()
         : normalizeSearchDecision(segment.search_decision, defaultConfig),
+    research_sources: normalizeResearchSources(segment.research_sources),
+    research_bundle_trace: normalizeResearchBundleTrace(segment.research_bundle_trace),
     version: segment.version ?? 1
   }));
   return { segmentsPayload, decisionsPayload };
 }
-
-
-
 
 

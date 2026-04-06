@@ -1,11 +1,13 @@
 {
-  "name": "VBAUT",
+  "name": "vbaut",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/free-dev-ports.mjs 8787 5173 && set TELEGRAM_SDVG_ENABLED=1&& set MEDIA_TIKTOK_FALLBACK=1&& set TELEGRAM_BASE_API_URL=http://127.0.0.1:8081/bot&& set TELEGRAM_BASE_FILE_URL=http://127.0.0.1:8081/file&& concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm run dev:frontend:wait\"",
+    "dev": "npm run research:searxng:start && node scripts/free-dev-ports.mjs 8787 5173 && set TELEGRAM_SDVG_ENABLED=1&& set MEDIA_TIKTOK_FALLBACK=1&& set TELEGRAM_BASE_API_URL=http://127.0.0.1:8081/bot&& set TELEGRAM_BASE_FILE_URL=http://127.0.0.1:8081/file&& concurrently -k -n backend,frontend -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm run dev:frontend:wait\"",
     "dev:screenshot-lab": "npm --prefix backend run screenshot-lab",
     "dev:frontend:wait": "wait-on tcp:127.0.0.1:8787 && npm --prefix frontend run dev",
+    "research:searxng:start": "powershell -ExecutionPolicy Bypass -File scripts/start-searxng-local.ps1",
+    "research:searxng:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-searxng-local.ps1",
     "test:backend": "npm --prefix backend test",
     "guard:encoding": "node scripts/guard-encoding.mjs",
     "guard:ui:utf8": "node scripts/guard-ui-utf8.mjs",

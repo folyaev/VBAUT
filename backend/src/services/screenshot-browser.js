@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SCREENSHOT_BROWSER_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en;q=0.8";
 
 function clampNumber(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -35,6 +36,21 @@ function splitList(value) {
     .split(/[\n;,]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeCaptureViewport(width, height, zoom) {
+  const outputWidth = clampNumber(width, 2560, 480, 3840);
+  const outputHeight = clampNumber(height, 1280, 320, 2160);
+  const zoomPercent = clampNumber(zoom, 100, 50, 800);
+  const zoomFactor = zoomPercent / 100;
+  return {
+    outputWidth,
+    outputHeight,
+    zoomPercent,
+    zoomFactor,
+    viewportWidth: Math.max(320, Math.round(outputWidth / zoomFactor)),
+    viewportHeight: Math.max(240, Math.round(outputHeight / zoomFactor))
+  };
 }
 
 function fileExists(filePath) {
@@ -113,6 +129,45 @@ async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
+async function resetPageZoom(page) {
+  if (!page) return;
+  try {
+    const cdp = await page.createCDPSession();
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 }).catch(() => null);
+    await cdp.send("Emulation.resetPageScaleFactor").catch(() => null);
+  } catch {
+    // noop
+  }
+  try {
+    await page.bringToFront().catch(() => null);
+    if (process.platform === "darwin") {
+      await page.keyboard.down("Meta").catch(() => null);
+      await page.keyboard.press("0").catch(() => null);
+      await page.keyboard.up("Meta").catch(() => null);
+    } else {
+      await page.keyboard.down("Control").catch(() => null);
+      await page.keyboard.press("0").catch(() => null);
+      await page.keyboard.up("Control").catch(() => null);
+    }
+  } catch {
+    // noop
+  }
+}
+
+async function waitForPageToSettle(page, extraWaitMs = 0) {
+  if (!page) return;
+  try {
+    if (typeof page.waitForNetworkIdle === "function") {
+      await page.waitForNetworkIdle({ idleTime: 900, timeout: 5000 }).catch(() => null);
+    }
+  } catch {
+    // noop
+  }
+  if (extraWaitMs > 0) {
+    await delay(extraWaitMs);
+  }
+}
+
 export function createPersistentScreenshotBrowserService(options = {}) {
   const env = options?.env ?? process.env;
   const dataDir = path.resolve(String(options?.dataDir ?? path.resolve(__dirname, "../../../data")).trim());
@@ -134,6 +189,7 @@ export function createPersistentScreenshotBrowserService(options = {}) {
   const executablePath = executablePathRaw || detectedChromePath;
   const extensionsRaw = splitList(env.SCREENSHOT_BROWSER_EXTENSIONS ?? "");
   const extraArgsRaw = splitList(env.SCREENSHOT_BROWSER_EXTRA_ARGS ?? "");
+  const postGotoWaitMs = clampNumber(env.SCREENSHOT_BROWSER_POST_GOTO_WAIT_MS, 1200, 0, 12000);
 
   let browser = null;
   let browserPromise = null;
@@ -215,6 +271,7 @@ export function createPersistentScreenshotBrowserService(options = {}) {
         "--no-default-browser-check",
         "--disable-session-crashed-bubble",
         "--disable-infobars",
+        "--lang=ru-RU",
         `--remote-debugging-port=${remoteDebugPort}`
       ];
       if (extraArgsRaw.length) {
@@ -314,9 +371,11 @@ export function createPersistentScreenshotBrowserService(options = {}) {
     url,
     width = 2560,
     height = 1280,
+    zoom = 100,
     userAgent = "",
-    acceptLanguage = "",
-    emulateViewport = false
+    acceptLanguage = SCREENSHOT_BROWSER_ACCEPT_LANGUAGE,
+    emulateViewport = false,
+    resetBrowserZoom = false
   } = {}) {
     const activeBrowser = await ensureBrowser();
     const page = await activeBrowser.newPage();
@@ -326,11 +385,19 @@ export function createPersistentScreenshotBrowserService(options = {}) {
       } catch {
         // noop
       }
+      try {
+        Object.defineProperty(navigator, "language", { get: () => "ru-RU" });
+        Object.defineProperty(navigator, "languages", { get: () => ["ru-RU", "ru", "en-US", "en"] });
+      } catch {
+        // noop
+      }
     });
     if (emulateViewport) {
+      const metrics = normalizeCaptureViewport(width, height, zoom);
       await page.setViewport({
-        width: clampNumber(width, 2560, 480, 3840),
-        height: clampNumber(height, 1280, 320, 2160)
+        width: metrics.viewportWidth,
+        height: metrics.viewportHeight,
+        deviceScaleFactor: metrics.zoomFactor
       });
     }
     if (userAgent) {
@@ -341,6 +408,11 @@ export function createPersistentScreenshotBrowserService(options = {}) {
     }
     if (url) {
       await page.goto(String(url), { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
+      await waitForPageToSettle(page, postGotoWaitMs);
+      if (resetBrowserZoom) {
+        await resetPageZoom(page);
+        await waitForPageToSettle(page, 250);
+      }
     }
     return { browser: activeBrowser, page, persistent: true };
   }

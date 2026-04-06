@@ -1,5 +1,6 @@
 import path from "node:path";
 import { nanoid } from "nanoid";
+import { createDocumentRouteLoaders } from "../services/document-route-loaders.js";
 
 export function registerDocumentRoutes(app, deps) {
   const {
@@ -15,17 +16,31 @@ export function registerDocumentRoutes(app, deps) {
     normalizeDecisionsInput,
     normalizeDocumentForResponse,
     normalizeNotionUrl,
-    normalizeSearchDecisionInput,
+  normalizeSearchDecisionInput,
     normalizeSegmentsInput,
     normalizeVisualDecisionInput,
+    getDocumentState,
+    listDocDecisions,
+    listDocSegments,
+    listResearchRuns,
+    syncDocumentState,
+    syncDocumentContext,
     readDocumentState,
-    readEvents,
-    readOptionalJson,
+  readEvents,
+  readOptionalJson,
     saveVersioned,
     shouldInferNeedsSegmentation,
     syncDocumentSegmentationState,
     writeJson
   } = deps;
+  const { loadDocumentState: loadDocumentRouteState, loadDocumentContext: loadDocumentRouteContext } =
+    createDocumentRouteLoaders({
+      getDocDir,
+      readOptionalJson,
+      getDocumentState,
+      listDocSegments,
+      listDocDecisions
+    });
 
   function canonicalizeMergeLinkUrl(rawUrl) {
     const normalized = String(rawUrl ?? "").trim();
@@ -95,7 +110,7 @@ app.post("/api/documents", async (req, res) => {
       if (existing?.id) {
         const docId = existing.id;
         const dir = await ensureDocDir(docId);
-        const current = (await readOptionalJson(path.join(dir, "document.json"))) ?? {};
+        const current = (await loadDocumentRouteState(docId)) ?? {};
         const prevRawText = String(current.raw_text ?? "");
         const document = {
           ...current,
@@ -113,6 +128,7 @@ app.post("/api/documents", async (req, res) => {
         } else {
           await writeJson(path.join(dir, "document.json"), document);
         }
+        await syncDocumentState?.(docId, document, rawTextChanged ? "document_versioned" : "document_upserted");
         await appendEvent(docId, {
           timestamp: nowIso,
           event: "document_upserted",
@@ -141,6 +157,7 @@ app.post("/api/documents", async (req, res) => {
     };
 
     const documentVersion = await saveVersioned(docId, "document", document);
+    await syncDocumentState?.(docId, document, "document_created");
     await appendEvent(docId, {
       timestamp: new Date().toISOString(),
       event: "document_created",
@@ -157,18 +174,17 @@ app.get("/api/documents/:id", async (req, res) => {
   try {
     const docId = req.params.id;
     const dir = getDocDir(docId);
-
-    const document = await readOptionalJson(path.join(dir, "document.json"));
+    const document = await loadDocumentRouteState(docId);
     if (!document) return res.status(404).json({ error: "Document not found" });
-
-    const segments = await readOptionalJson(path.join(dir, "segments.json"));
-    const decisions = await readOptionalJson(path.join(dir, "decisions.json"));
+    const { segments, decisions } = await loadDocumentRouteContext(docId);
+    const researchRuns = typeof listResearchRuns === "function" ? await listResearchRuns(docId) : [];
     const normalizedDocument = normalizeDocumentForResponse(document);
     if (shouldInferNeedsSegmentation(document)) {
       normalizedDocument.needs_segmentation = await inferNeedsSegmentationFromFileState(
         dir,
         normalizedDocument.raw_text,
-        segments
+        segments,
+        normalizedDocument
       );
     }
     const state = await readDocumentState(dir, normalizedDocument);
@@ -177,6 +193,7 @@ app.get("/api/documents/:id", async (req, res) => {
       document: normalizedDocument,
       segments: segments ?? [],
       decisions: decisions ?? [],
+      research_runs: Array.isArray(researchRuns) ? researchRuns : [],
       revision: state.revision,
       updated_at: state.updated_at
     });
@@ -189,7 +206,7 @@ app.get("/api/documents/:id/state", async (req, res) => {
   try {
     const docId = req.params.id;
     const dir = getDocDir(docId);
-    const document = await readOptionalJson(path.join(dir, "document.json"));
+    const document = await loadDocumentRouteState(docId);
     if (!document) return res.status(404).json({ error: "Document not found" });
 
     const state = await readDocumentState(dir, document);
@@ -207,7 +224,7 @@ app.put("/api/documents/:id", async (req, res) => {
   try {
     const docId = req.params.id;
     const dir = getDocDir(docId);
-    const document = await readOptionalJson(path.join(dir, "document.json"));
+    const document = await loadDocumentRouteState(docId);
     if (!document) return res.status(404).json({ error: "Document not found" });
 
     const rawTextInput = req.body?.raw_text;
@@ -247,6 +264,7 @@ app.put("/api/documents/:id", async (req, res) => {
     } else {
       await writeJson(path.join(dir, "document.json"), document);
     }
+    await syncDocumentState?.(docId, document, rawTextChanged ? "document_versioned" : "document_updated");
     await appendEvent(docId, {
       timestamp: document.updated_at,
       event: "document_updated",
@@ -263,7 +281,7 @@ app.put("/api/documents/:id/session", async (req, res) => {
   try {
     const docId = req.params.id;
     const dir = getDocDir(docId);
-    const document = await readOptionalJson(path.join(dir, "document.json"));
+    const document = await loadDocumentRouteState(docId);
     if (!document) return res.status(404).json({ error: "Document not found" });
 
     const segments = Array.isArray(req.body?.segments) ? req.body.segments : null;
@@ -303,9 +321,11 @@ app.put("/api/documents/:id/session", async (req, res) => {
     } else {
       await writeJson(path.join(dir, "document.json"), document);
     }
+    await syncDocumentState?.(docId, document, rawTextChanged ? "document_versioned" : "session_saved");
 
     const segmentsVersion = await saveVersioned(docId, "segments", normalizedSegments);
     const decisionsVersion = await saveVersioned(docId, "decisions", normalizedDecisions);
+    await syncDocumentContext?.(docId, normalizedSegments, normalizedDecisions, "session_saved");
 
     const source = typeof req.body?.source === "string" ? req.body.source.slice(0, 64) : "manual";
     await appendEvent(docId, {
@@ -344,6 +364,8 @@ app.put("/api/documents/:id/segments", async (req, res) => {
 
     const normalized = dedupeLinkDuplicatesAcrossSections(normalizeSegmentsInput(segments));
     const version = await saveVersioned(docId, "segments", normalized);
+    const { decisions: currentDecisions } = await loadDocumentRouteContext(docId);
+    await syncDocumentContext?.(docId, normalized, Array.isArray(currentDecisions) ? currentDecisions : [], "segments_updated");
 
     await appendEvent(docId, {
       timestamp: new Date().toISOString(),
@@ -365,6 +387,8 @@ app.put("/api/documents/:id/decisions", async (req, res) => {
 
     const normalized = normalizeDecisionsInput(decisions);
     const version = await saveVersioned(docId, "decisions", normalized);
+    const { segments: currentSegments } = await loadDocumentRouteContext(docId);
+    await syncDocumentContext?.(docId, Array.isArray(currentSegments) ? currentSegments : [], normalized, "decisions_updated");
 
     await appendEvent(docId, {
       timestamp: new Date().toISOString(),
@@ -391,12 +415,9 @@ app.get("/api/documents/:id/events", async (req, res) => {
 app.get("/api/documents/:id/dataset", async (req, res) => {
   try {
     const docId = req.params.id;
-    const dir = getDocDir(docId);
-    const document = await readOptionalJson(path.join(dir, "document.json"));
+    const document = await loadDocumentRouteState(docId);
     if (!document) return res.status(404).json({ error: "Document not found" });
-
-    const segments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
-    const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+    const { segments, decisions } = await loadDocumentRouteContext(docId);
 
     const decisionMap = new Map(
       decisions.map((item) => [

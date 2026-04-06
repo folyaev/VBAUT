@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createDocumentRouteLoaders } from "../services/document-route-loaders.js";
 
 export function registerExportRoutes(app, deps) {
   const {
@@ -10,8 +11,11 @@ export function registerExportRoutes(app, deps) {
     emptySearchDecision,
     emptyVisualDecision,
     getDataDir,
+    getDocumentState,
     getDocDir,
     getMediaDir,
+    listDocDecisions,
+    listDocSegments,
     normalizeLinksInput,
     normalizeSearchDecisionInput,
     normalizeSectionTitleForMatch,
@@ -23,6 +27,14 @@ export function registerExportRoutes(app, deps) {
     ? path.join(getDataDir(), "_settings", "xml-export.json")
     : null;
   const MAX_XML_MEDIA_ROOT_RECENT = 3;
+  const { loadDocumentState: loadExportDocumentState, loadDocumentContext: loadExportDocumentContext } =
+    createDocumentRouteLoaders({
+      getDocDir,
+      readOptionalJson,
+      getDocumentState,
+      listDocSegments,
+      listDocDecisions
+    });
 
   const normalizeXmlMediaRootValue = (value) => {
     if (typeof value !== "string") return "";
@@ -111,12 +123,10 @@ export function registerExportRoutes(app, deps) {
         return res.status(400).json({ error: "format must be jsonl, md or xml" });
       }
 
-      const dir = getDocDir(docId);
-      const document = await readOptionalJson(path.join(dir, "document.json"));
+      const document = await loadExportDocumentState(docId);
       if (!document) return res.status(404).json({ error: "Document not found" });
 
-      const segments = (await readOptionalJson(path.join(dir, "segments.json"))) ?? [];
-      const decisions = (await readOptionalJson(path.join(dir, "decisions.json"))) ?? [];
+      const { segments, decisions } = await loadExportDocumentContext(docId);
 
       const decisionMap = new Map(
         decisions.map((item) => [
