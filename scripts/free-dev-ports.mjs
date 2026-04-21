@@ -5,7 +5,7 @@ function parsePorts(argv) {
     .map((value) => Number.parseInt(String(value ?? "").trim(), 10))
     .filter((value) => Number.isFinite(value) && value > 0 && value <= 65535);
   if (parsed.length) return [...new Set(parsed)];
-  return [8787, 5173];
+  return [8787, 5187];
 }
 
 function listListeningPidsWindows(port) {

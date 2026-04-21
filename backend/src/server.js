@@ -40,10 +40,20 @@ function loadEnvFile(filePath) {
 loadEnvFile(path.resolve(__dirname, "../.env"));
 loadEnvFile(path.resolve(__dirname, "../../.env"));
 
+const LOG_LEVEL_WEIGHTS = { error: 0, warn: 1, info: 2, debug: 3 };
+const DEV_LOG_LEVEL = (() => {
+  const raw = String(process.env.DEV_LOG_LEVEL ?? "").trim().toLowerCase();
+  if (raw && Object.prototype.hasOwnProperty.call(LOG_LEVEL_WEIGHTS, raw)) return raw;
+  return "info";
+})();
+
 const { app, DEFAULT_PORT, getServerRuntimeInfo } = await import("./index.js");
 
 app.listen(DEFAULT_PORT, () => {
   console.log(`Backend listening on http://localhost:${DEFAULT_PORT}`);
+  if ((LOG_LEVEL_WEIGHTS[DEV_LOG_LEVEL] ?? LOG_LEVEL_WEIGHTS.info) < LOG_LEVEL_WEIGHTS.info) {
+    return;
+  }
   const runtime = getServerRuntimeInfo();
   const tools = runtime.tools;
   console.log(`Media downloader: yt-dlp=${tools.yt_dlp_path || "N/A"} ffmpeg_location=${tools.ffmpeg_location || "N/A"}`);

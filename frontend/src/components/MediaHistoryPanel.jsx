@@ -72,6 +72,17 @@ export function MediaHistoryPanel({
                     {job.section_title ? <span>{job.section_title}</span> : null}
                     {formatMediaJobProgress(job) ? <span>{formatMediaJobProgress(job)}</span> : null}
                     {job.error ? <span className="muted">{job.error}</span> : null}
+                    {job?.operator_notice?.title ? <span>{job.operator_notice.title}</span> : null}
+                    {job?.operator_notice?.hint ? <span className="muted">{job.operator_notice.hint}</span> : null}
+                    {job?.operator_notice?.auto_refresh_attempted ? (
+                      <span className="muted">
+                        {job?.operator_notice?.auto_refresh_ok
+                          ? `cookies auto-refresh ok (${Number(job?.operator_notice?.auto_refresh_count ?? 0)})`
+                          : `cookies auto-refresh failed${
+                              job?.operator_notice?.auto_refresh_error ? `: ${job.operator_notice.auto_refresh_error}` : ""
+                            }`}
+                      </span>
+                    ) : null}
                   </div>
                   {job.status === "queued" || job.status === "running" ? (
                     <button className="btn ghost small" type="button" onClick={() => handleCancelMediaJob(job.id)}>

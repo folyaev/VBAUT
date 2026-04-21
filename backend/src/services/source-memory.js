@@ -2,7 +2,7 @@ import path from "node:path";
 import { extractSourceScopeKey } from "./source-identity.js";
 
 const DEFAULT_SOURCE_MEMORY = {
-  version: 1,
+  version: 2,
   domains: {},
   urls: {},
   recent: [],
@@ -49,7 +49,7 @@ function buildSegmentKey(sectionTitle, tokens = []) {
 
 function sanitizeMemory(input = {}) {
   const normalized = {
-    version: Number.isFinite(Number(input?.version)) ? Number(input.version) : 1,
+    version: Number.isFinite(Number(input?.version)) ? Number(input.version) : 2,
     domains: {},
     urls: {},
     recent: [],
@@ -67,6 +67,14 @@ function sanitizeMemory(input = {}) {
         attach_count: Number(stats.attach_count ?? 0) || 0,
         screenshot_count: Number(stats.screenshot_count ?? 0) || 0,
         download_count: Number(stats.download_count ?? 0) || 0,
+        dismissed_count: Number(stats.dismissed_count ?? 0) || 0,
+        duplicate_story_count: Number(stats.duplicate_story_count ?? 0) || 0,
+        bad_visual_count: Number(stats.bad_visual_count ?? 0) || 0,
+        screenshot_fail_count: Number(stats.screenshot_fail_count ?? 0) || 0,
+        download_fail_count: Number(stats.download_fail_count ?? 0) || 0,
+        paywall_count: Number(stats.paywall_count ?? 0) || 0,
+        anti_bot_count: Number(stats.anti_bot_count ?? 0) || 0,
+        age_gate_count: Number(stats.age_gate_count ?? 0) || 0,
         last_used_at: String(stats.last_used_at ?? "").trim() || null,
         last_title: String(stats.last_title ?? "").trim() || null,
         last_url: normalizeUrl(stats.last_url) || null
@@ -81,6 +89,14 @@ function sanitizeMemory(input = {}) {
       normalized.urls[normalizedUrl] = {
         domain: normalizeDomain(stats.domain),
         applied_count: Number(stats.applied_count ?? 0) || 0,
+        dismissed_count: Number(stats.dismissed_count ?? 0) || 0,
+        duplicate_story_count: Number(stats.duplicate_story_count ?? 0) || 0,
+        bad_visual_count: Number(stats.bad_visual_count ?? 0) || 0,
+        screenshot_fail_count: Number(stats.screenshot_fail_count ?? 0) || 0,
+        download_fail_count: Number(stats.download_fail_count ?? 0) || 0,
+        paywall_count: Number(stats.paywall_count ?? 0) || 0,
+        anti_bot_count: Number(stats.anti_bot_count ?? 0) || 0,
+        age_gate_count: Number(stats.age_gate_count ?? 0) || 0,
         last_used_at: String(stats.last_used_at ?? "").trim() || null,
         last_title: String(stats.last_title ?? "").trim() || null
       };
@@ -164,6 +180,30 @@ function summarizeMemory(memory = {}) {
   };
 }
 
+function incrementOutcomeCounters(stats = {}, action = "") {
+  const normalizedAction = String(action ?? "").trim().toLowerCase();
+  if (normalizedAction === "mark_helpful") stats.helpful_count += 1;
+  if (normalizedAction === "use_as_source") stats.source_count += 1;
+  if (normalizedAction === "attach_asset") stats.attach_count += 1;
+  if (normalizedAction === "screenshot") stats.screenshot_count += 1;
+  if (normalizedAction === "download") stats.download_count += 1;
+  if (normalizedAction === "dismissed") stats.dismissed_count += 1;
+  if (normalizedAction === "duplicate_story") stats.duplicate_story_count += 1;
+  if (normalizedAction === "bad_visual") stats.bad_visual_count += 1;
+  if (normalizedAction === "screenshot_failed") stats.screenshot_fail_count += 1;
+  if (normalizedAction === "download_failed") stats.download_fail_count += 1;
+  if (normalizedAction === "paywall") stats.paywall_count += 1;
+  if (normalizedAction === "anti_bot") stats.anti_bot_count += 1;
+  if (normalizedAction === "age_gate") stats.age_gate_count += 1;
+}
+
+function shouldCountAsApplied(action = "") {
+  const normalizedAction = String(action ?? "").trim().toLowerCase();
+  return ["mark_helpful", "use_as_source", "attach_asset", "screenshot", "download", "promote_to_decision"].includes(
+    normalizedAction
+  );
+}
+
 export function createSourceMemoryStore({ dataDir, readOptionalJson, writeJson }) {
   const filePath = path.join(dataDir, "source-memory.json");
 
@@ -210,17 +250,21 @@ export function createSourceMemoryStore({ dataDir, readOptionalJson, writeJson }
       attach_count: 0,
       screenshot_count: 0,
       download_count: 0,
+      dismissed_count: 0,
+      duplicate_story_count: 0,
+      bad_visual_count: 0,
+      screenshot_fail_count: 0,
+      download_fail_count: 0,
+      paywall_count: 0,
+      anti_bot_count: 0,
+      age_gate_count: 0,
       last_used_at: null,
       last_title: null,
       last_url: null,
       ...(next.domains[sourceScopeKey] ?? {})
     };
-    domainStats.applied_count += 1;
-    if (action === "mark_helpful") domainStats.helpful_count += 1;
-    if (action === "use_as_source") domainStats.source_count += 1;
-    if (action === "attach_asset") domainStats.attach_count += 1;
-    if (action === "screenshot") domainStats.screenshot_count += 1;
-    if (action === "download") domainStats.download_count += 1;
+    if (shouldCountAsApplied(action)) domainStats.applied_count += 1;
+    incrementOutcomeCounters(domainStats, action);
     domainStats.last_used_at = nowIso;
     domainStats.last_title = String(input.title ?? "").trim() || domainStats.last_title;
     domainStats.last_url = url;
@@ -229,11 +273,20 @@ export function createSourceMemoryStore({ dataDir, readOptionalJson, writeJson }
     const urlStats = {
       domain,
       applied_count: 0,
+      dismissed_count: 0,
+      duplicate_story_count: 0,
+      bad_visual_count: 0,
+      screenshot_fail_count: 0,
+      download_fail_count: 0,
+      paywall_count: 0,
+      anti_bot_count: 0,
+      age_gate_count: 0,
       last_used_at: null,
       last_title: null,
       ...(next.urls[url] ?? {})
     };
-    urlStats.applied_count += 1;
+    if (shouldCountAsApplied(action)) urlStats.applied_count += 1;
+    incrementOutcomeCounters(urlStats, action);
     urlStats.last_used_at = nowIso;
     urlStats.last_title = String(input.title ?? "").trim() || urlStats.last_title;
     next.urls[url] = urlStats;

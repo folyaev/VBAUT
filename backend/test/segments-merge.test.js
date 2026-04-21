@@ -257,3 +257,112 @@ test("buildSegmentLinkHintsFromRawText maps numbered quote refs to section links
   assert.equal(String(hints[0]?.url ?? ""), "https://example.com/second");
   assert.equal(String(hints[0]?.quote_hint ?? ""), "quote for second url");
 });
+
+test("mergeSegmentsWithHistory preserves done state and media for same section slot after rewrite", () => {
+  const oldSegments = [
+    {
+      segment_id: "news_15",
+      block_type: "news",
+      text_quote: "Russia was officially recognized as a zone free of foot-and-mouth disease.",
+      section_id: "section_fmd",
+      section_title: "FMD",
+      is_done: true
+    }
+  ];
+  const oldDecisions = [
+    {
+      segment_id: "news_15",
+      visual_decision: {
+        type: "image",
+        description: "Reference screenshot",
+        media_file_paths: ["FMD/fmd_status.png"]
+      },
+      search_decision: emptySearchDecision(),
+      search_decision_en: emptySearchDecision()
+    }
+  ];
+  const newSegments = [
+    {
+      segment_id: "news_01",
+      block_type: "news",
+      text_quote: "The stigma matters politically, but the key point is that from May 2025 Russia has been treated as officially free of foot-and-mouth disease.",
+      section_id: "section_fmd",
+      section_title: "FMD"
+    }
+  ];
+
+  const { mergedSegments, decisionsOverride } = mergeSegmentsWithHistory(newSegments, oldSegments, oldDecisions);
+  assert.equal(mergedSegments.length, 1);
+  assert.equal(String(mergedSegments[0]?.segment_id ?? ""), "news_15");
+  assert.equal(Boolean(mergedSegments[0]?.is_done), true);
+  assert.equal(decisionsOverride?.length, 1);
+  assert.equal(String(decisionsOverride?.[0]?.segment_id ?? ""), "news_15");
+  assert.equal(String(decisionsOverride?.[0]?.visual_decision?.description ?? ""), "Reference screenshot");
+  assert.deepEqual(decisionsOverride?.[0]?.visual_decision?.media_file_paths ?? [], ["FMD/fmd_status.png"]);
+});
+
+test("mergeSegmentsWithHistory preserves comments segments and keeps them before the matched story", () => {
+  const oldSegments = [
+    {
+      segment_id: "comments_news_02",
+      block_type: "news",
+      text_quote: "1. Bieber got 10 millions",
+      section_id: "section_pop",
+      section_title: "Pop",
+      is_done: false
+    },
+    {
+      segment_id: "news_02",
+      block_type: "news",
+      text_quote: "Justin Bieber is in the center of a new payments scandal with multiple claims around ghost promotions.",
+      section_id: "section_pop",
+      section_title: "Pop",
+      is_done: true
+    },
+    {
+      segment_id: "news_03",
+      block_type: "news",
+      text_quote: "A separate entertainment story about another artist.",
+      section_id: "section_pop",
+      section_title: "Pop",
+      is_done: false
+    }
+  ];
+  const oldDecisions = [
+    makeDecision("comments_news_02", "Comment visual should stay empty but mapped"),
+    makeDecision("news_02", "Main story decision"),
+    makeDecision("news_03", "Other story decision")
+  ];
+  const newSegments = [
+    {
+      segment_id: "news_01",
+      block_type: "news",
+      text_quote: "A separate entertainment story about another artist.",
+      section_id: "section_pop",
+      section_title: "Pop"
+    },
+    {
+      segment_id: "news_02",
+      block_type: "news",
+      text_quote: "Justin Bieber is in the center of a new payments scandal with multiple claims around ghost promotions.",
+      section_id: "section_pop",
+      section_title: "Pop"
+    }
+  ];
+
+  const { mergedSegments, decisionsOverride } = mergeSegmentsWithHistory(newSegments, oldSegments, oldDecisions);
+  assert.deepEqual(
+    mergedSegments.map((segment) => String(segment?.segment_id ?? "")),
+    ["news_03", "comments_news_02", "news_02"]
+  );
+  assert.equal(String(mergedSegments[1]?.text_quote ?? ""), "1. Bieber got 10 millions");
+  assert.equal(Boolean(mergedSegments[2]?.is_done), true);
+  assert.equal(
+    String(decisionsOverride.find((item) => item.segment_id === "comments_news_02")?.visual_decision?.description ?? ""),
+    "Comment visual should stay empty but mapped"
+  );
+  assert.equal(
+    String(decisionsOverride.find((item) => item.segment_id === "news_02")?.visual_decision?.description ?? ""),
+    "Main story decision"
+  );
+});

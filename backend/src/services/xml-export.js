@@ -39,7 +39,7 @@ export function createXmlExportUtils(deps) {
   const XML_PPRO_TICKS_PER_FRAME = 5080320000;
   const XML_RESERVED_VIDEO_TRACKS = 2;
   const XML_RESERVED_AUDIO_TRACKS = 1;
-  const XML_BACKGROUND_ROOT = process.env.XML_BACKGROUND_ROOT || "C:\\Users\\Nemifist\\YandexDisk\\PAMPAM\\Graphics\\Basic";
+  const XML_BACKGROUND_ROOT = process.env.XML_BACKGROUND_ROOT || "C:\\Users\\Nemifist\\YandexDisk\\PAMPAM\\Graphics";
   const XML_BACKGROUND_FILES = Object.freeze({
     whirl: "bg_whirl.mov",
     lines: "bg_lines.mov",
@@ -810,17 +810,37 @@ function renderXmlFileElement({ clip, fps, includeVideo, includeAudio }) {
   return lines;
 }
 
+function resolveXmlClipItemDurationFrames(clip) {
+  const sourceTotalFrames = Number(clip?.sourceTotalFrames);
+  if (Number.isFinite(sourceTotalFrames) && sourceTotalFrames > 0) {
+    return Math.max(1, Math.round(sourceTotalFrames));
+  }
+
+  const sourceOutFrame = Number(clip?.sourceOutFrame);
+  if (Number.isFinite(sourceOutFrame) && sourceOutFrame > 0) {
+    return Math.max(1, Math.round(sourceOutFrame));
+  }
+
+  const clipDurationFrames = Number(clip?.durationFrames);
+  if (Number.isFinite(clipDurationFrames) && clipDurationFrames > 0) {
+    return Math.max(1, Math.round(clipDurationFrames));
+  }
+
+  return 1;
+}
+
 function renderXmlVideoClipItem({ clip, fps, audioPeers = [] }) {
   const sourceInFrame = Math.max(0, Math.round(Number(clip?.sourceInFrame) || 0));
   const sourceOutFrame = Math.max(sourceInFrame, Math.round(Number(clip?.sourceOutFrame) || 0));
   const pproTicksIn = framesToXmlPproTicks(sourceInFrame);
   const pproTicksOut = framesToXmlPproTicks(sourceOutFrame);
+  const clipItemDurationFrames = resolveXmlClipItemDurationFrames(clip);
   const lines = [
     `          <clipitem id="${escapeXml(clip.clipId)}">`,
     `            <masterclipid>${escapeXml(clip.entry.masterClipId)}</masterclipid>`,
     `            <name>${escapeXml(clip.fileName)}</name>`,
     "            <enabled>TRUE</enabled>",
-    `            <duration>${clip.durationFrames}</duration>`,
+    `            <duration>${clipItemDurationFrames}</duration>`,
     "            <rate>",
     `              <timebase>${fps}</timebase>`,
     "              <ntsc>FALSE</ntsc>",
@@ -874,12 +894,13 @@ function renderXmlAudioClipItem({ clip, fps, videoPeer, audioPeers = [] }) {
   const sourceOutFrame = Math.max(sourceInFrame, Math.round(Number(clip?.sourceOutFrame) || 0));
   const pproTicksIn = framesToXmlPproTicks(sourceInFrame);
   const pproTicksOut = framesToXmlPproTicks(sourceOutFrame);
+  const clipItemDurationFrames = resolveXmlClipItemDurationFrames(clip);
   const lines = [
     `          <clipitem id="${escapeXml(clip.clipId)}" premiereChannelType="stereo">`,
     `            <masterclipid>${escapeXml(clip.entry.masterClipId)}</masterclipid>`,
     `            <name>${escapeXml(clip.fileName)}</name>`,
     "            <enabled>TRUE</enabled>",
-    `            <duration>${clip.durationFrames}</duration>`,
+    `            <duration>${clipItemDurationFrames}</duration>`,
     "            <rate>",
     `              <timebase>${fps}</timebase>`,
     "              <ntsc>FALSE</ntsc>",

@@ -1,5 +1,10 @@
 import React from "react";
 
+function toFiniteSectionIndex(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : Number.POSITIVE_INFINITY;
+}
+
 export function useScenarioGroups({
   segments,
   config,
@@ -25,6 +30,7 @@ export function useScenarioGroups({
           title,
           items: [],
           linkSegment: null,
+          topicResearchAnchor: null,
           section_id: segment.section_id ?? null,
           section_title: segment.section_title ?? null,
           section_index: segment.section_index ?? null,
@@ -39,9 +45,28 @@ export function useScenarioGroups({
         group.linkSegment = { segment, index };
         return;
       }
+      if (Boolean(segment?.is_topic_research_anchor)) {
+        group.topicResearchAnchor = { segment, index };
+        return;
+      }
       group.items.push({ segment, index });
     });
-    return Array.from(map.values());
+    return Array.from(map.values()).sort((left, right) => {
+      const leftSectionIndex = toFiniteSectionIndex(left.section_index);
+      const rightSectionIndex = toFiniteSectionIndex(right.section_index);
+      if (leftSectionIndex !== rightSectionIndex) {
+        return leftSectionIndex - rightSectionIndex;
+      }
+      const leftFirstIndex = Math.min(
+        ...(Array.isArray(left.items) && left.items.length > 0 ? left.items.map((item) => Number(item?.index ?? Number.MAX_SAFE_INTEGER)) : [Number.MAX_SAFE_INTEGER]),
+        Number(left?.linkSegment?.index ?? Number.MAX_SAFE_INTEGER)
+      );
+      const rightFirstIndex = Math.min(
+        ...(Array.isArray(right.items) && right.items.length > 0 ? right.items.map((item) => Number(item?.index ?? Number.MAX_SAFE_INTEGER)) : [Number.MAX_SAFE_INTEGER]),
+        Number(right?.linkSegment?.index ?? Number.MAX_SAFE_INTEGER)
+      );
+      return leftFirstIndex - rightFirstIndex;
+    });
   }, [getSegmentGroupKey, getSegmentGroupTitle, segments]);
 
   const allScenarioLinks = React.useMemo(() => collectScenarioLinks(segments), [collectScenarioLinks, segments]);

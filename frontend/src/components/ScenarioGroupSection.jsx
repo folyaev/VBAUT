@@ -10,6 +10,9 @@ export function ScenarioGroupSection({
   visibleItems,
   remaining,
   groupDone,
+  groupDoneCount,
+  groupTotalSegments,
+  groupCompletionPercent,
   groupLoading,
   headingRuQuery,
   headingEnQuery,
@@ -23,6 +26,7 @@ export function ScenarioGroupSection({
   docId,
   loading,
   handleAiHelp,
+  handleEditThemeTags,
   toggleHeadingSearch,
   handleExport,
   toggleGroup,
@@ -77,12 +81,16 @@ export function ScenarioGroupSection({
       <ScenarioGroupHeader
         group={group}
         groupDone={groupDone}
+        groupDoneCount={groupDoneCount}
+        groupTotalSegments={groupTotalSegments}
+        groupCompletionPercent={groupCompletionPercent}
         handleToggleGroupDone={handleToggleGroupDone}
         handleAddLinksBlock={handleAddLinksBlock}
         docId={docId}
         loading={loading}
         groupLoading={groupLoading}
         handleAiHelp={handleAiHelp}
+        handleEditThemeTags={handleEditThemeTags}
         toggleHeadingSearch={toggleHeadingSearch}
         headingRuQuery={headingRuQuery}
         headingEnQuery={headingEnQuery}

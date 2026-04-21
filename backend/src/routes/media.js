@@ -4,9 +4,12 @@ import { createDocumentRouteLoaders } from "../services/document-route-loaders.j
 export function registerMediaRoutes(app, deps) {
   const {
     appendEvent,
+    getDownloaderToolVersionState,
+    refreshDownloaderToolVersionState,
     getDocumentState,
     getDocDir,
     getDocumentMediaDownloads,
+    getGalleryDlVersion,
     getMediaDir,
     getYtDlpVersion,
     isHttpUrl,
@@ -21,9 +24,11 @@ export function registerMediaRoutes(app, deps) {
     safeResolveMediaPath,
     sanitizeMediaTopicName,
     ensureMediaDir,
+    updateGalleryDlBinary,
     updateYtDlpBinary
   } = deps;
   let ytDlpUpdatePromise = null;
+  let galleryDlUpdatePromise = null;
   const { loadDocumentState: loadMediaDocumentState, loadDocumentMediaDownloads: loadMediaDownloads } =
     createDocumentRouteLoaders({
       getDocDir,
@@ -63,6 +68,47 @@ export function registerMediaRoutes(app, deps) {
     }
   });
 
+  app.get("/api/downloader/gallery-dl/version", async (_req, res) => {
+    try {
+      const tools = mediaDownloader.getToolsInfo();
+      if (!tools.gallery_dl_path) {
+        return res.json({
+          available: false,
+          version: null,
+          gallery_dl_path: null,
+          gallery_dl_mode: null
+        });
+      }
+      const version = await getGalleryDlVersion(tools.gallery_dl_path, tools.gallery_dl_mode === "python_module");
+      return res.json({
+        available: true,
+        version,
+        gallery_dl_path: tools.gallery_dl_path,
+        gallery_dl_mode: tools.gallery_dl_mode,
+        checked_at: new Date().toISOString()
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message || "Failed to read gallery-dl version" });
+    }
+  });
+
+  app.get("/api/downloader/tools/versions", async (req, res) => {
+    try {
+      if (String(req.query?.refresh ?? "") === "1" && typeof refreshDownloaderToolVersionState === "function") {
+        await refreshDownloaderToolVersionState("http");
+      }
+      const snapshot =
+        typeof getDownloaderToolVersionState === "function" ? getDownloaderToolVersionState() : null;
+      return res.json({
+        tools: mediaDownloader.getToolsInfo(),
+        versions: snapshot,
+        checked_at: new Date().toISOString()
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message || "Failed to read downloader tool versions" });
+    }
+  });
+
   app.post("/api/downloader/yt-dlp:update", async (_req, res) => {
     try {
       const tools = mediaDownloader.getToolsInfo();
@@ -81,6 +127,9 @@ export function registerMediaRoutes(app, deps) {
       ytDlpUpdatePromise = updateYtDlpBinary(tools.yt_dlp_path);
       const updateResult = await ytDlpUpdatePromise;
       ytDlpUpdatePromise = null;
+      if (typeof refreshDownloaderToolVersionState === "function") {
+        await refreshDownloaderToolVersionState("manual_yt_dlp_update");
+      }
 
       return res.json({
         ok: true,
@@ -90,6 +139,42 @@ export function registerMediaRoutes(app, deps) {
     } catch (error) {
       ytDlpUpdatePromise = null;
       return res.status(500).json({ error: error.message || "yt-dlp update failed" });
+    }
+  });
+
+  app.post("/api/downloader/gallery-dl:update", async (_req, res) => {
+    try {
+      const tools = mediaDownloader.getToolsInfo();
+      if (!tools.gallery_dl_path) {
+        return res.status(503).json({
+          error: "gallery-dl is not available. Configure MEDIA_GALLERYDL_PATH or install python -m gallery_dl."
+        });
+      }
+      if (mediaDownloader.hasActiveJobs()) {
+        return res.status(409).json({ error: "Cannot update gallery-dl while media downloads are active" });
+      }
+      if (galleryDlUpdatePromise) {
+        return res.status(409).json({ error: "gallery-dl update is already running" });
+      }
+
+      galleryDlUpdatePromise = updateGalleryDlBinary(
+        tools.gallery_dl_path,
+        String(tools.gallery_dl_mode ?? "") === "python_module"
+      );
+      const updateResult = await galleryDlUpdatePromise;
+      galleryDlUpdatePromise = null;
+      if (typeof refreshDownloaderToolVersionState === "function") {
+        await refreshDownloaderToolVersionState("manual_gallery_dl_update");
+      }
+
+      return res.json({
+        ok: true,
+        ...updateResult,
+        checked_at: new Date().toISOString()
+      });
+    } catch (error) {
+      galleryDlUpdatePromise = null;
+      return res.status(500).json({ error: error.message || "gallery-dl update failed" });
     }
   });
 
@@ -156,7 +241,18 @@ export function registerMediaRoutes(app, deps) {
       const rawSectionTitle = typeof req.body?.section_title === "string" ? req.body.section_title : "";
       const sectionTitle = sanitizeMediaTopicName(rawSectionTitle);
       const outputDir = await ensureMediaDir(sectionTitle);
-      const job = mediaDownloader.enqueue({ docId, url, outputDir, sectionTitle });
+      const job = mediaDownloader.enqueue({
+        docId,
+        url,
+        outputDir,
+        sectionTitle,
+        segmentId: typeof req.body?.segment_id === "string" ? req.body.segment_id : "",
+        researchRunId: typeof req.body?.run_id === "string" ? req.body.run_id : "",
+        researchResultId: typeof req.body?.result_id === "string" ? req.body.result_id : "",
+        metaTitle: typeof req.body?.source_title === "string" ? req.body.source_title : "",
+        metaDomain: typeof req.body?.source_domain === "string" ? req.body.source_domain : "",
+        metaTextQuote: typeof req.body?.text_quote === "string" ? req.body.text_quote : ""
+      });
 
       await appendEvent(docId, {
         timestamp: new Date().toISOString(),

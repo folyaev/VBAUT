@@ -36,10 +36,47 @@ export function registerExportRoutes(app, deps) {
       listDocDecisions
     });
 
+  const normalizeSegmentBlockType = (value) => String(value ?? "").trim().toLowerCase();
+  const getScenarioSegmentOrder = (segment, fallbackIndex = Number.MAX_SAFE_INTEGER) => {
+    const sectionIndex = Number.isFinite(Number(segment?.section_index))
+      ? Number(segment.section_index)
+      : Number.MAX_SAFE_INTEGER;
+    const blockType = normalizeSegmentBlockType(segment?.block_type);
+    const linksRank = blockType === "links" ? -1 : 0;
+    const segmentId = String(segment?.segment_id ?? "").trim();
+    const numericSuffixMatch = segmentId.match(/_(\d{1,4})$/);
+    const numericSuffix = numericSuffixMatch ? Number.parseInt(numericSuffixMatch[1], 10) : Number.MAX_SAFE_INTEGER;
+    return { sectionIndex, linksRank, numericSuffix, fallbackIndex };
+  };
+  const sortSegmentsInScenarioOrder = (segments = []) =>
+    (Array.isArray(segments) ? segments : [])
+      .map((segment, index) => ({ segment, index, order: getScenarioSegmentOrder(segment, index) }))
+      .sort((left, right) => {
+        if (left.order.sectionIndex !== right.order.sectionIndex) {
+          return left.order.sectionIndex - right.order.sectionIndex;
+        }
+        if (left.order.linksRank !== right.order.linksRank) {
+          return left.order.linksRank - right.order.linksRank;
+        }
+        if (left.order.numericSuffix !== right.order.numericSuffix) {
+          return left.order.numericSuffix - right.order.numericSuffix;
+        }
+        return left.order.fallbackIndex - right.order.fallbackIndex;
+      })
+      .map((item) => item.segment);
+
   const normalizeXmlMediaRootValue = (value) => {
     if (typeof value !== "string") return "";
     return value.trim().slice(0, 1024);
   };
+
+  const parseSegmentIdsQuery = (value) =>
+    [...new Set(
+      String(value ?? "")
+        .split(",")
+        .map((item) => String(item ?? "").trim())
+        .filter(Boolean)
+    )].slice(0, 2048);
 
   const normalizeXmlMediaRootRecent = (values, preferred) => {
     const unique = [];
@@ -142,13 +179,19 @@ export function registerExportRoutes(app, deps) {
       if (format === "xml") {
         const sectionId = String(req.query?.section_id ?? "").trim();
         const sectionTitle = String(req.query?.section_title ?? "").trim();
+        const segmentIds = parseSegmentIdsQuery(req.query?.segment_ids);
         const xmlMediaRootQuery = String(req.query?.xml_media_root ?? "").trim();
         const xmlMediaRoot = xmlMediaRootQuery || (await readXmlMediaRootSettings()).xml_media_root;
         const scope = String(req.query?.scope ?? "").trim().toLowerCase();
-        const wantSection = scope === "section" || Boolean(sectionId) || Boolean(sectionTitle);
-        const sourceSegments = segments.filter((segment) => segment?.block_type !== "links");
-        const targetSegments = wantSection
-          ? sourceSegments.filter((segment) => {
+        const wantSection = scope === "section" || Boolean(sectionId) || Boolean(sectionTitle) || segmentIds.length > 0;
+        const sourceSegments = sortSegmentsInScenarioOrder(
+          segments.filter((segment) => segment?.block_type !== "links")
+        );
+        const segmentIdSet = new Set(segmentIds);
+        const targetSegments = segmentIdSet.size > 0
+          ? sourceSegments.filter((segment) => segmentIdSet.has(String(segment?.segment_id ?? "").trim()))
+          : wantSection
+            ? sourceSegments.filter((segment) => {
               if (sectionId && String(segment?.section_id ?? "").trim() === sectionId) return true;
               if (!sectionTitle) return false;
               return (
@@ -156,7 +199,7 @@ export function registerExportRoutes(app, deps) {
                 normalizeSectionTitleForMatch(sectionTitle)
               );
             })
-          : sourceSegments;
+            : sourceSegments;
 
         if (wantSection && targetSegments.length === 0) {
           return res.status(404).json({ error: "Section not found for XML export" });

@@ -1,4 +1,36 @@
 import React from "react";
+import { getResearchCategoryLabel } from "../utils/researchCategories.js";
+
+const RESEARCH_OPERATOR_ACTIONS = [
+  { action: "duplicate_story", label: "Dup story" },
+  { action: "bad_visual", label: "Bad visual" },
+  { action: "screenshot_failed", label: "Shot fail" },
+  { action: "download_failed", label: "DL fail" },
+  { action: "paywall", label: "Paywall" },
+  { action: "anti_bot", label: "Anti-bot" },
+  { action: "age_gate", label: "Age-gate" }
+];
+
+const AUTO_RESEARCH_ACTION_LABELS = {
+  screenshot_failed: "Auto: Shot fail",
+  download_failed: "Auto: DL fail",
+  paywall: "Auto: Paywall",
+  anti_bot: "Auto: Anti-bot",
+  age_gate: "Auto: Age-gate"
+};
+
+const AUTO_RESEARCH_SOURCE_LABELS = {
+  media_download: "DL",
+  link_screenshot: "Shot",
+  manual_capture: "Manual"
+};
+
+function formatAutoRecordedOutcomeLabel(action, source) {
+  const baseLabel = AUTO_RESEARCH_ACTION_LABELS[String(action ?? "").trim()] ?? "";
+  if (!baseLabel) return "";
+  const sourceLabel = AUTO_RESEARCH_SOURCE_LABELS[String(source ?? "").trim()] ?? "";
+  return sourceLabel ? `${baseLabel} · ${sourceLabel}` : baseLabel;
+}
 
 export function SegmentResearchResultsPanel({
   segment,
@@ -16,21 +48,13 @@ export function SegmentResearchResultsPanel({
   bestSourceCandidate,
   bestVisualCandidate,
   bestVisibleCandidate,
-  deepResearchPairReady,
-  deepResearchSourceItem,
-  deepResearchVisualItem,
   bestSourcePhaseCandidate,
   bestVisualPhaseCandidate,
   bestContextPhaseCandidate,
   researchLoading,
   researchRun,
   visibleResearchResults,
-  researchCompareIds,
-  setResearchCompareIds,
-  researchCompareItems,
   currentResearchSources,
-  onResearchApplyMany,
-  onResearchPromoteBundle,
   onResearchApply,
   formatResearchCandidateRoleLabel,
   inferResearchCandidateRole,
@@ -39,7 +63,7 @@ export function SegmentResearchResultsPanel({
   getVisibleResearchReasonTags
 }) {
   const [researchActionSet, setResearchActionSet] = React.useState(() => new Set());
-  const [selectedResultIds, setSelectedResultIds] = React.useState([]);
+
   const handleAction = React.useCallback(
     (action, resultId) => {
       onResearchApply(index, action, resultId);
@@ -47,6 +71,7 @@ export function SegmentResearchResultsPanel({
     },
     [index, onResearchApply]
   );
+
   const currentSourceUrlSet = React.useMemo(
     () =>
       new Set(
@@ -56,16 +81,31 @@ export function SegmentResearchResultsPanel({
       ),
     [currentResearchSources]
   );
-  const handleToggleSelect = React.useCallback((resultId) => {
-    setSelectedResultIds((prev) =>
-      prev.includes(resultId) ? prev.filter((id) => id !== resultId) : [...prev, resultId]
-    );
-  }, []);
-  const handleAddSelected = React.useCallback(() => {
-    if (!selectedResultIds.length) return;
-    onResearchApplyMany?.(index, selectedResultIds, "use_as_source");
-    setSelectedResultIds([]);
-  }, [index, onResearchApplyMany, selectedResultIds]);
+
+  const autoRecordedOutcomeMap = React.useMemo(() => {
+    const appliedEntries = Array.isArray(researchRun?.applied) ? researchRun.applied : [];
+    const nextMap = new Map();
+    appliedEntries.forEach((entry) => {
+      if (!entry?.meta?.auto_recorded) return;
+      const resultId = String(entry?.result_id ?? "").trim();
+      const action = String(entry?.action ?? "").trim();
+      const source = String(entry?.meta?.source ?? "").trim();
+      const label = formatAutoRecordedOutcomeLabel(action, source);
+      if (!resultId || !label) return;
+      const appliedAt = String(entry?.applied_at ?? "");
+      const existing = nextMap.get(resultId) ?? [];
+      existing.push({
+        action,
+        source,
+        label,
+        appliedAt
+      });
+      existing.sort((left, right) => String(right.appliedAt).localeCompare(String(left.appliedAt)));
+      nextMap.set(resultId, existing.slice(0, 2));
+    });
+    return nextMap;
+  }, [researchRun]);
+
   const handleOpenResult = React.useCallback((resultUrl) => {
     const normalizedUrl = String(resultUrl ?? "").trim();
     if (!normalizedUrl) return;
@@ -85,23 +125,6 @@ export function SegmentResearchResultsPanel({
       </button>
     );
   };
-
-  const handleToggleCompare = React.useCallback(
-    (resultId) => {
-      setResearchCompareIds((prev) =>
-        prev.includes(resultId)
-          ? prev.filter((id) => id !== resultId)
-          : prev.length >= 3
-            ? [...prev.slice(1), resultId]
-            : [...prev, resultId]
-      );
-    },
-    [setResearchCompareIds]
-  );
-  React.useEffect(() => {
-    const allowedIds = new Set(researchResults.map((item) => String(item?.result?.id ?? "").trim()).filter(Boolean));
-    setSelectedResultIds((prev) => prev.filter((id) => allowedIds.has(String(id ?? "").trim())));
-  }, [researchResults]);
 
   if (researchResults.length <= 0) return null;
 
@@ -147,14 +170,6 @@ export function SegmentResearchResultsPanel({
         <button
           className="btn ghost small"
           type="button"
-          disabled={!selectedResultIds.length || researchLoading}
-          onClick={handleAddSelected}
-        >
-          {selectedResultIds.length > 0 ? `Add Selected Links · ${selectedResultIds.length}` : "Select Links To Add"}
-        </button>
-        <button
-          className="btn ghost small"
-          type="button"
           disabled={!bestSourceCandidate || researchLoading}
           onClick={() => bestSourceCandidate && onResearchApply(index, "promote_to_decision", bestSourceCandidate.id)}
         >
@@ -196,9 +211,9 @@ export function SegmentResearchResultsPanel({
           className="btn ghost small"
           type="button"
           disabled={!bestContextPhaseCandidate || researchLoading}
-          onClick={() => bestContextPhaseCandidate && onResearchApply(index, "attach_asset", bestContextPhaseCandidate.id)}
+          onClick={() => bestContextPhaseCandidate && onResearchApply(index, "use_as_source", bestContextPhaseCandidate.id)}
         >
-          Attach Context Pass Top
+          Add Context Pass Top
         </button>
       </div>
       {Array.isArray(researchRun?.warnings) && researchRun.warnings.length > 0 ? (
@@ -210,144 +225,85 @@ export function SegmentResearchResultsPanel({
       ) : null}
       {visibleResearchResults.length > 0 ? (
         <div className="segment-research-list">
-          {visibleResearchResults.map(({ result, ranked }) => (
-            <div key={`${segment.segment_id}-${result.id}`} className="segment-research-item">
-              <div className="segment-research-copy">
-                <div className="segment-research-item-top">
-                  <label className="segment-research-select">
-                    <input
-                      type="checkbox"
-                      checked={selectedResultIds.includes(result.id)}
-                      onChange={() => handleToggleSelect(result.id)}
-                    />
-                    <span>Select</span>
-                  </label>
-                  {currentSourceUrlSet.has(String(result?.url ?? "").trim()) ? (
-                    <span className="segment-research-tag segment-research-tag-role">Added</span>
-                  ) : null}
-                </div>
-                <strong>{result.title || result.url}</strong>
-                <span>
-                  {result.domain || "source"}
-                  {ranked?.bucket ? ` · ${ranked.bucket}` : ""}
-                  {Number.isFinite(Number(ranked?.total_score)) ? ` · ${Number(ranked.total_score).toFixed(2)}` : ""}
-                </span>
-                <div className="segment-research-tags">
-                  <span className="segment-research-tag segment-research-tag-role">
-                    {formatResearchCandidateRoleLabel(inferResearchCandidateRole(segment, ranked))}
+          {visibleResearchResults.map(({ result, ranked }) => {
+            const resultUrl = String(result?.url ?? "").trim();
+            const isAdded = currentSourceUrlSet.has(resultUrl);
+            const autoOutcomes = autoRecordedOutcomeMap.get(String(result?.id ?? "").trim()) ?? [];
+            return (
+              <div key={`${segment.segment_id}-${result.id}`} className="segment-research-item">
+                <div className="segment-research-copy">
+                  <div className="segment-research-item-top">
+                    {isAdded ? (
+                      <span className="segment-research-tag segment-research-tag-role">Added</span>
+                    ) : null}
+                  </div>
+                  <strong>{result.title || result.url}</strong>
+                  <span>
+                    {result.domain || "source"}
+                    {ranked?.bucket ? ` · ${ranked.bucket}` : ""}
+                    {Number.isFinite(Number(ranked?.total_score)) ? ` · ${Number(ranked.total_score).toFixed(2)}` : ""}
                   </span>
-                  <span className="segment-research-tag">{getResearchResultPhase(result)}</span>
-                  {collectResearchMemoryBadges(ranked).map((tag) => (
-                    <span key={`${result.id}-memory-${tag}`} className="segment-research-tag">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-                {getVisibleResearchReasonTags(ranked).length > 0 ? (
                   <div className="segment-research-tags">
-                    {getVisibleResearchReasonTags(ranked).map((tag) => (
-                      <span key={`${result.id}-${tag}`} className="segment-research-tag">
+                    <span className="segment-research-tag segment-research-tag-role">
+                      {getResearchCategoryLabel(ranked)}
+                    </span>
+                    <span className="segment-research-tag segment-research-tag-role">
+                      {formatResearchCandidateRoleLabel(inferResearchCandidateRole(segment, ranked))}
+                    </span>
+                    <span className="segment-research-tag">{getResearchResultPhase(result)}</span>
+                    {collectResearchMemoryBadges(ranked).map((tag) => (
+                      <span key={`${result.id}-memory-${tag}`} className="segment-research-tag">
                         {tag}
                       </span>
                     ))}
+                    {autoOutcomes.map((item) => (
+                      <span
+                        key={`${result.id}-auto-${item.action}-${item.source}-${item.appliedAt}`}
+                        className="segment-research-tag"
+                      >
+                        {item.label}
+                      </span>
+                    ))}
                   </div>
-                ) : null}
-                {Array.isArray(ranked?.visual_hints) && ranked.visual_hints.length > 0 ? (
-                  <span>{ranked.visual_hints.join(" · ")}</span>
-                ) : null}
-                <span>{ranked?.reason || result.snippet || ""}</span>
+                  {getVisibleResearchReasonTags(ranked).length > 0 ? (
+                    <div className="segment-research-tags">
+                      {getVisibleResearchReasonTags(ranked).map((tag) => (
+                        <span key={`${result.id}-${tag}`} className="segment-research-tag">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {Array.isArray(ranked?.visual_hints) && ranked.visual_hints.length > 0 ? (
+                    <span>{ranked.visual_hints.join(" · ")}</span>
+                  ) : null}
+                  <span>{ranked?.reason || result.snippet || ""}</span>
+                </div>
+                <div className="segment-research-actions">
+                  <button className="btn ghost small" type="button" onClick={() => handleOpenResult(result.url)}>
+                    Перейти
+                  </button>
+                  <button
+                    className={`btn ghost small${isAdded ? " is-active" : ""}`}
+                    type="button"
+                    disabled={isAdded}
+                    onClick={() => handleAction("use_as_source", result.id)}
+                  >
+                    {isAdded ? "Selected" : "Select"}
+                  </button>
+                  {renderActionButton("mark_helpful", "Helpful", result.id)}
+                  {renderActionButton("promote_to_decision", "Use", result.id)}
+                  {renderActionButton("screenshot", "Screenshot", result.id)}
+                  {renderActionButton("download", "Download", result.id)}
+                  {renderActionButton("delete_result", "Delete", result.id)}
+                  {RESEARCH_OPERATOR_ACTIONS.map((item) => renderActionButton(item.action, item.label, result.id))}
+                </div>
               </div>
-              <div className="segment-research-actions">
-                <button
-                  className="btn ghost small"
-                  type="button"
-                  onClick={() => handleOpenResult(result.url)}
-                >
-                  Перейти
-                </button>
-                <button
-                  className={`btn ghost small${researchCompareIds.includes(result.id) ? " is-active" : ""}`}
-                  type="button"
-                  onClick={() => handleToggleCompare(result.id)}
-                >
-                  {researchCompareIds.includes(result.id) ? "Compared" : "Compare"}
-                </button>
-                <button
-                  className={`btn ghost small${selectedResultIds.includes(result.id) ? " is-active" : ""}`}
-                  type="button"
-                  onClick={() => handleToggleSelect(result.id)}
-                >
-                  {selectedResultIds.includes(result.id) ? "Selected" : "Select"}
-                </button>
-                {renderActionButton("mark_helpful", "Helpful", result.id)}
-                {renderActionButton("use_as_source", "Add Link", result.id)}
-                {renderActionButton("promote_to_decision", "Use", result.id)}
-                {renderActionButton("attach_asset", "Attach", result.id)}
-                {renderActionButton("screenshot", "Screenshot", result.id)}
-                {renderActionButton("download", "Download", result.id)}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : !researchLoading ? (
         <div className="muted">Research пока не дал кандидатов.</div>
-      ) : null}
-      {researchCompareItems.length > 0 ? (
-        <div className="segment-research-compare">
-          <div className="segment-research-head">
-            <strong>{`Compare Candidates · ${researchCompareItems.length}`}</strong>
-            <button className="btn ghost small" type="button" onClick={() => setResearchCompareIds([])}>
-              Clear
-            </button>
-          </div>
-          <div className="segment-research-compare-grid">
-            {researchCompareItems.map(({ result, ranked }) => (
-              <div key={`${segment.segment_id}-compare-${result.id}`} className="segment-research-compare-card">
-                <strong>{result.title || result.url}</strong>
-                <span>{result.domain || "source"}</span>
-                <div className="segment-research-tags">
-                  <span className="segment-research-tag segment-research-tag-role">
-                    {formatResearchCandidateRoleLabel(inferResearchCandidateRole(segment, ranked))}
-                  </span>
-                  <span className="segment-research-tag">{getResearchResultPhase(result)}</span>
-                  {collectResearchMemoryBadges(ranked).map((tag) => (
-                    <span key={`${result.id}-compare-memory-${tag}`} className="segment-research-tag">
-                      {tag}
-                    </span>
-                  ))}
-                  {getVisibleResearchReasonTags(ranked).map((tag) => (
-                    <span key={`${result.id}-compare-tag-${tag}`} className="segment-research-tag">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-                <div className="segment-research-compare-metrics">
-                  <span>{`Total ${Number(ranked?.total_score ?? 0).toFixed(2)}`}</span>
-                  <span>{`Source ${Number(ranked?.source_score ?? 0).toFixed(2)}`}</span>
-                  <span>{`Visual ${Number(ranked?.visual_score ?? 0).toFixed(2)}`}</span>
-                  <span>{`Montage ${Number(ranked?.montage_score ?? 0).toFixed(2)}`}</span>
-                  <span>{`Download ${Number(ranked?.downloadability_score ?? 0).toFixed(2)}`}</span>
-                  <span>{`Similarity ${Number(ranked?.similarity_score ?? 0).toFixed(2)}`}</span>
-                </div>
-                <span>{ranked?.reason || result.snippet || ""}</span>
-                <div className="segment-research-actions">
-                  <button
-                    className="btn ghost small"
-                    type="button"
-                    onClick={() => handleOpenResult(result.url)}
-                  >
-                    Перейти
-                  </button>
-                  {renderActionButton("mark_helpful", "Helpful", result.id)}
-                  {renderActionButton("use_as_source", "Add Link", result.id)}
-                  {renderActionButton("promote_to_decision", "Use", result.id)}
-                  {renderActionButton("attach_asset", "Attach", result.id)}
-                  {renderActionButton("screenshot", "Screenshot", result.id)}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       ) : null}
     </>
   );

@@ -60,6 +60,10 @@ export function createRuntimeBackupsService({
   const backupsDir = path.join(dataDir, "_backups");
   const keepCount = Math.max(1, Number(process.env.RUNTIME_BACKUPS_KEEP_COUNT ?? 8) || 8);
   const autoBackupEnabled = String(process.env.RUNTIME_AUTO_BACKUP_ENABLED ?? "1") !== "0";
+  const statusCacheTtlMs = Math.max(1000, Number(process.env.RUNTIME_BACKUPS_STATUS_CACHE_MS ?? 15000) || 15000);
+  let statusCacheValue = null;
+  let statusCacheExpiresAt = 0;
+  let statusCachePromise = null;
 
   async function ensureBackupsDir() {
     await fs.mkdir(backupsDir, { recursive: true });
@@ -76,6 +80,12 @@ export function createRuntimeBackupsService({
 
   function getBackupDir(backupId) {
     return path.join(backupsDir, safeText(backupId));
+  }
+
+  function invalidateStatusCache() {
+    statusCacheValue = null;
+    statusCacheExpiresAt = 0;
+    statusCachePromise = null;
   }
 
   async function buildInventory(rootDir, { excludeTopLevel = [], excludeRelative = [] } = {}) {
@@ -194,13 +204,14 @@ export function createRuntimeBackupsService({
     };
     await writeJson(path.join(backupDir, MANIFEST_FILE_NAME), manifest);
     const pruneResult = await pruneBackups();
+    invalidateStatusCache();
     return {
       ...manifest,
       pruned: pruneResult.removed
     };
   }
 
-  async function getStatus() {
+  async function buildStatus() {
     const backups = await listBackups();
     const restoreHistory = await readRestoreHistory();
     return {
@@ -213,6 +224,29 @@ export function createRuntimeBackupsService({
       latest_restore: restoreHistory[0] ?? null,
       restore_history: restoreHistory.slice(0, 10)
     };
+  }
+
+  async function getStatus() {
+    if (statusCacheValue && Date.now() < statusCacheExpiresAt) {
+      return statusCacheValue;
+    }
+    if (statusCachePromise) {
+      return statusCachePromise;
+    }
+
+    statusCachePromise = buildStatus()
+      .then((status) => {
+        statusCacheValue = status;
+        statusCacheExpiresAt = Date.now() + statusCacheTtlMs;
+        statusCachePromise = null;
+        return status;
+      })
+      .catch((error) => {
+        statusCachePromise = null;
+        throw error;
+      });
+
+    return statusCachePromise;
   }
 
   async function getBackupById(backupId) {
@@ -357,6 +391,7 @@ export function createRuntimeBackupsService({
     };
     const nextHistory = [historyEntry, ...(await readRestoreHistory())];
     await writeRestoreHistory(nextHistory);
+    invalidateStatusCache();
     restoreMeta.history_entry = historyEntry;
 
     return restoreMeta;

@@ -143,13 +143,44 @@ function getSegmentTextSignals(segment = {}) {
   };
 }
 
+function getSectionResearchSignals(segment = {}) {
+  return {
+    sectionContextText: compactText(segment?.section_context_text),
+    sectionLinkHints: uniqueCompactList(segment?.section_link_hints, 6)
+  };
+}
+
+function extractResearchLinkHintDomains(linkHints = []) {
+  const seen = new Set();
+  const domains = [];
+  (Array.isArray(linkHints) ? linkHints : []).forEach((item) => {
+    const raw = compactText(item);
+    if (!raw) return;
+    try {
+      const parsed = new URL(raw);
+      const hostname = compactText(parsed.hostname).replace(/^www\./i, "").toLowerCase();
+      if (!hostname || seen.has(hostname)) return;
+      seen.add(hostname);
+      domains.push(hostname);
+    } catch {
+      if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(raw) && !seen.has(raw.toLowerCase())) {
+        seen.add(raw.toLowerCase());
+        domains.push(raw.toLowerCase());
+      }
+    }
+  });
+  return domains.slice(0, 4);
+}
+
 function inferPreferredResearchLanguage(segment = {}) {
   const savedQueries = uniqueCompactList(segment?.search_decision?.queries, 8);
+  const { sectionContextText } = getSectionResearchSignals(segment);
   if (savedQueries.length > 0) {
     return savedQueries.some((item) => hasCyrillic(item)) ? "ru" : "en";
   }
   if (hasCyrillic(segment?.visual_decision?.description)) return "ru";
   if (hasCyrillic(segment?.text_quote)) return "ru";
+  if (hasCyrillic(sectionContextText)) return "ru";
   return "en";
 }
 
@@ -334,19 +365,130 @@ function buildHeuristicQueries(segment, options = {}) {
   ).map((item) => JSON.parse(item));
 }
 
+function buildHeuristicQueriesV2(segment, options = {}) {
+  const mode = compactText(options?.mode, "fast").toLowerCase() || "fast";
+  const maxQueries = Number.isFinite(Number(options.maxQueries))
+    ? Math.max(1, Number(options.maxQueries))
+    : mode === "deep"
+      ? 8
+      : 4;
+  const priorityMode = deriveResearchPriorityMode(segment);
+  const sectionTitle = shouldUseTopicTitle(segment) ? compactText(segment?.section_title) : "";
+  const { textQuote, translatedTextQuote } = getSegmentTextSignals(segment);
+  const { sectionContextText, sectionLinkHints } = getSectionResearchSignals(segment);
+  const topicTags = deriveTopicTags(segment);
+  const visualDescription = compactText(segment?.visual_decision?.description);
+  const savedQueries = uniqueCompactList(segment?.search_decision?.queries, 4);
+  const searchKeywords = uniqueCompactList(segment?.search_decision?.keywords, 8);
+  const linkHintDomains = extractResearchLinkHintDomains(sectionLinkHints);
+  const textSeed = tokenizeIntentTerms(textQuote).slice(0, 8).join(" ").trim() || textQuote;
+  const translatedSeed =
+    tokenizeIntentTerms(translatedTextQuote).slice(0, 8).join(" ").trim() || translatedTextQuote;
+  const sectionSeed =
+    tokenizeIntentTerms(sectionContextText).slice(0, 8).join(" ").trim() || sectionContextText;
+  const visualSeed = tokenizeIntentTerms(visualDescription).slice(0, 6).join(" ").trim() || visualDescription;
+  const keywordSeed = searchKeywords.slice(0, 4).join(" ").trim();
+  const topicSeed = topicTags.slice(0, 4).join(" ").trim();
+  const topicContext = [sectionTitle, topicSeed].filter(Boolean).join(" ").trim();
+  const sourceHintDomain = linkHintDomains[0] ? `site:${linkHintDomains[0]}` : "";
+  const queries = [];
+  const pushQuery = (text, lang, kind, phase) => {
+    const normalized = compactText(text);
+    if (!normalized) return;
+    const duplicate = queries.some(
+      (item) =>
+        item.lang === lang &&
+        item.kind === kind &&
+        item.phase === phase &&
+        compactText(item.text).toLowerCase() === normalized.toLowerCase()
+    );
+    if (duplicate) return;
+    queries.push({
+      id: `q${queries.length + 1}`,
+      text: normalized,
+      lang,
+      kind,
+      phase
+    });
+  };
+
+  if (priorityMode === "search") {
+    savedQueries.forEach((query, index) => {
+      const withKeywords = [query, index === 0 ? keywordSeed : "", sectionSeed, topicContext].filter(Boolean).join(" ").trim();
+      if (index === 0) {
+        pushQuery([query, "site:youtube.com"].filter(Boolean).join(" "), "ru", "visual", "visual");
+      }
+      pushQuery(withKeywords || query, "ru", index === 0 ? "visual" : "general", index === 0 ? "visual" : "context");
+    });
+    pushQuery([savedQueries[0], keywordSeed, "video footage"].filter(Boolean).join(" "), "ru", "visual", "visual");
+    pushQuery([savedQueries[0], keywordSeed, "official source"].filter(Boolean).join(" "), "ru", "source", "source");
+    if (sourceHintDomain) {
+      pushQuery([savedQueries[0], sourceHintDomain].filter(Boolean).join(" "), "ru", "source", "source");
+    }
+    if (mode === "deep") {
+      pushQuery([savedQueries[0], sectionSeed, topicContext, "gallery"].filter(Boolean).join(" "), "ru", "visual", "visual");
+      pushQuery([savedQueries[0], sectionSeed, topicContext, "statement"].filter(Boolean).join(" "), "ru", "source", "source");
+    }
+  } else if (priorityMode === "visual") {
+    const visualContext = [visualSeed, textSeed, sectionSeed, topicContext].filter(Boolean).join(" ").trim();
+    pushQuery([visualContext, "site:youtube.com"].filter(Boolean).join(" "), "ru", "visual", "visual");
+    pushQuery(visualContext, "ru", "visual", "visual");
+    pushQuery([visualSeed, "video footage"].filter(Boolean).join(" "), "ru", "visual", "visual");
+    pushQuery([visualSeed, textSeed, sectionSeed, "source"].filter(Boolean).join(" "), "ru", "source", "source");
+    if (sourceHintDomain) {
+      pushQuery([visualSeed || textSeed || sectionSeed, sourceHintDomain].filter(Boolean).join(" "), "ru", "source", "source");
+    }
+    if (translatedSeed) {
+      pushQuery([translatedSeed, visualSeed, sectionSeed].filter(Boolean).join(" "), "en", "visual", "visual");
+    }
+    if (mode === "deep") {
+      pushQuery([visualSeed, sectionSeed, topicContext, "gallery"].filter(Boolean).join(" "), "ru", "visual", "visual");
+      pushQuery([visualSeed, sectionSeed, topicContext, "official"].filter(Boolean).join(" "), "ru", "source", "source");
+    }
+  } else {
+    const ruTextContext = [textQuote, sectionSeed, topicContext].filter(Boolean).join(" ").trim() || textSeed || sectionSeed || "news visual";
+    const enTextContext = [translatedTextQuote, topicSeed].filter(Boolean).join(" ").trim() || translatedSeed;
+    pushQuery([ruTextContext, "site:youtube.com"].filter(Boolean).join(" "), "ru", "visual", "visual");
+    pushQuery(ruTextContext, "ru", "general", "context");
+    pushQuery([ruTextContext, "источник"].filter(Boolean).join(" "), "ru", "source", "source");
+    pushQuery([ruTextContext, "видео"].filter(Boolean).join(" "), "ru", "visual", "visual");
+    if (sourceHintDomain) {
+      pushQuery([sectionSeed || ruTextContext, sourceHintDomain].filter(Boolean).join(" "), "ru", "source", "source");
+    }
+    if (enTextContext) {
+      pushQuery(enTextContext, "en", "general", "context");
+    }
+    if (mode === "deep") {
+      pushQuery([ruTextContext, "gallery"].filter(Boolean).join(" "), "ru", "visual", "visual");
+      pushQuery([ruTextContext, "official statement"].filter(Boolean).join(" "), "en", "source", "source");
+      if (enTextContext) {
+        pushQuery([enTextContext, "video footage"].filter(Boolean).join(" "), "en", "visual", "visual");
+      }
+    }
+  }
+
+  return uniqueCompactList(
+    queries.map((item) => JSON.stringify(item)),
+    maxQueries
+  ).map((item) => JSON.parse(item));
+}
+
 function fallbackRankResults(segment, results = [], sourceProfiles = {}) {
   const priorityMode = deriveResearchPriorityMode(segment);
   const { textQuote, translatedTextQuote } = getSegmentTextSignals(segment);
+  const { sectionContextText, sectionLinkHints } = getSectionResearchSignals(segment);
   const quote = textQuote.toLowerCase();
   const quoteEn = translatedTextQuote.toLowerCase();
   const section = shouldUseTopicTitle(segment) ? compactText(segment?.section_title).toLowerCase() : "";
   const topicTags = deriveTopicTags(segment);
   const visualTerms = tokenizeIntentTerms(segment?.visual_decision?.description);
+  const sectionTerms = tokenizeIntentTerms(sectionContextText);
+  const linkHintDomains = extractResearchLinkHintDomains(sectionLinkHints);
   const searchTerms = tokenizeIntentTerms(
     ...(Array.isArray(segment?.search_decision?.queries) ? segment.search_decision.queries : []),
     ...(Array.isArray(segment?.search_decision?.keywords) ? segment.search_decision.keywords : [])
   );
-  const textTerms = tokenizeIntentTerms(textQuote, translatedTextQuote);
+  const textTerms = tokenizeIntentTerms(textQuote, translatedTextQuote, sectionContextText);
   return results.map((result) => {
     const haystack = `${result.title} ${result.snippet} ${result.url} ${result.domain}`.toLowerCase();
     const profile = getDomainProfile(result.domain, sourceProfiles);
@@ -359,8 +501,10 @@ function fallbackRankResults(segment, results = [], sourceProfiles = {}) {
       (quoteEn && haystack.includes(quoteEn.slice(0, 40)) ? 0.16 : 0);
     const topicHits = topicTags.filter((term) => haystack.includes(term)).length;
     const visualHits = visualTerms.filter((term) => haystack.includes(term)).length;
+    const sectionHits = sectionTerms.filter((term) => haystack.includes(term)).length;
     const searchHits = searchTerms.filter((term) => haystack.includes(term)).length;
     const textHits = textTerms.filter((term) => haystack.includes(term)).length;
+    const sourceHintHit = linkHintDomains.some((term) => haystack.includes(term)) ? 1 : 0;
     const trustedHit = domainMatches(result.domain, sourceProfiles?.trusted_domains) ? 0.2 : 0.05;
     const visualHit = /(video|footage|photo|images|watch)/i.test(`${result.title} ${result.snippet}`) ? 0.25 : 0.1;
     const preferredArticleHit = preferredArticle ? 0.28 : 0;
@@ -369,10 +513,11 @@ function fallbackRankResults(segment, results = [], sourceProfiles = {}) {
     const weightedSearchHit = priorityMode === "search" ? Math.min(0.24, searchHits * 0.05) : Math.min(0.08, searchHits * 0.025);
     const weightedVisualHit = priorityMode === "visual" ? Math.min(0.24, visualHits * 0.055) : Math.min(0.08, visualHits * 0.03);
     const weightedTextHit = priorityMode === "text" ? Math.min(0.24, textHits * 0.05) : Math.min(0.08, textHits * 0.025);
+    const weightedSectionHit = Math.min(0.14, sectionHits * 0.03);
     const weightedTopicHit = Math.min(priorityMode === "text" ? 0.12 : 0.08, topicHits * 0.03);
-    const relevance = Math.max(0, Math.min(0.98, 0.34 + sectionHit * 0.35 + quoteHit + trustedHit + weightedSearchHit + weightedVisualHit * 0.4 + weightedTextHit + weightedTopicHit + preferredArticleHit * 0.3 + youtubeHit * 0.2 - rfPenalty * 0.3));
+    const relevance = Math.max(0, Math.min(0.98, 0.34 + sectionHit * 0.35 + quoteHit + trustedHit + weightedSearchHit + weightedVisualHit * 0.4 + weightedTextHit + weightedSectionHit + weightedTopicHit + preferredArticleHit * 0.3 + youtubeHit * 0.2 + sourceHintHit * 0.06 - rfPenalty * 0.3));
     const visual = Math.max(0, Math.min(0.98, 0.3 + visualHit + trustedHit * 0.5 + weightedVisualHit + weightedTextHit * 0.35 + youtubeHit * 0.6 - rfPenalty * 0.4));
-    const source = Math.max(0, Math.min(0.98, 0.3 + trustedHit + sectionHit * 0.4 + weightedSearchHit * 0.8 + weightedTextHit * 0.35 + weightedTopicHit * 0.7 + preferredArticleHit + youtubeHit * 0.2 - rfPenalty));
+    const source = Math.max(0, Math.min(0.98, 0.3 + trustedHit + sectionHit * 0.4 + weightedSearchHit * 0.8 + weightedTextHit * 0.35 + weightedSectionHit * 0.8 + weightedTopicHit * 0.7 + preferredArticleHit + youtubeHit * 0.2 + sourceHintHit * 0.14 - rfPenalty));
     const freshness = result.published_at ? 0.7 : 0.45;
     const downloadability = Math.max(0, Math.min(0.98, (domainMatches(result.domain, sourceProfiles?.downloadable_domains) ? 0.75 : 0.45) + youtubeHit * 0.35 - rfPenalty * 0.2));
     const total = Number(
@@ -420,10 +565,11 @@ async function requestJson(system, user) {
 }
 
 export async function generateSegmentResearchQueries(segment, options = {}) {
-  const fallbackQueries = buildHeuristicQueries(segment, options);
+  const fallbackQueries = buildHeuristicQueriesV2(segment, options);
   const mode = compactText(options?.mode, "fast").toLowerCase() || "fast";
   const priorityMode = deriveResearchPriorityMode(segment);
   const preferredLang = inferPreferredResearchLanguage(segment);
+  const { sectionContextText, sectionLinkHints } = getSectionResearchSignals(segment);
   const system = [
     "You generate web search queries for a news editing assistant.",
     "Return strict JSON array only.",
@@ -452,6 +598,8 @@ export async function generateSegmentResearchQueries(segment, options = {}) {
       use_theme_tags: shouldUseThemeTags(segment),
       topic_tags: deriveTopicTags(segment),
       text_quote: segment?.text_quote ?? "",
+      section_context_text: sectionContextText,
+      section_link_hints: sectionLinkHints,
       translated_text_quote: translatedTextQuote,
       mode,
       priority_mode: priorityMode,
@@ -497,6 +645,7 @@ export async function rankSegmentResearchResults(segment, results = [], sourcePr
   const fallback = fallbackRankResults(segment, results, sourceProfiles);
   const priorityMode = deriveResearchPriorityMode(segment);
   const { translatedTextQuote } = getSegmentTextSignals(segment);
+  const { sectionContextText, sectionLinkHints } = getSectionResearchSignals(segment);
   const system = [
     "You rank search results for a news video editing assistant.",
     "Return strict JSON array only.",
@@ -517,6 +666,8 @@ export async function rankSegmentResearchResults(segment, results = [], sourcePr
       use_theme_tags: shouldUseThemeTags(segment),
       topic_tags: deriveTopicTags(segment),
       text_quote: segment?.text_quote ?? "",
+      section_context_text: sectionContextText,
+      section_link_hints: sectionLinkHints,
       translated_text_quote: translatedTextQuote,
       priority_mode: priorityMode,
       current_visual_description: segment?.visual_decision?.description ?? "",

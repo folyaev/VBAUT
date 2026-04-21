@@ -215,6 +215,34 @@ export function normalizeResearchSourcesInput(value) {
     .slice(0, 64);
 }
 
+export function normalizeResearchDismissedUrlsInput(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const normalized = [];
+  value.forEach((entry) => {
+    const item =
+      entry && typeof entry === "object"
+        ? {
+            url: normalizeCompactString(entry.url, 2048),
+            title: normalizeCompactString(entry.title),
+            domain: normalizeCompactString(entry.domain, 255),
+            dismissed_at: normalizeCompactString(entry.dismissed_at, 64),
+            source: normalizeCompactString(entry.source, 64)
+          }
+        : {
+            url: normalizeCompactString(entry, 2048),
+            title: "",
+            domain: "",
+            dismissed_at: "",
+            source: ""
+          };
+    if (!item.url || seen.has(item.url)) return;
+    seen.add(item.url);
+    normalized.push(item);
+  });
+  return normalized.slice(0, 256);
+}
+
 export function normalizeResearchBundleTraceInput(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const normalizePick = (pick) => {
@@ -276,6 +304,7 @@ export function normalizeDecisionsInput(decisions) {
     search_decision: normalizeSearchDecisionInput(decision.search_decision ?? decision.visual_decision),
     search_decision_en: normalizeSearchDecisionInput(decision.search_decision_en),
     research_sources: normalizeResearchSourcesInput(decision.research_sources),
+    research_dismissed_urls: normalizeResearchDismissedUrlsInput(decision.research_dismissed_urls),
     research_bundle_trace: normalizeResearchBundleTraceInput(decision.research_bundle_trace),
     version: Number(decision.version ?? 1)
   }));

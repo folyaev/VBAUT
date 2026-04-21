@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadCookiesFromPath, normalizeCookiesForPuppeteer } from "../../../screenshot-engine/cookie-utils.js";
+import { detectResearchOutcomeAction, extractDomainFromUrl } from "../services/research-outcome-auto-mark.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LINK_SCREENSHOT_SCRIPT_PATH = path.resolve(__dirname, "../../../screenshot-engine/link-screenshot.js");
@@ -565,7 +566,7 @@ function putCachedLinkScreenshot(cacheKey, buffer) {
 
 function buildThumIoScreenshotUrl(url, profile) {
   const width = clampNumber(profile?.width, 2560, 320, 3840);
-  const height = clampNumber(profile?.height, 1280, 240, 2160);
+  const height = clampNumber(profile?.height, 1280, 240, 5120);
   return `https://image.thum.io/get/width/${width}/crop/${height}/noanimate/${encodeURI(url)}`;
 }
 
@@ -850,6 +851,7 @@ export function registerMiscRoutes(app, deps) {
     fetchLinkPreview,
     finishNotionProgress,
     getNotionProgress,
+    getRuntimeHealth,
     imageProxyMaxBytes,
     initNotionProgress,
     isHttpUrl,
@@ -858,6 +860,8 @@ export function registerMiscRoutes(app, deps) {
     normalizeNotionUrl,
     pruneNotionProgressStore,
     pushNotionProgress,
+    markResearchApplied,
+    recordSourceUsage,
     releaseOutcomeMemoryStore,
     sourceMemoryStore,
     sourceProfilesStore,
@@ -866,6 +870,55 @@ export function registerMiscRoutes(app, deps) {
     translateHeadingToEnglishQuery
   } = deps;
   screenshotBrowserServiceRef = screenshotBrowserService ?? null;
+
+  async function recordAutoScreenshotOutcome({
+    docId = "",
+    segmentId = "",
+    runId = "",
+    resultId = "",
+    url = "",
+    title = "",
+    textQuote = "",
+    errorDetail = "",
+    source = "link_screenshot"
+  } = {}) {
+    const normalizedDocId = String(docId ?? "").trim();
+    const normalizedUrl = normalizeLinkUrl(url);
+    if (!normalizedDocId || !normalizedUrl || typeof recordSourceUsage !== "function") return null;
+    const action = detectResearchOutcomeAction({
+      url: normalizedUrl,
+      errorDetail,
+      source: "screenshot"
+    });
+    await recordSourceUsage({
+      doc_id: normalizedDocId,
+      segment_id: String(segmentId ?? "").trim() || null,
+      domain: extractDomainFromUrl(normalizedUrl),
+      url: normalizedUrl,
+      title: clipString(title || normalizedUrl, 300),
+      section_title: "",
+      text_quote: clipString(textQuote, 600),
+      action,
+      used_at: new Date().toISOString()
+    }).catch(() => null);
+    const normalizedRunId = String(runId ?? "").trim();
+    const normalizedResultId = String(resultId ?? "").trim();
+    if (normalizedRunId && normalizedResultId && typeof markResearchApplied === "function") {
+      await markResearchApplied(normalizedDocId, normalizedRunId, {
+        result_id: normalizedResultId,
+        action,
+        applied_at: new Date().toISOString(),
+        meta: {
+          auto_recorded: true,
+          source: String(source ?? "").trim() || "link_screenshot",
+          domain: extractDomainFromUrl(normalizedUrl),
+          url: normalizedUrl,
+          error: clipString(errorDetail, 1000)
+        }
+      }).catch(() => null);
+    }
+    return action;
+  }
 
   async function persistScreenshotAsset({
     buffer,
@@ -920,8 +973,13 @@ export function registerMiscRoutes(app, deps) {
     return asset;
   }
 
-  app.get("/api/health", (_req, res) => {
-    res.json({ ok: true });
+  app.get("/api/health", async (_req, res) => {
+    try {
+      const health = typeof getRuntimeHealth === "function" ? await getRuntimeHealth() : null;
+      res.json({ ok: true, health });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: String(error?.message ?? "health failed") });
+    }
   });
 
   app.get("/tools/screenshot-lab", async (_req, res) => {
@@ -1309,13 +1367,14 @@ export function registerMiscRoutes(app, deps) {
   });
 
   app.post("/api/tools/screenshot-lab/manual/capture", async (req, res) => {
+    let session = null;
     try {
       pruneManualSessions();
       const sessionId = String(req.body?.session_id ?? "").trim();
       if (!sessionId) {
         return res.status(400).json({ error: "session_id is required" });
       }
-      const session = manualLabSessions.get(sessionId);
+      session = manualLabSessions.get(sessionId);
       if (!session || !session.page) {
         return res.status(404).json({ error: "manual session not found" });
       }
@@ -1347,6 +1406,17 @@ export function registerMiscRoutes(app, deps) {
       }
       return res.send(buffer);
     } catch (error) {
+      await recordAutoScreenshotOutcome({
+        docId: String(req.body?.doc_id ?? "").trim(),
+        segmentId: String(req.body?.segment_id ?? "").trim(),
+        runId: String(req.body?.run_id ?? "").trim(),
+        resultId: String(req.body?.result_id ?? "").trim(),
+        url: session?.page?.url?.() || session?.baseUrl || "",
+        title: String(req.body?.note ?? "").trim(),
+        textQuote: String(req.body?.text_quote ?? "").trim(),
+        errorDetail: String(error?.message ?? "manual capture failed"),
+        source: "manual_capture"
+      });
       return res.status(500).json({ error: String(error?.message ?? "manual capture failed") });
     }
   });
@@ -1699,6 +1769,12 @@ export function registerMiscRoutes(app, deps) {
         return res.status(400).json({ error: "url is required" });
       }
       const normalizedUrl = normalizeLinkUrl(rawUrl);
+      const docId = String(req.query?.doc_id ?? "").trim();
+      const segmentId = String(req.query?.segment_id ?? "").trim();
+      const runId = String(req.query?.run_id ?? "").trim();
+      const resultId = String(req.query?.result_id ?? "").trim();
+      const note = String(req.query?.note ?? "").trim();
+      const textQuote = String(req.query?.text_quote ?? "").trim();
       if (!isHttpUrl(normalizedUrl)) {
         return res.status(400).json({ error: "url must be http(s)" });
       }
@@ -1716,7 +1792,7 @@ export function registerMiscRoutes(app, deps) {
       const resolvedProfile = resolveLinkScreenshotProfile(captureUrl, profiles);
       const profile = {
         width: readOptionalClampedNumber(req.query?.width, 320, 3840) ?? resolvedProfile.width,
-        height: readOptionalClampedNumber(req.query?.height, 240, 2160) ?? resolvedProfile.height,
+        height: readOptionalClampedNumber(req.query?.height, 240, 5120) ?? resolvedProfile.height,
         zoom: readOptionalClampedNumber(req.query?.zoom, 50, 800) ?? resolvedProfile.zoom
       };
       const resetBrowserZoom = String(req.query?.reset_browser_zoom ?? "0").trim() === "1";
@@ -1803,6 +1879,17 @@ export function registerMiscRoutes(app, deps) {
         const localAntiBotBlocked =
           message.includes("anti-bot-page") && isHostInDomain(host, "tass.ru") && !usePersistentCapture;
         if (localAntiBotBlocked) {
+          await recordAutoScreenshotOutcome({
+            docId,
+            segmentId,
+            runId,
+            resultId,
+            url: captureUrl,
+            title: note,
+            textQuote,
+            errorDetail: "screenshot blocked by anti-bot",
+            source: "link_screenshot"
+          });
           return res.status(502).json({ error: "screenshot blocked by anti-bot" });
         }
         const thumIoUrl = buildThumIoScreenshotUrl(captureUrl, profile);
@@ -1832,6 +1919,17 @@ export function registerMiscRoutes(app, deps) {
       res.setHeader("cache-control", "public, max-age=86400, stale-while-revalidate=604800");
       return res.send(buffer);
     } catch (error) {
+      await recordAutoScreenshotOutcome({
+        docId: String(req.query?.doc_id ?? "").trim(),
+        segmentId: String(req.query?.segment_id ?? "").trim(),
+        runId: String(req.query?.run_id ?? "").trim(),
+        resultId: String(req.query?.result_id ?? "").trim(),
+        url: String(req.query?.url ?? "").trim(),
+        title: String(req.query?.note ?? "").trim(),
+        textQuote: String(req.query?.text_quote ?? "").trim(),
+        errorDetail: String(error?.message ?? "screenshot failed"),
+        source: "link_screenshot"
+      });
       return res.status(502).json({ error: String(error?.message ?? "screenshot failed") });
     }
   });

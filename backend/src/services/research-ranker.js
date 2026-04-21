@@ -53,6 +53,18 @@ function formatReasonTagLabel(tag) {
   if (normalized === "ru_blocked") return "RU blocked";
   if (normalized === "responsive") return "Responsive";
   if (normalized === "watermarks") return "Watermarks";
+  if (normalized === "dismissed_before") return "Dismissed before";
+  if (normalized === "duplicate_story") return "Repeat story";
+  if (normalized === "bad_visual_history") return "Weak visual history";
+  if (normalized === "screenshot_fail_risk") return "Screenshot risk";
+  if (normalized === "download_fail_risk") return "Download risk";
+  if (normalized === "paywall_prone") return "Paywall prone";
+  if (normalized === "anti_bot_prone") return "Anti-bot prone";
+  if (normalized === "age_gate_prone") return "Age-gate prone";
+  if (normalized.startsWith("story_cluster:")) {
+    const value = String(tag).split(":")[1] || "";
+    return value ? `Story dupes x${value}` : "Story dupes";
+  }
   if (normalized === "youtube") return "YouTube first";
   if (normalized === "preferred_article") return "Preferred article";
   if (normalized.startsWith("quality:")) return String(tag).split(":")[1] || "";
@@ -90,6 +102,53 @@ function buildResearchMetadataHint(ranked = {}) {
     .filter(Boolean)
     .slice(0, 4);
   return tags.join(" В· ");
+}
+
+export const RESEARCH_CATEGORY_ORDER = ["video", "preview", "quotes", "images", "other"];
+
+function isDirectImageUrl(url = "") {
+  return /\.(png|jpe?g|webp|gif|bmp|avif)(?:$|[?#])/i.test(String(url ?? "").trim());
+}
+
+function isVideoPlatformUrl(url = "", domain = "", hints = []) {
+  const normalizedUrl = compactText(url).toLowerCase();
+  const normalizedDomain = compactText(domain).toLowerCase();
+  const hintList = Array.isArray(hints) ? hints.map((item) => compactText(item).toLowerCase()) : [];
+  if (domainMatches(normalizedDomain, ["youtube.com", "youtu.be", "rutube.ru", "vimeo.com", "dailymotion.com"])) {
+    return true;
+  }
+  if (normalizedDomain === "vkvideo.ru") return true;
+  if ((normalizedDomain === "vk.com" || normalizedDomain === "vk.ru") && /\/video/i.test(normalizedUrl)) return true;
+  if (normalizedDomain === "ok.ru" && /(\/video|\/live)/i.test(normalizedUrl)) return true;
+  if ((normalizedDomain === "x.com" || normalizedDomain === "twitter.com") && /\/status\//i.test(normalizedUrl)) {
+    return true;
+  }
+  return hintList.some((item) => ["video", "video_platform", "youtube", "downloadable"].includes(item));
+}
+
+export function categorizeResearchResult(result = {}, ranked = {}, sourceProfiles = {}) {
+  const domain = compactText(result?.domain).toLowerCase();
+  const url = compactText(result?.url);
+  const contentType = compactText(result?.content_type).toLowerCase();
+  const hints = Array.isArray(ranked?.visual_hints) ? ranked.visual_hints : [];
+
+  if (isVideoPlatformUrl(url, domain, hints) || contentType.includes("video")) {
+    return { id: "video", label: "Video" };
+  }
+  if (domainMatches(domain, sourceProfiles?.preview_image_domains)) {
+    return { id: "preview", label: "Preview" };
+  }
+  if (domainMatches(domain, sourceProfiles?.preferred_article_domains)) {
+    return { id: "quotes", label: "Quotes & Headlines" };
+  }
+  if (
+    contentType.includes("image") ||
+    isDirectImageUrl(url) ||
+    hints.map((item) => compactText(item).toLowerCase()).includes("image")
+  ) {
+    return { id: "images", label: "Images" };
+  }
+  return { id: "other", label: "Other" };
 }
 
 function hasSearchDecisionContent(decision = {}) {
@@ -153,13 +212,44 @@ function getSegmentTextSignals(segmentContext = {}) {
   };
 }
 
+function getSectionResearchSignals(segmentContext = {}) {
+  return {
+    sectionContextText: compactText(segmentContext?.section_context_text),
+    sectionLinkHints: Array.isArray(segmentContext?.section_link_hints) ? segmentContext.section_link_hints : []
+  };
+}
+
+function extractResearchLinkHintDomains(linkHints = []) {
+  const seen = new Set();
+  const domains = [];
+  (Array.isArray(linkHints) ? linkHints : []).forEach((item) => {
+    const raw = compactText(item);
+    if (!raw) return;
+    try {
+      const parsed = new URL(raw);
+      const hostname = compactText(parsed.hostname).replace(/^www\./i, "").toLowerCase();
+      if (!hostname || seen.has(hostname)) return;
+      seen.add(hostname);
+      domains.push(hostname);
+    } catch {
+      if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(raw) && !seen.has(raw.toLowerCase())) {
+        seen.add(raw.toLowerCase());
+        domains.push(raw.toLowerCase());
+      }
+    }
+  });
+  return domains.slice(0, 4);
+}
+
 function inferPreferredResearchLanguage(segmentContext = {}) {
   const searchQueries = Array.isArray(segmentContext?.search_queries) ? segmentContext.search_queries : [];
+  const { sectionContextText } = getSectionResearchSignals(segmentContext);
   if (searchQueries.some((item) => compactText(item))) {
     return searchQueries.some((item) => hasCyrillic(item)) ? "ru" : "en";
   }
   if (hasCyrillic(segmentContext?.visual_description)) return "ru";
   if (hasCyrillic(segmentContext?.text_quote)) return "ru";
+  if (hasCyrillic(sectionContextText)) return "ru";
   return "en";
 }
 
@@ -231,13 +321,15 @@ function getIntentSignals(result = {}, segmentContext = {}) {
   }
   const priorityMode = deriveResearchPriorityMode(segmentContext);
   const { textQuote, translatedTextQuote } = getSegmentTextSignals(segmentContext);
+  const { sectionContextText, sectionLinkHints } = getSectionResearchSignals(segmentContext);
   const searchTokens = tokenizeSegmentText(
     ...(Array.isArray(segmentContext?.search_queries) ? segmentContext.search_queries : []),
-    ...(Array.isArray(segmentContext?.search_keywords) ? segmentContext.search_keywords : [])
+    ...(Array.isArray(segmentContext?.search_keywords) ? segmentContext.search_keywords : []),
+    ...extractResearchLinkHintDomains(sectionLinkHints)
   );
   const topicTokens = deriveTopicTags(segmentContext);
   const visualTokens = tokenizeSegmentText(segmentContext?.visual_description);
-  const textTokens = tokenizeSegmentText(textQuote, translatedTextQuote);
+  const textTokens = tokenizeSegmentText(textQuote, translatedTextQuote, sectionContextText);
   const searchHits = countTokenHits(haystack, searchTokens);
   const topicHits = countTokenHits(haystack, topicTokens);
   const visualHits = countTokenHits(haystack, visualTokens);
@@ -443,6 +535,15 @@ function getMemorySignals(result = {}, sourceMemory = {}) {
     : (sourceMemory?.domains?.[domain] ?? null);
   const urlStats = sourceMemory?.urls?.[url] ?? null;
   const usageCount = Number(domainStats?.applied_count ?? 0) + Number(urlStats?.applied_count ?? 0);
+  const dismissedCount = Number(domainStats?.dismissed_count ?? 0) + Number(urlStats?.dismissed_count ?? 0);
+  const duplicateStoryCount = Number(domainStats?.duplicate_story_count ?? 0) + Number(urlStats?.duplicate_story_count ?? 0);
+  const badVisualCount = Number(domainStats?.bad_visual_count ?? 0) + Number(urlStats?.bad_visual_count ?? 0);
+  const screenshotFailCount =
+    Number(domainStats?.screenshot_fail_count ?? 0) + Number(urlStats?.screenshot_fail_count ?? 0);
+  const downloadFailCount = Number(domainStats?.download_fail_count ?? 0) + Number(urlStats?.download_fail_count ?? 0);
+  const paywallCount = Number(domainStats?.paywall_count ?? 0) + Number(urlStats?.paywall_count ?? 0);
+  const antiBotCount = Number(domainStats?.anti_bot_count ?? 0) + Number(urlStats?.anti_bot_count ?? 0);
+  const ageGateCount = Number(domainStats?.age_gate_count ?? 0) + Number(urlStats?.age_gate_count ?? 0);
   const sourceBonus = clampScore(
     Math.min(0.18, Number(domainStats?.source_count ?? 0) * 0.035) +
       Math.min(0.14, Number(domainStats?.helpful_count ?? 0) * 0.04) +
@@ -456,12 +557,54 @@ function getMemorySignals(result = {}, sourceMemory = {}) {
     0
   );
   const totalBonus = clampScore(Math.min(0.18, usageCount * 0.02), 0);
+  const sourcePenalty = clampScore(
+    Math.min(0.16, dismissedCount * 0.018) +
+      Math.min(0.12, duplicateStoryCount * 0.03) +
+      Math.min(0.12, paywallCount * 0.035),
+    0
+  );
+  const visualPenalty = clampScore(
+    Math.min(0.16, badVisualCount * 0.04) +
+      Math.min(0.16, screenshotFailCount * 0.04) +
+      Math.min(0.08, dismissedCount * 0.01),
+    0
+  );
+  const downloadPenalty = clampScore(
+    Math.min(0.18, downloadFailCount * 0.045) +
+      Math.min(0.14, antiBotCount * 0.04) +
+      Math.min(0.14, ageGateCount * 0.045) +
+      Math.min(0.1, paywallCount * 0.03),
+    0
+  );
+  const totalPenalty = clampScore(
+    Math.min(0.18, dismissedCount * 0.012) +
+      Math.min(0.12, duplicateStoryCount * 0.02) +
+      Math.min(0.14, badVisualCount * 0.025) +
+      Math.min(0.16, screenshotFailCount * 0.025) +
+      Math.min(0.18, downloadFailCount * 0.03) +
+      Math.min(0.14, paywallCount * 0.025) +
+      Math.min(0.14, antiBotCount * 0.025) +
+      Math.min(0.14, ageGateCount * 0.03),
+    0
+  );
   return {
     helpful_count: Number(domainStats?.helpful_count ?? 0),
     usage_count: usageCount,
+    dismissed_count: dismissedCount,
+    duplicate_story_count: duplicateStoryCount,
+    bad_visual_count: badVisualCount,
+    screenshot_fail_count: screenshotFailCount,
+    download_fail_count: downloadFailCount,
+    paywall_count: paywallCount,
+    anti_bot_count: antiBotCount,
+    age_gate_count: ageGateCount,
     source_bonus: sourceBonus,
     visual_bonus: visualBonus,
     total_bonus: totalBonus,
+    source_penalty: sourcePenalty,
+    visual_penalty: visualPenalty,
+    download_penalty: downloadPenalty,
+    total_penalty: totalPenalty,
     was_used: usageCount > 0
   };
 }
@@ -519,7 +662,8 @@ function mergeSingleScore(result, llmScore = {}, sourceProfiles = {}, sourceMemo
       Math.min(0.08, intent.text_match_score * 0.35) +
       memory.visual_bonus +
       Math.min(0.12, similarity.similarity_score * 0.18) +
-      Math.min(0.04, language.language_bonus * 0.5)
+      Math.min(0.04, language.language_bonus * 0.5) -
+      memory.visual_penalty
   );
   const source = clampScore(
       (clampScore(llmScore?.source_score, heuristic.source_score) * 0.7) +
@@ -529,16 +673,21 @@ function mergeSingleScore(result, llmScore = {}, sourceProfiles = {}, sourceMemo
       Math.min(0.1, intent.topic_match_score * 0.9) +
       memory.source_bonus +
       Math.min(0.1, similarity.similarity_score * 0.14) +
-      Math.min(0.05, language.language_bonus * 0.6)
+      Math.min(0.05, language.language_bonus * 0.6) -
+      memory.source_penalty
   );
   const freshness = clampScore((clampScore(llmScore?.freshness_score, heuristic.freshness_score) * 0.65) + (heuristic.freshness_score * 0.35));
-  const downloadability = clampScore((clampScore(llmScore?.downloadability_score, heuristic.downloadability_score) * 0.6) + (heuristic.downloadability_score * 0.4));
+  const downloadability = clampScore(
+    (clampScore(llmScore?.downloadability_score, heuristic.downloadability_score) * 0.6) +
+      (heuristic.downloadability_score * 0.4) -
+      memory.download_penalty
+  );
   const montage = clampScore((heuristic.montage_score * 0.75) + (visual * 0.25));
   const llmTotal = clampScore(llmScore?.total_score, 0);
   const total = clampScore(
     llmTotal > 0
-      ? (llmTotal * 0.55) + (relevance * 0.1) + (visual * 0.15) + (source * 0.08) + (freshness * 0.04) + (downloadability * 0.03) + (montage * 0.05) + memory.total_bonus + Math.min(0.08, similarity.similarity_score * 0.1)
-      : (relevance * 0.34) + (visual * 0.22) + (source * 0.16) + (freshness * 0.08) + (downloadability * 0.08) + (montage * 0.12) + memory.total_bonus + Math.min(0.08, similarity.similarity_score * 0.1)
+      ? (llmTotal * 0.55) + (relevance * 0.1) + (visual * 0.15) + (source * 0.08) + (freshness * 0.04) + (downloadability * 0.03) + (montage * 0.05) + memory.total_bonus + Math.min(0.08, similarity.similarity_score * 0.1) - memory.total_penalty
+      : (relevance * 0.34) + (visual * 0.22) + (source * 0.16) + (freshness * 0.08) + (downloadability * 0.08) + (montage * 0.12) + memory.total_bonus + Math.min(0.08, similarity.similarity_score * 0.1) - memory.total_penalty
   );
   const bucket = total >= 0.82 ? "strong" : total >= 0.64 ? "good" : total >= 0.48 ? "possible" : "weak";
   const reasonTags = [
@@ -552,6 +701,14 @@ function mergeSingleScore(result, llmScore = {}, sourceProfiles = {}, sourceMemo
     heuristic.visual_hints.includes("screenshot_friendly") ? "screenshot_friendly" : null,
     memory.helpful_count > 0 ? `helpful:${memory.helpful_count}` : null,
     memory.was_used ? `used_before:${memory.usage_count}` : null,
+    memory.dismissed_count > 0 ? "dismissed_before" : null,
+    memory.duplicate_story_count > 0 ? "duplicate_story" : null,
+    memory.bad_visual_count > 0 ? "bad_visual_history" : null,
+    memory.screenshot_fail_count > 0 ? "screenshot_fail_risk" : null,
+    memory.download_fail_count > 0 ? "download_fail_risk" : null,
+    memory.paywall_count > 0 ? "paywall_prone" : null,
+    memory.anti_bot_count > 0 ? "anti_bot_prone" : null,
+    memory.age_gate_count > 0 ? "age_gate_prone" : null,
     similarity.similarity_hits > 0 ? `similar_segments:${similarity.similarity_hits}` : null,
     similarity.similarity_score >= 0.35 ? "high_similarity" : null,
     intent.search_hits > 0 ? `search_match:${intent.search_hits}` : null,
@@ -572,6 +729,14 @@ function mergeSingleScore(result, llmScore = {}, sourceProfiles = {}, sourceMemo
     heuristic.visual_hints.includes("preferred_article") ? "preferred article source" : null,
     heuristic.visual_hints.includes("screenshot") ? "good for screenshot" : null,
     heuristic.visual_hints.includes("trusted") ? "trusted source" : null,
+    memory.dismissed_count > 0 ? "was dismissed before" : null,
+    memory.duplicate_story_count > 0 ? "often duplicates existing story lines" : null,
+    memory.bad_visual_count > 0 ? "visual quality has been weak before" : null,
+    memory.screenshot_fail_count > 0 ? "screenshots failed before" : null,
+    memory.download_fail_count > 0 ? "downloads failed before" : null,
+    memory.paywall_count > 0 ? "paywall risk" : null,
+    memory.anti_bot_count > 0 ? "anti-bot risk" : null,
+    memory.age_gate_count > 0 ? "age-gate risk" : null,
     heuristic.profile_metadata?.responsive_design ? "responsive site" : null,
     heuristic.profile_metadata?.blocked_in_rf ? "restricted in RF" : null,
     heuristic.profile_metadata?.watermarks ? "watermarked media" : null,
@@ -584,6 +749,7 @@ function mergeSingleScore(result, llmScore = {}, sourceProfiles = {}, sourceMemo
     memory.was_used ? "used successfully before" : null,
     similarity.similarity_hits > 0 ? "worked on similar segments" : null
   ].filter(Boolean).join(", ") || "Useful candidate";
+  const category = categorizeResearchResult(result, { visual_hints: heuristic.visual_hints }, sourceProfiles);
 
   return {
     result_id: String(result?.id ?? "").trim(),
@@ -605,6 +771,8 @@ function mergeSingleScore(result, llmScore = {}, sourceProfiles = {}, sourceMemo
     topic_match_score: Number(intent.topic_match_score.toFixed(3)),
     visual_match_score: Number(intent.visual_match_score.toFixed(3)),
     text_match_score: Number(intent.text_match_score.toFixed(3)),
+    category_id: category.id,
+    category_label: category.label,
     reason_tags: reasonTags,
     reason
   };

@@ -18,12 +18,16 @@ const DEFAULT_SOURCE_PROFILES = {
     "wikipedia.org"
   ],
   preferred_article_domains: [],
+  preview_image_domains: [],
   video_platform_domains: [
     "youtube.com",
     "youtu.be",
     "vimeo.com",
     "rutube.ru",
-    "dailymotion.com"
+    "dailymotion.com",
+    "ok.ru",
+    "vkvideo.ru",
+    "vk.ru"
   ],
   social_domains: [
     "x.com",
@@ -168,6 +172,7 @@ function normalizeSourceProfiles(input = {}) {
     trusted_domains: normalizeDomainList(merged.trusted_domains),
     blocked_domains: normalizeDomainList(merged.blocked_domains),
     preferred_article_domains: normalizeDomainList(merged.preferred_article_domains),
+    preview_image_domains: normalizeDomainList(merged.preview_image_domains),
     video_platform_domains: normalizeDomainList(merged.video_platform_domains),
     social_domains: normalizeDomainList(merged.social_domains),
     downloadable_domains: normalizeDomainList(merged.downloadable_domains),
@@ -216,6 +221,12 @@ export function isBlockedResearchDomain(domain, sourceProfiles = {}) {
       profile?.blocked ||
       profile?.blocked_in_rf
   );
+}
+
+export function isUaResearchDomain(domain) {
+  const normalizedDomain = String(domain ?? "").trim().toLowerCase();
+  if (!normalizedDomain) return false;
+  return normalizedDomain === "ua" || normalizedDomain.endsWith(".ua");
 }
 
 export function createSourceProfilesStore({ dataDir, readOptionalJson, writeJson }) {

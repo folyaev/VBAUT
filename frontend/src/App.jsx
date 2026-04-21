@@ -12,6 +12,50 @@ import { SegmentVisualEditor } from "./components/SegmentVisualEditor.jsx";
 import { ScenarioBlocksHeader } from "./components/ScenarioBlocksHeader.jsx";
 import { ScenarioGroupSection } from "./components/ScenarioGroupSection.jsx";
 import { ScenarioLinksPanel } from "./components/ScenarioLinksPanel.jsx";
+import {
+  buildResearchCategoryBuckets,
+  RESEARCH_CATEGORY_ORDER,
+  RESEARCH_CATEGORY_LABELS
+} from "./utils/researchCategories.js";
+import {
+  collectResearchMemoryBadges,
+  formatResearchCandidateRoleLabel,
+  formatResearchReasonTagLabel,
+  getVisibleResearchReasonTags,
+  hasSearchDecisionContent,
+  hasVisualDecisionContent,
+  inferResearchCandidateRole
+} from "./utils/researchUi.js";
+import {
+  normalizeResearchBundleTrace,
+  normalizeResearchDismissedUrls,
+  normalizeResearchSources,
+  normalizeSegmentResearchContextSettings,
+  normalizeSegmentTagList
+} from "./utils/segmentResearchState.js";
+import {
+  buildMediaFileUrl,
+  emptySearchDecision,
+  emptyVisualDecision,
+  FORMAT_HINT_LABELS,
+  formatFramesAsTimecode,
+  isVideoMediaPath,
+  normalizeMediaFilePath,
+  normalizeMediaFilePathList,
+  normalizeMediaFileTimecodes,
+  normalizeMediaStartTimecode,
+  normalizePriority,
+  normalizeQueryList,
+  normalizeSearchDecision,
+  normalizeVisualDecision,
+  partsToTimecode,
+  parseTimecodeToFrames,
+  PRIORITY_LABELS,
+  splitTimecodeToParts,
+  TIMECODE_EDIT_FPS,
+  VISUAL_TYPE_DEFAULTS,
+  VISUAL_TYPE_LABELS
+} from "./utils/visualDecision.js";
 import { useCollaborativeSession } from "./hooks/useCollaborativeSession.js";
 import { useReleaseAssistantActions } from "./hooks/useReleaseAssistantActions.js";
 import { useMediaManager } from "./hooks/useMediaManager.js";
@@ -93,6 +137,15 @@ const defaultConfig = {
     { id: "perplexity", label: "Copy and Perplexity", url: "https://www.perplexity.ai/", action: "copy_open" }
   ]
 };
+const NEW_SCENARIO_TEMPLATE = `# UT
+
+Оформление видео
+
+### Интро
+Привет! Я Руслан Усачев и сегодня мы поговорим о самых интересных новостях и событиях в России и мире за последнее время.
+
+### Комплимент
+Это все новости на сегодня.`;
 const HEADING_SEARCH_RU_ENGINE_IDS = new Set(["vk", "vk_video", "perplexity"]);
 const HEADING_EN_SEARCH_ENGINES = [
   { id: "yt_reuters", label: "@Reuters", url: "https://www.youtube.com/@Reuters/search?query=" },
@@ -187,193 +240,6 @@ const isVkVideoUrl = (parsedUrl) => {
     return pathWithQuery.startsWith("/video") || pathWithQuery.includes("/video-") || pathWithQuery.includes("video");
   }
   return false;
-};
-const VIDEO_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|avi|mpg|mpeg|mts|m2ts)(?:$|[?#])/i;
-const TIMECODE_EDIT_FPS = 50;
-const VISUAL_TYPE_LABELS = {
-  video: "\u0412\u0438\u0434\u0435\u043e",
-  portrait: "\u041f\u043e\u0440\u0442\u0440\u0435\u0442",
-  image: "\u041a\u0430\u0440\u0442\u0438\u043d\u043a\u0430",
-  infographic: "\u0418\u043d\u0444\u043e\u0433\u0440\u0430\u0444\u0438\u043a\u0430",
-  map: "\u041a\u0430\u0440\u0442\u0430",
-  interface: "\u0418\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441",
-  generation_collage: "\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f / \u041a\u043e\u043b\u043b\u0430\u0436",
-  graphic_element: "\u0413\u0440\u0430\u0444\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u044d\u043b\u0435\u043c\u0435\u043d\u0442",
-  no_visual: "\u0411\u0435\u0437 \u0432\u0438\u0437\u0443\u0430\u043b\u0430"
-};
-const FORMAT_HINT_LABELS = {
-  "2:1": "2:1",
-  "1:1": "1:1",
-  "\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a/\u0426\u0438\u0442\u0430\u0442\u0430": "\u{1F4F0} \u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a/\u0426\u0438\u0442\u0430\u0442\u0430",
-  "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442": "\u{1F4DD} \u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442"
-};
-const PRIORITY_LABELS = {
-  Обязательно: "\u{1F534} Обязательно",
-  Рекомендуется: "\u{1F7E1} Рекомендуется",
-  "При наличии": "\u{1F7E2} При наличии"
-};
-const VISUAL_TYPE_DEFAULTS = {
-  video: { format_hint: "2:1", priority: "Обязательно" },
-  portrait: { format_hint: "1:1", priority: "Обязательно" },
-  image: { format_hint: "2:1", priority: "Обязательно" },
-  infographic: { format_hint: "2:1", priority: "Обязательно" },
-  map: { format_hint: "2:1", priority: "Обязательно" },
-  interface: { format_hint: "2:1", priority: "Обязательно" },
-  generation_collage: { format_hint: "2:1", priority: "Обязательно" },
-  graphic_element: { format_hint: "2:1", priority: "Обязательно" },
-  no_visual: { format_hint: null, priority: null }
-};
-const emptyVisualDecision = () => ({
-  type: "no_visual",
-  description: "",
-  format_hint: null,
-  duration_hint_sec: null,
-  priority: null,
-  media_file_path: null,
-  media_file_paths: [],
-  media_file_timecodes: {},
-  media_start_timecode: null
-});
-const emptySearchDecision = () => ({
-  keywords: [],
-  queries: []
-});
-const normalizeVisualDecision = (decision, config) => {
-  if (!decision || typeof decision !== "object") return emptyVisualDecision();
-  const typeRaw = String(decision.type ?? decision.visual_type ?? "").toLowerCase().trim();
-  const legacyMap = {
-    event_footage: "video",
-    location: "image",
-    explainer_graphic: "infographic",
-    interface_ui: "interface",
-    archive: "image",
-    comparison: "generation_collage",
-    generated_art: "generation_collage"
-  };
-  const mappedType = legacyMap[typeRaw] ?? typeRaw;
-  const type = (config?.visualTypes ?? defaultConfig.visualTypes).includes(mappedType) ? mappedType : "no_visual";
-  const description = typeof decision.description === "string" ? decision.description : "";
-  const format_hint = normalizeFormatHint(decision.format_hint, config);
-  const durationRaw = decision.duration_hint_sec ?? decision.duration_hint ?? null;
-  const duration_hint_sec = typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : null;
-  const priority = normalizePriority(decision.priority, config);
-  const mediaPathCandidates = [];
-  if (Array.isArray(decision.media_file_paths)) {
-    mediaPathCandidates.push(...decision.media_file_paths);
-  } else if (decision.media_file_paths != null) {
-    mediaPathCandidates.push(decision.media_file_paths);
-  }
-  mediaPathCandidates.push(decision.media_file_path ?? decision.media_path ?? null);
-  const media_file_paths = normalizeMediaFilePathList(mediaPathCandidates);
-  const media_file_path = media_file_paths[0] ?? null;
-  const media_file_timecodes = normalizeMediaFileTimecodes(
-    decision.media_file_timecodes ?? decision.media_start_timecodes ?? null,
-    media_file_paths
-  );
-  const legacyTimecode = normalizeMediaStartTimecode(decision.media_start_timecode ?? decision.media_start ?? null);
-  const firstVideoPath = media_file_paths.find((mediaPath) => isVideoMediaPath(mediaPath)) ?? null;
-  if (firstVideoPath && legacyTimecode && !media_file_timecodes[firstVideoPath]) {
-    media_file_timecodes[firstVideoPath] = legacyTimecode;
-  }
-  const media_start_timecode = firstVideoPath ? media_file_timecodes[firstVideoPath] ?? legacyTimecode ?? null : null;
-  return {
-    type,
-    description,
-    format_hint,
-    duration_hint_sec,
-    priority,
-    media_file_path,
-    media_file_paths,
-    media_file_timecodes,
-    media_start_timecode
-  };
-};
-const normalizeFormatHint = (value, config) => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const legacy = { LONG: "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442", SQUARE: "1:1" };
-  const upper = trimmed.toUpperCase();
-  if (legacy[upper]) return legacy[upper];
-  const list = config?.formatHints ?? defaultConfig.formatHints;
-  const normalized = trimmed.toLowerCase();
-  const match = list.find((hint) => hint.toLowerCase() === normalized);
-  return match ?? null;
-};
-const normalizePriority = (value, config) => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const normalized = trimmed.toLowerCase();
-  const legacy = {
-    high: "Обязательно",
-    medium: "Рекомендуется",
-    low: "При наличии"
-  };
-  if (legacy[normalized]) return legacy[normalized];
-  const list = config?.priorities ?? defaultConfig.priorities;
-  const match = list.find((priority) => priority.toLowerCase() === normalized);
-  return match ?? null;
-};
-const normalizeKeywordList = (value, limit) => {
-  if (!value) return [];
-  const items = Array.isArray(value) ? value : String(value).split(/[,;\n]+/);
-  const normalized = items.map((item) => String(item ?? "").trim()).filter(Boolean);
-  if (!limit) return normalized;
-  return normalized.slice(0, limit);
-};
-const normalizeQueryList = (value, limit) => {
-  if (!value) return [];
-  const items = Array.isArray(value) ? value : String(value).split("\n");
-  const normalized = items.map((item) => String(item ?? "").replace(/\r/g, ""));
-  if (!limit) return normalized;
-  return normalized.slice(0, limit);
-};
-const normalizeResearchSources = (value) => {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") return null;
-      const normalized = {
-        url: String(entry.url ?? "").trim(),
-        title: String(entry.title ?? "").trim(),
-        domain: String(entry.domain ?? "").trim(),
-        snippet: String(entry.snippet ?? "").trim(),
-        applied_at: String(entry.applied_at ?? "").trim(),
-        role: String(entry.role ?? "").trim(),
-        attachment_role: String(entry.attachment_role ?? "").trim(),
-        asset_id: String(entry.asset_id ?? "").trim(),
-        reason: String(entry.reason ?? "").trim(),
-        scores: entry.scores && typeof entry.scores === "object" ? { ...entry.scores } : null
-      };
-      return normalized.url || normalized.title || normalized.domain ? normalized : null;
-    })
-    .filter(Boolean);
-};
-const normalizeResearchBundleTrace = (value) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const normalizePick = (pick) => {
-    if (!pick || typeof pick !== "object" || Array.isArray(pick)) return null;
-    const normalized = {
-      result_id: String(pick.result_id ?? "").trim(),
-      title: String(pick.title ?? "").trim(),
-      domain: String(pick.domain ?? "").trim(),
-      url: String(pick.url ?? "").trim(),
-      role: String(pick.role ?? "").trim(),
-      asset_id: String(pick.asset_id ?? "").trim(),
-      attachment_id: String(pick.attachment_id ?? "").trim()
-    };
-    return normalized.result_id || normalized.title || normalized.url ? normalized : null;
-  };
-  const normalized = {
-    run_id: String(value.run_id ?? "").trim(),
-    source_result_id: String(value.source_result_id ?? "").trim(),
-    visual_result_id: String(value.visual_result_id ?? "").trim(),
-    applied_at: String(value.applied_at ?? "").trim(),
-    source: normalizePick(value.source),
-    visual: normalizePick(value.visual)
-  };
-  return normalized.run_id || normalized.source || normalized.visual ? normalized : null;
 };
 const getInitialTheme = () => {
   if (typeof window === "undefined") return "dark";
@@ -821,119 +687,6 @@ const formatBytes = (value) => {
   const digits = current >= 100 ? 0 : current >= 10 ? 1 : 2;
   return `${current.toFixed(digits)} ${units[idx]}`;
 };
-const normalizeMediaFilePath = (value) => {
-  if (typeof value !== "string") return null;
-  const normalized = value.replace(/\\/g, "/").trim();
-  if (!normalized) return null;
-  return normalized.length > 512 ? normalized.slice(0, 512) : normalized;
-};
-const normalizeMediaFilePathList = (value) => {
-  const items = Array.isArray(value) ? value : value == null ? [] : [value];
-  const result = [];
-  const seen = new Set();
-  items.forEach((item) => {
-    const normalized = normalizeMediaFilePath(item);
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    result.push(normalized);
-  });
-  return result.slice(0, 32);
-};
-const normalizeMediaStartTimecode = (value) => {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim();
-  if (!normalized) return null;
-  return normalized.length > 32 ? normalized.slice(0, 32) : normalized;
-};
-const normalizeMediaFileTimecodes = (value, mediaPaths = []) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const allowed = new Set(
-    normalizeMediaFilePathList(mediaPaths).filter((mediaPath) => isVideoMediaPath(mediaPath))
-  );
-  const result = {};
-  Object.entries(value).forEach(([rawPath, rawTimecode]) => {
-    const normalizedPath = normalizeMediaFilePath(rawPath);
-    if (!normalizedPath || !allowed.has(normalizedPath)) return;
-    const normalizedTimecode = normalizeMediaStartTimecode(rawTimecode);
-    if (!normalizedTimecode) return;
-    result[normalizedPath] = normalizedTimecode;
-  });
-  return result;
-};
-
-const parseTimecodeToFrames = (value, fps = TIMECODE_EDIT_FPS) => {
-  const raw = String(value ?? "").trim();
-  if (!raw) return 0;
-  const normalizedRaw = raw.replace(",", ".");
-
-  if (/^\d+(?:\.\d+)?$/.test(normalizedRaw)) {
-    const sec = Number(normalizedRaw);
-    if (!Number.isFinite(sec) || sec < 0) return null;
-    return Math.max(0, Math.round(sec * fps));
-  }
-
-  const parts = raw.split(":").map((part) => part.trim());
-  if (parts.length < 2 || parts.length > 4) return null;
-  if (parts.some((part) => !/^\d+(?:[.,]\d+)?$/.test(part))) return null;
-  const nums = parts.map((part) => Number(part.replace(",", ".")));
-  if (nums.some((num) => !Number.isFinite(num) || num < 0)) return null;
-
-  if (parts.length === 2) {
-    const [mm, ss] = nums;
-    return Math.max(0, Math.round((mm * 60 + ss) * fps));
-  }
-  if (parts.length === 3) {
-    const [hh, mm, ss] = nums;
-    return Math.max(0, Math.round((hh * 3600 + mm * 60 + ss) * fps));
-  }
-
-  const [hh, mm, ss, ff] = nums;
-  return Math.max(0, Math.round((hh * 3600 + mm * 60 + ss) * fps + ff));
-};
-
-const formatFramesAsTimecode = (frames, fps = TIMECODE_EDIT_FPS) => {
-  const total = Math.max(0, Math.round(Number(frames) || 0));
-  const perHour = 3600 * fps;
-  const perMinute = 60 * fps;
-  const hh = Math.floor(total / perHour);
-  const mm = Math.floor((total % perHour) / perMinute);
-  const ss = Math.floor((total % perMinute) / fps);
-  const ff = total % fps;
-  const pad2 = (num) => String(num).padStart(2, "0");
-  return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}:${pad2(ff)}`;
-};
-const splitTimecodeToParts = (value, fps = TIMECODE_EDIT_FPS) => {
-  const parsed = parseTimecodeToFrames(value, fps);
-  const totalFrames = Math.max(0, parsed == null ? 0 : parsed);
-  const totalSeconds = Math.floor(totalFrames / fps);
-  const hh = Math.floor(totalSeconds / 3600);
-  const mm = Math.floor((totalSeconds % 3600) / 60);
-  const ss = totalSeconds % 60;
-  return {
-    hh: hh > 0 ? String(hh) : "",
-    mm: mm > 0 ? String(mm) : "",
-    ss: ss > 0 ? String(ss) : ""
-  };
-};
-
-const partsToTimecode = (parts, fps = TIMECODE_EDIT_FPS) => {
-  const hh = Math.max(0, Number.parseInt(String(parts?.hh ?? "0"), 10) || 0);
-  const mm = Math.min(59, Math.max(0, Number.parseInt(String(parts?.mm ?? "0"), 10) || 0));
-  const ss = Math.min(59, Math.max(0, Number.parseInt(String(parts?.ss ?? "0"), 10) || 0));
-  const pad2 = (num) => String(num).padStart(2, "0");
-  return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
-};
-
-const isVideoMediaPath = (value) => {
-  if (!value) return false;
-  return VIDEO_MEDIA_PATH_RE.test(String(value));
-};
-const buildMediaFileUrl = (docId, mediaPath) => {
-  const id = String(docId ?? "").trim();
-  const normalizedPath = normalizeMediaFilePath(mediaPath);
-  if (!id || !normalizedPath) return "";
-  return `/api/documents/${encodeURIComponent(id)}/media/file?path=${encodeURIComponent(normalizedPath)}`;
-};
 const getFileNameFromDisposition = (value) => {
   const header = String(value ?? "").trim();
   if (!header) return "";
@@ -1190,24 +943,6 @@ const buildSessionPayloadFromState = ({ scriptText, notionUrl, segments }) => {
   };
 };
 const getSessionFingerprint = (snapshot) => JSON.stringify(snapshot ?? {});
-const normalizeSegmentTagList = (value, limit = 12) =>
-  [...new Set(
-    (Array.isArray(value) ? value : [value])
-      .flatMap((item) => String(item ?? "").split(/[\n,;|]+/))
-      .map((item) => item.replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-  )].slice(0, limit);
-const normalizeSegmentResearchContextSettings = (segment = {}) => ({
-  research_use_topic_title: Boolean(segment?.research_use_topic_title),
-  research_use_theme_tags: Boolean(segment?.research_use_theme_tags)
-});
-const normalizeSearchDecision = (decision, config) => {
-  if (!decision || typeof decision !== "object") return emptySearchDecision();
-  const limits = config?.searchLimits ?? defaultConfig.searchLimits;
-  const keywords = normalizeKeywordList(decision.keywords, limits.maxKeywords);
-  const queries = normalizeQueryList(decision.queries ?? decision.search_queries ?? decision.searchQueries, limits.maxQueries);
-  return { keywords, queries };
-};
 const normalizeSegmentBlockType = (value) => {
   const normalized = String(value ?? "").toLowerCase().trim();
   return normalized === "links" ? "links" : "news";
@@ -2564,6 +2299,73 @@ const getSegmentGroupTitle = (segment) => {
   const title = normalizeTopicTitleForDisplay(segment.section_title ?? "");
   return title || "\u0411\u0435\u0437 \u0442\u0435\u043c\u044b";
 };
+const normalizeCommentAnchorBase = (value) =>
+  String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+const resolveCommentAnchorSegmentId = (segment, segments = []) => {
+  if (!isCommentsSegment(segment)) return "";
+  const raw = String(segment?.segment_id ?? "").trim().replace(/^comments_/i, "");
+  if (!raw) return "";
+  let bestId = "";
+  let bestLength = -1;
+  segments.forEach((candidate) => {
+    if (!candidate || isCommentsSegment(candidate) || normalizeSegmentBlockType(candidate?.block_type) === "links") return;
+    const candidateId = String(candidate?.segment_id ?? "").trim();
+    const normalizedCandidate = normalizeCommentAnchorBase(candidateId);
+    if (!normalizedCandidate) return;
+    if (raw === normalizedCandidate || raw.startsWith(`${normalizedCandidate}_`)) {
+      if (normalizedCandidate.length > bestLength) {
+        bestId = candidateId;
+        bestLength = normalizedCandidate.length;
+      }
+    }
+  });
+  return bestId;
+};
+const getScenarioSegmentOrder = (segment, fallbackIndex = Number.MAX_SAFE_INTEGER, anchorOrder = null) => {
+  const sectionIndex = Number.isFinite(Number(segment?.section_index))
+    ? Number(segment.section_index)
+    : Number.MAX_SAFE_INTEGER;
+  const blockType = normalizeSegmentBlockType(segment?.block_type);
+  const linksRank = blockType === "links" ? -1 : 0;
+  const segmentId = String(anchorOrder?.segmentId ?? segment?.segment_id ?? "").trim();
+  const numericSuffixMatch = segmentId.match(/_(\d{1,4})$/);
+  const numericSuffix = numericSuffixMatch ? Number.parseInt(numericSuffixMatch[1], 10) : Number.MAX_SAFE_INTEGER;
+  const commentRank = anchorOrder ? -1 : 0;
+  const effectiveSectionIndex = anchorOrder?.sectionIndex ?? sectionIndex;
+  return { sectionIndex: effectiveSectionIndex, linksRank, numericSuffix, commentRank, fallbackIndex };
+};
+const sortSegmentsInScenarioOrder = (segments = []) =>
+  (() => {
+    const list = Array.isArray(segments) ? segments : [];
+    const baseOrders = new Map(
+      list.map((segment, index) => [String(segment?.segment_id ?? "").trim(), getScenarioSegmentOrder(segment, index)])
+    );
+    return list
+      .map((segment, index) => {
+        const anchorSegmentId = resolveCommentAnchorSegmentId(segment, list);
+        const anchorOrder = anchorSegmentId ? baseOrders.get(anchorSegmentId) ?? null : null;
+        return { segment, index, order: getScenarioSegmentOrder(segment, index, anchorOrder) };
+      })
+    .sort((left, right) => {
+      if (left.order.sectionIndex !== right.order.sectionIndex) {
+        return left.order.sectionIndex - right.order.sectionIndex;
+      }
+      if (left.order.linksRank !== right.order.linksRank) {
+        return left.order.linksRank - right.order.linksRank;
+      }
+      if (left.order.commentRank !== right.order.commentRank) {
+        return left.order.commentRank - right.order.commentRank;
+      }
+      if (left.order.numericSuffix !== right.order.numericSuffix) {
+        return left.order.numericSuffix - right.order.numericSuffix;
+      }
+      return left.order.fallbackIndex - right.order.fallbackIndex;
+    })
+      .map((item) => item.segment);
+  })();
 const getSubSegmentBaseId = (segmentId) => {
   const value = String(segmentId ?? "");
   const parts = value.split("_");
@@ -2592,106 +2394,6 @@ const getNextSubSegmentId = (segments, baseId) => {
   }
   return candidate;
 };
-const hasVisualDecisionContent = (decision) => {
-  if (!decision) return false;
-  if (decision.description) return true;
-  if (decision.format_hint) return true;
-  if (decision.priority) return true;
-  if (decision.duration_hint_sec !== null && decision.duration_hint_sec !== undefined) return true;
-  if (normalizeMediaFilePath(decision.media_file_path ?? null)) return true;
-  if (normalizeMediaFilePathList(decision.media_file_paths).length > 0) return true;
-  return decision.type && decision.type !== "no_visual";
-};
-const hasSearchDecisionContent = (decision) => {
-  if (!decision) return false;
-  if (Array.isArray(decision.keywords) && decision.keywords.length > 0) return true;
-  if (Array.isArray(decision.queries) && decision.queries.length > 0) return true;
-  return false;
-};
-const inferResearchCandidateRole = (segment, ranked = {}) => {
-  const sourceScore = Number(ranked?.source_score ?? 0);
-  const visualScore = Number(ranked?.visual_score ?? 0);
-  const montageScore = Number(ranked?.montage_score ?? 0);
-  const totalScore = Number(ranked?.total_score ?? 0);
-  const hints = (Array.isArray(ranked?.visual_hints) ? ranked.visual_hints : []).map((item) =>
-    String(item ?? "").trim().toLowerCase()
-  );
-  const hasVisual = hasVisualDecisionContent(segment?.visual_decision);
-  const hasSearch = hasSearchDecisionContent(segment?.search_decision);
-  const visualCandidate =
-    hints.some((item) => ["video", "image", "screenshot", "downloadable"].includes(item)) ||
-    visualScore >= 0.68 ||
-    montageScore >= 0.68;
-
-  if (visualCandidate && (!hasVisual || visualScore >= sourceScore + 0.08)) return "visual_candidate";
-  if (!hasSearch && (sourceScore >= 0.64 || totalScore >= 0.8)) return "main_source";
-  if (sourceScore >= 0.56) return hasSearch ? "backup_source" : "main_source";
-  if (visualCandidate) return "visual_candidate";
-  return "reference";
-};
-const formatResearchCandidateRoleLabel = (value) => {
-  const key = String(value ?? "").trim().toLowerCase();
-  const labels = {
-    main_source: "Source",
-    backup_source: "Source",
-    visual_candidate: "Visual",
-    reference: "Reference"
-  };
-  return labels[key] ?? (key || "Candidate");
-};
-const collectResearchMemoryBadges = (ranked = {}) => {
-  const helpfulCount = Number(
-    Array.isArray(ranked?.reason_tags)
-      ? String(
-          ranked.reason_tags.find((tag) => String(tag ?? "").trim().toLowerCase().startsWith("helpful:")) ?? ""
-        ).split(":")[1]
-      : 0
-  );
-  const usageCount = Number(ranked?.memory_usage_count ?? 0);
-  const badges = [];
-  if (helpfulCount > 0) {
-    badges.push(helpfulCount > 1 ? `Helpful x${helpfulCount}` : "Helpful before");
-  }
-  if (usageCount > 0) {
-    badges.push(usageCount > 1 ? `Used x${usageCount}` : "Used before");
-  }
-  return badges;
-};
-const formatResearchReasonTagLabel = (tag) => {
-  const normalized = String(tag ?? "").trim().toLowerCase();
-  if (!normalized) return "";
-  if (normalized === "ru_blocked") return "RU blocked";
-  if (normalized === "responsive") return "Responsive";
-  if (normalized === "watermarks") return "Watermarks";
-  if (normalized.startsWith("quality:")) return String(tag).split(":")[1] || "";
-  if (normalized.startsWith("lang:")) {
-    const value = String(tag).split(":")[1] || "";
-    return value ? `Lang ${value.toUpperCase()}` : "";
-  }
-  if (normalized === "high_similarity") return "High similarity";
-  if (normalized.startsWith("similar_segments:")) {
-    const value = String(tag).split(":")[1] || "";
-    return value ? `Similar x${value}` : "";
-  }
-  if (normalized.startsWith("search_match:")) {
-    const value = String(tag).split(":")[1] || "";
-    return value ? `Search x${value}` : "";
-  }
-  if (normalized.startsWith("topic_match:")) {
-    const value = String(tag).split(":")[1] || "";
-    return value ? `Topic x${value}` : "";
-  }
-  if (normalized.startsWith("visual_match:")) {
-    const value = String(tag).split(":")[1] || "";
-    return value ? `Visual x${value}` : "";
-  }
-  return String(tag ?? "").trim().replace(/_/g, " ");
-};
-const getVisibleResearchReasonTags = (ranked = {}) =>
-  (Array.isArray(ranked?.reason_tags) ? ranked.reason_tags : []).filter((tag) => {
-    const normalized = String(tag ?? "").trim().toLowerCase();
-    return normalized && !normalized.startsWith("helpful:") && !normalized.startsWith("used_before:");
-  }).map(formatResearchReasonTagLabel).filter(Boolean);
 const collectScenarioLinks = (segments = []) => {
   const seen = new Set();
   const result = [];
@@ -2716,7 +2418,7 @@ const collectSegmentsNeedingVisual = (segments = []) => {
   const result = [];
   segments.forEach((segment) => {
     const blockType = String(segment?.block_type ?? "").trim().toLowerCase();
-    if (!segment || blockType === "links" || isCommentsSegment(segment)) return;
+    if (!segment || blockType === "links" || isCommentsSegment(segment) || Boolean(segment?.is_topic_research_anchor)) return;
     if (hasVisualDecisionContent(segment.visual_decision)) return;
     const links = dedupeLinks(segment.links ?? []).map((item) => normalizeLinkUrl(item?.url ?? item ?? "")).filter(Boolean);
     result.push({
@@ -3249,55 +2951,15 @@ const LegacySegmentCard = React.memo(function LegacySegmentCard({
       .filter((item) => item.result)
       .slice(0, 12);
   }, [researchRun]);
-  const researchBuckets = React.useMemo(() => {
-    const allItems = Array.isArray(researchResults) ? researchResults : [];
-    const sources = [...allItems]
-      .sort(
-        (a, b) =>
-          Number(b?.ranked?.source_score ?? 0) - Number(a?.ranked?.source_score ?? 0) ||
-          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
-      )
-      .slice(0, 6);
-    const visuals = [...allItems]
-      .filter((item) => {
-        const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
-        return (
-          hints.length > 0 ||
-          Number(item?.ranked?.montage_score ?? 0) >= 0.55 ||
-          Number(item?.ranked?.visual_score ?? 0) >= 0.58
-        );
-      })
-      .sort(
-        (a, b) =>
-          Number(b?.ranked?.montage_score ?? b?.ranked?.visual_score ?? 0) -
-            Number(a?.ranked?.montage_score ?? a?.ranked?.visual_score ?? 0) ||
-          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
-      )
-      .slice(0, 6);
-    const downloadables = [...allItems]
-      .filter((item) => {
-        const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
-        return hints.includes("downloadable") || Number(item?.ranked?.downloadability_score ?? 0) >= 0.62;
-      })
-      .sort(
-        (a, b) =>
-          Number(b?.ranked?.downloadability_score ?? 0) - Number(a?.ranked?.downloadability_score ?? 0) ||
-          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
-      )
-      .slice(0, 6);
-    return {
-      all: allItems.slice(0, 6),
-      sources,
-      visuals,
-      downloadables
-    };
-  }, [researchResults]);
+  const researchBuckets = React.useMemo(() => buildResearchCategoryBuckets(researchResults), [researchResults]);
   const researchViewTabs = React.useMemo(
     () => [
-      { id: "all", label: "All", count: researchBuckets.all.length },
-      { id: "sources", label: "Top Sources", count: researchBuckets.sources.length },
-      { id: "visuals", label: "Top Visuals", count: researchBuckets.visuals.length },
-      { id: "downloadables", label: "Downloadables", count: researchBuckets.downloadables.length }
+      { id: "all", label: RESEARCH_CATEGORY_LABELS.all, count: researchBuckets.all.length },
+      ...RESEARCH_CATEGORY_ORDER.map((categoryId) => ({
+        id: categoryId,
+        label: RESEARCH_CATEGORY_LABELS[categoryId],
+        count: researchBuckets[categoryId]?.length ?? 0
+      }))
     ],
     [researchBuckets]
   );
@@ -3356,9 +3018,37 @@ const LegacySegmentCard = React.memo(function LegacySegmentCard({
     if (researchRoleFilter === "all") return phaseScoped;
     return phaseScoped.filter(({ ranked }) => inferResearchCandidateRole(segment, ranked) === researchRoleFilter);
   }, [getResearchResultPhase, researchBuckets, researchPhaseFilter, researchRoleFilter, researchView, segment]);
-  const bestSourceCandidate = researchBuckets.sources[0]?.result ?? null;
-  const bestVisualCandidate = researchBuckets.visuals[0]?.result ?? null;
-  const bestDownloadableCandidate = researchBuckets.downloadables[0]?.result ?? null;
+  const bestSourceCandidate = [...researchResults]
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.source_score ?? 0) - Number(a?.ranked?.source_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.result ?? null;
+  const bestVisualCandidate = [...researchResults]
+    .filter((item) => {
+      const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
+      return (
+        hints.length > 0 ||
+        Number(item?.ranked?.montage_score ?? 0) >= 0.55 ||
+        Number(item?.ranked?.visual_score ?? 0) >= 0.58
+      );
+    })
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.montage_score ?? b?.ranked?.visual_score ?? 0) -
+          Number(a?.ranked?.montage_score ?? a?.ranked?.visual_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.result ?? null;
+  const bestDownloadableCandidate = [...researchResults]
+    .filter((item) => {
+      const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
+      return hints.includes("downloadable") || Number(item?.ranked?.downloadability_score ?? 0) >= 0.62;
+    })
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.downloadability_score ?? 0) - Number(a?.ranked?.downloadability_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.result ?? null;
   const bestVisibleCandidate = visibleResearchResults[0]?.result ?? null;
   const bestContextPhaseCandidate =
     researchResults.find(({ result }) => getResearchResultPhase(result) === "context")?.result ?? null;
@@ -3366,9 +3056,37 @@ const LegacySegmentCard = React.memo(function LegacySegmentCard({
     researchResults.find(({ result }) => getResearchResultPhase(result) === "source")?.result ?? null;
   const bestVisualPhaseCandidate =
     researchResults.find(({ result }) => getResearchResultPhase(result) === "visual")?.result ?? null;
-  const bestSourceRanked = researchBuckets.sources[0]?.ranked ?? null;
-  const bestVisualRanked = researchBuckets.visuals[0]?.ranked ?? null;
-  const bestDownloadableRanked = researchBuckets.downloadables[0]?.ranked ?? null;
+  const bestSourceRanked = [...researchResults]
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.source_score ?? 0) - Number(a?.ranked?.source_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.ranked ?? null;
+  const bestVisualRanked = [...researchResults]
+    .filter((item) => {
+      const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
+      return (
+        hints.length > 0 ||
+        Number(item?.ranked?.montage_score ?? 0) >= 0.55 ||
+        Number(item?.ranked?.visual_score ?? 0) >= 0.58
+      );
+    })
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.montage_score ?? b?.ranked?.visual_score ?? 0) -
+          Number(a?.ranked?.montage_score ?? a?.ranked?.visual_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.ranked ?? null;
+  const bestDownloadableRanked = [...researchResults]
+    .filter((item) => {
+      const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
+      return hints.includes("downloadable") || Number(item?.ranked?.downloadability_score ?? 0) >= 0.62;
+    })
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.downloadability_score ?? 0) - Number(a?.ranked?.downloadability_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.ranked ?? null;
   const deepResearchSourceItem = React.useMemo(
     () =>
       (Array.isArray(researchRun?.brief?.items) ? researchRun.brief.items : []).find(
@@ -4678,10 +4396,34 @@ export default function App() {
     refreshIntegration();
   }, [refreshIntegration]);
   useEffect(() => {
+    let refreshInFlight = false;
+    const runRefresh = async () => {
+      if (refreshInFlight) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      refreshInFlight = true;
+      try {
+        await refreshIntegration();
+      } finally {
+        refreshInFlight = false;
+      }
+    };
     const timer = setInterval(() => {
-      refreshIntegration();
-    }, 15000);
-    return () => clearInterval(timer);
+      void runRefresh();
+    }, 30000);
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        void runRefresh();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+    return () => {
+      clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+    };
   }, [refreshIntegration]);
   useEffect(() => {
     if (selectedReleaseId) return;
@@ -4760,6 +4502,7 @@ export default function App() {
     setHeadingEnglishQueries
   });
   const canGenerate = Boolean(String(scriptText).trim()) && !loading;
+  const canRecoverSegmentState = Boolean(String(docId ?? "").trim()) && !loading;
   const canSaveBase = Boolean(docId) && segmentsCount > 0 && !loading;
   const buildSessionPayload = React.useCallback(
     () =>
@@ -4804,9 +4547,9 @@ export default function App() {
       const normalizedComments = removeDuplicateCommentSegments(merged);
       const mergedWithTopics = ensureEmptySectionTopics(normalizedComments, rawText);
       const linksFromMerged = mergedWithTopics.filter((item) => item.block_type === "links");
-      const ordered = collapseDuplicateLinkOnlyTopics(
+      const ordered = sortSegmentsInScenarioOrder(collapseDuplicateLinkOnlyTopics(
         mergeLinkSegmentsIntoSegments(mergedWithTopics, linksFromMerged)
-      );
+      ));
 
       const snapshot = buildSessionPayloadFromState({
         scriptText: rawText,
@@ -4901,7 +4644,7 @@ export default function App() {
     setResearchDocQueryId("");
     setSelectedResearchSegmentId("");
     setSelectedResearchRunId("");
-    setScriptText("");
+    setScriptText(NEW_SCENARIO_TEMPLATE);
     setNotionUrl("");
     setNotionHasUpdates(false);
     setSegments([]);
@@ -4909,10 +4652,10 @@ export default function App() {
     setMediaPanelOpen(false);
     setHeadingSearchOpen({});
     setHeadingEnglishQueries({});
-    setStatus("\u041d\u043e\u0432\u044b\u0439 \u0441\u0446\u0435\u043d\u0430\u0440\u0438\u0439: \u0432\u0441\u0442\u0430\u0432\u044c\u0442\u0435 \u0442\u0435\u043a\u0441\u0442, \u043f\u0440\u0438 \u043d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u043e\u0441\u0442\u0438 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u0435 Notion \u0438 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u0421\u0435\u0433\u043c\u0435\u043d\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c.");
+    setStatus("Новый сценарий: шаблон загружен, можно сразу сегментировать.");
     rememberSessionSnapshot(
       buildSessionPayloadFromState({
-        scriptText: "",
+        scriptText: NEW_SCENARIO_TEMPLATE,
         notionUrl: "",
         segments: []
       }),
@@ -4941,21 +4684,36 @@ export default function App() {
     const progressId = `notion_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     let progressStopped = false;
     let lastProgressMessage = "";
+    let progressTimer = null;
+    const stopProgressPolling = () => {
+      progressStopped = true;
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    };
     const pollProgress = async () => {
       if (progressStopped) return;
       try {
         const { response, data } = await fetchJsonSafe(`/api/notion/progress/${progressId}`);
+        if (response.status === 404) {
+          stopProgressPolling();
+          return;
+        }
         if (!response.ok) return;
         const nextMessage = String(data?.last_message ?? "").trim();
         if (nextMessage && nextMessage !== lastProgressMessage) {
           lastProgressMessage = nextMessage;
           setStatus(nextMessage);
         }
+        if (data?.done) {
+          stopProgressPolling();
+        }
       } catch {
         return;
       }
     };
-    const progressTimer = setInterval(() => {
+    progressTimer = setInterval(() => {
       pollProgress();
     }, 700);
     void pollProgress();
@@ -4994,8 +4752,7 @@ export default function App() {
     } catch (error) {
       setStatus(error.message);
     } finally {
-      progressStopped = true;
-      clearInterval(progressTimer);
+      stopProgressPolling();
       setLoading(false);
     }
   };
@@ -5091,13 +4848,27 @@ export default function App() {
     if (!segmentId) return;
     const requestedRunId = String(selectedResearchRunId ?? "").trim();
     const historyItems = segmentResearchHistory[segmentId] ?? [];
+    const hasUsefulResults = (item) =>
+      Array.isArray(item?.ranked_results)
+        ? item.ranked_results.length > 0
+        : Array.isArray(item?.results)
+          ? item.results.length > 0
+          : false;
     if (requestedRunId) {
       const hasRequestedRun = historyItems.some((item) => String(item?.run_id ?? "").trim() === requestedRunId);
       if (hasRequestedRun) return;
     }
     const currentRunId = String(segmentResearchRuns[segmentId]?.run_id ?? "").trim();
-    if (currentRunId !== requestedRunId) {
-      setSelectedResearchRunId(currentRunId);
+    const preferredHistoryItem = [...historyItems]
+      .sort((left, right) => {
+        const leftTs = Date.parse(String(left?.updated_at ?? left?.created_at ?? "")) || 0;
+        const rightTs = Date.parse(String(right?.updated_at ?? right?.created_at ?? "")) || 0;
+        return rightTs - leftTs;
+      })
+      .find((item) => hasUsefulResults(item));
+    const preferredRunId = String(preferredHistoryItem?.run_id ?? currentRunId ?? "").trim();
+    if (preferredRunId !== requestedRunId) {
+      setSelectedResearchRunId(preferredRunId);
     }
   }, [appMode, segmentResearchHistory, segmentResearchRuns, selectedResearchRunId, selectedResearchSegmentId]);
   useEffect(() => {
@@ -5155,7 +4926,11 @@ export default function App() {
     setLoading(true);
     setStatus("\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u043e\u0432...");
     try {
-      if (docId && hasUnsavedChanges) {
+      // After a Notion refresh, local segments/decisions may be older than backend state
+      // (for example when SDVG already attached media or marked items done). In that case
+      // sending a full /session snapshot before regeneration can overwrite those newer
+      // backend changes. Let segments:generate use backend state as the merge source.
+      if (docId && hasUnsavedChanges && !notionHasUpdates) {
         await saveSessionSnapshot(buildSessionPayload(), "pre_generate");
       }
       const { cleanText, linkSegments: extractedLinks, segmentLinkHints } = extractLinksFromScript(scriptText);
@@ -5194,15 +4969,24 @@ export default function App() {
         appliedCount: segmentLinkHintsApplied
       } = applySegmentLinkHints(merged, segmentLinkHints);
       const linksFromMerged = mergedWithSegmentLinks.filter((segment) => segment.block_type === "links");
-      const orderedSegments = collapseDuplicateLinkOnlyTopics(
+      const orderedSegments = sortSegmentsInScenarioOrder(collapseDuplicateLinkOnlyTopics(
         mergeLinkSegmentsIntoSegments(mergedWithSegmentLinks, linksFromMerged)
-      );
+      ));
       setSegments(orderedSegments);
       setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
 
       const visualCount = mergedWithSegmentLinks.filter((segment) => hasVisualDecisionContent(segment.visual_decision)).length;
       const searchCount = mergedWithSegmentLinks.filter((segment) => hasSearchDecisionContent(segment.search_decision)).length;
       const diff = data?.segmentation_diff ?? null;
+      const recoveryTarget =
+        String(data?.state_recovery?.strategy ?? "").trim().toLowerCase() === "layered"
+          ? data?.state_recovery?.layered?.stats ?? data?.state_recovery?.target ?? null
+          : data?.state_recovery?.target ?? null;
+      const recoverySummary = recoveryTarget
+        ? ` Автовосстановление: done ${Number(recoveryTarget?.done_non_links ?? 0)}, media ${Number(
+            recoveryTarget?.visual_media_segments ?? 0
+          )}.`
+        : "";
       if (diff && typeof diff === "object") {
         const added = Number(diff.added ?? 0);
         const changed = Number(diff.changed ?? 0);
@@ -5213,14 +4997,19 @@ export default function App() {
         setStatus(
           `Сегменты готовы: ${mergedWithSegmentLinks.length}. NEW +${added}, ~${changed}, =${same}, -${removed}. ` +
             `Ручные сохранены: ${preservedManual}. Схлопнуто дублей ссылок: ${collapsedLinks}. ` +
-            `Ссылки к сегментам: ${segmentLinkHintsApplied}. Визуал: ${visualCount}. Поиск: ${searchCount}.`
+            `Ссылки к сегментам: ${segmentLinkHintsApplied}. Визуал: ${visualCount}. Поиск: ${searchCount}.` +
+            recoverySummary
         );
       } else if (visualCount === 0 && searchCount === 0) {
-        setStatus(`\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${mergedWithSegmentLinks.length}. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 AI Help \u0443 \u043d\u0443\u0436\u043d\u043e\u0439 \u0442\u0435\u043c\u044b, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0432\u0438\u0437\u0443\u0430\u043b \u0438 \u043f\u043e\u0438\u0441\u043a.`);
+        setStatus(
+          `\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${mergedWithSegmentLinks.length}. \u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u2728 \u0443 \u043d\u0443\u0436\u043d\u043e\u0439 \u0442\u0435\u043c\u044b, \u0447\u0442\u043e\u0431\u044b \u0437\u0430\u043f\u0443\u0441\u0442\u0438\u0442\u044c research \u043f\u043e \u0442\u0435\u043c\u0435.` +
+            recoverySummary
+        );
       } else {
         setStatus(
           `\u0421\u0435\u0433\u043c\u0435\u043d\u0442\u044b \u0433\u043e\u0442\u043e\u0432\u044b: ${mergedWithSegmentLinks.length}. ` +
-            `Ссылки к сегментам: ${segmentLinkHintsApplied}. Визуал: ${visualCount}. Поиск: ${searchCount}.`
+            `Ссылки к сегментам: ${segmentLinkHintsApplied}. Визуал: ${visualCount}. Поиск: ${searchCount}.` +
+            recoverySummary
         );
       }
     } catch (error) {
@@ -5229,6 +5018,71 @@ export default function App() {
       setLoading(false);
     }
   };
+  const handleRecoverSegmentState = React.useCallback(async () => {
+    const normalizedDocId = String(docId ?? "").trim();
+    if (!normalizedDocId) return;
+    if (hasUnsavedChanges && typeof window !== "undefined") {
+      const shouldContinue = window.confirm(
+        "Есть несохраненные локальные правки. Восстановление перезагрузит документ из backend. Продолжить?"
+      );
+      if (!shouldContinue) return;
+    }
+
+    setLoading(true);
+    setStatus("Проверка истории состояния...");
+    try {
+      const dryRun = await fetchJsonSafe(`/api/documents/${normalizedDocId}/segment-state:recover`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ apply: false })
+      });
+      if (!dryRun.response.ok) {
+        throw new Error(dryRun.data?.error ?? "Не удалось проверить восстановление состояния");
+      }
+
+      const suggestedStats =
+        dryRun.data?.strategy === "layered" ? dryRun.data?.layered?.stats ?? null : dryRun.data?.selected?.stats ?? null;
+      if (!suggestedStats) {
+        throw new Error("Не нашлось подходящей версии для восстановления");
+      }
+
+      if (typeof window !== "undefined") {
+        const currentStats = dryRun.data?.current ?? {};
+        const strategyLabel = dryRun.data?.strategy === "layered" ? "layered" : "single";
+        const confirmation = window.confirm(
+          `Восстановить состояние из истории?\n` +
+            `Done: ${Number(currentStats.done_non_links ?? 0)} -> ${Number(suggestedStats.done_non_links ?? 0)}\n` +
+            `Media: ${Number(currentStats.visual_media_segments ?? 0)} -> ${Number(suggestedStats.visual_media_segments ?? 0)}\n` +
+            `Strategy: ${strategyLabel}`
+        );
+        if (!confirmation) {
+          setStatus("Восстановление отменено.");
+          return;
+        }
+      }
+
+      setStatus("Восстановление состояния...");
+      const applied = await fetchJsonSafe(`/api/documents/${normalizedDocId}/segment-state:recover`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ apply: true })
+      });
+      if (!applied.response.ok) {
+        throw new Error(applied.data?.error ?? "Не удалось восстановить состояние");
+      }
+
+      await loadDocumentById(normalizedDocId, { silent: true });
+      const appliedStats =
+        applied.data?.strategy === "layered" ? applied.data?.layered?.stats ?? null : applied.data?.selected?.stats ?? null;
+      const doneCount = Number(appliedStats?.done_non_links ?? 0);
+      const mediaCount = Number(appliedStats?.visual_media_segments ?? 0);
+      setStatus(`Состояние восстановлено: done ${doneCount}, media ${mediaCount}.`);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [docId, fetchJsonSafe, hasUnsavedChanges, loadDocumentById]);
   const handleSave = async () => {
     if (!docId) return;
     setLoading(true);
@@ -5315,6 +5169,15 @@ export default function App() {
       if (options?.scope) params.set("scope", String(options.scope));
       if (options?.section_id) params.set("section_id", String(options.section_id));
       if (options?.section_title) params.set("section_title", String(options.section_title));
+      if (Array.isArray(options?.segment_ids) && options.segment_ids.length > 0) {
+        params.set(
+          "segment_ids",
+          options.segment_ids
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean)
+            .join(",")
+        );
+      }
       if (String(format ?? "").toLowerCase() === "xml") {
         const storageKey = "vbaut.xmlMediaRoot";
         let xmlMediaRoot = String(window.localStorage.getItem(storageKey) ?? "").trim();
@@ -5511,39 +5374,59 @@ export default function App() {
         search_open: false,
         is_done: false,
       };
-      return [...prev, linkSegment];
+      const next = [...prev, linkSegment];
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        saveSessionSnapshot(snapshot, "add_links_block").catch(() => null);
+      }
+      return next;
     });
-  }, []);
+  }, [docId, notionUrl, saveSessionSnapshot, scriptText]);
   const handleLinkAdd = React.useCallback((segmentIndex) => {
-    setSegments((prev) =>
-      prev.map((segment, idx) => {
+    setSegments((prev) => {
+      const next = prev.map((segment, idx) => {
         if (idx !== segmentIndex) return segment;
         const links = Array.isArray(segment.links) ? [...segment.links] : [];
         links.push({ url: "", raw: null });
         return { ...segment, links };
-      })
-    );
-  }, []);
+      });
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        saveSessionSnapshot(snapshot, "link_add").catch(() => null);
+      }
+      return next;
+    });
+  }, [docId, notionUrl, saveSessionSnapshot, scriptText]);
   const handleLinkUpdate = React.useCallback((segmentIndex, linkIndex, value) => {
-    setSegments((prev) =>
-      prev.map((segment, idx) => {
+    setSegments((prev) => {
+      const next = prev.map((segment, idx) => {
         if (idx !== segmentIndex) return segment;
         const links = Array.isArray(segment.links) ? [...segment.links] : [];
         if (!links[linkIndex]) links[linkIndex] = { url: "", raw: null };
         links[linkIndex] = { ...links[linkIndex], url: value };
         return { ...segment, links };
-      })
-    );
-  }, []);
+      });
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        saveSessionSnapshot(snapshot, "link_update").catch(() => null);
+      }
+      return next;
+    });
+  }, [docId, notionUrl, saveSessionSnapshot, scriptText]);
   const handleLinkRemove = React.useCallback((segmentIndex, linkIndex) => {
-    setSegments((prev) =>
-      prev.map((segment, idx) => {
+    setSegments((prev) => {
+      const next = prev.map((segment, idx) => {
         if (idx !== segmentIndex) return segment;
         const links = Array.isArray(segment.links) ? segment.links.filter((_, i) => i !== linkIndex) : [];
         return { ...segment, links };
-      })
-    );
-  }, []);
+      });
+      if (docId) {
+        const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: next });
+        saveSessionSnapshot(snapshot, "link_remove").catch(() => null);
+      }
+      return next;
+    });
+  }, [docId, notionUrl, saveSessionSnapshot, scriptText]);
   const handleInsertAfter = React.useCallback((index) => {
     setSegments((prev) => {
       if (index < 0 || index >= prev.length) return prev;
@@ -5745,78 +5628,6 @@ export default function App() {
     },
     [copyToClipboard]
   );
-  const handleAiHelp = React.useCallback(
-    async (groupId) => {
-      if (!docId) {
-        setStatus("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u043e\u0437\u0434\u0430\u0439\u0442\u0435 \u0438\u043b\u0438 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442.");
-        return;
-      }
-      const group = groupedSegments.find((item) => item.id === groupId);
-      if (!group || !group.items.length) {
-        setStatus("\u0412 \u044d\u0442\u043e\u0439 \u0442\u0435\u043c\u0435 \u043d\u0435\u0442 \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u043e\u0432.");
-        return;
-      }
-
-      const pendingItems = group.items.filter(
-        ({ segment }) =>
-          !hasVisualDecisionContent(segment.visual_decision) ||
-          !hasSearchDecisionContent(segment.search_decision)
-      );
-      const targetItems = pendingItems.length > 0 ? pendingItems : group.items;
-      const targetSegments = targetItems.map(({ segment }) => ({
-        segment_id: segment.segment_id,
-        block_type: "news",
-        text_quote: segment.text_quote
-      }));
-      const targetIds = targetSegments.map((item) => item.segment_id);
-      if (targetIds.some((id) => aiLoading[id])) return;
-
-      setAiLoading((prev) => {
-        const next = { ...prev };
-        targetIds.forEach((id) => {
-          next[id] = true;
-        });
-        return next;
-      });
-      setStatus(`AI Help: \u043e\u0431\u0440\u0430\u0431\u0430\u0442\u044b\u0432\u0430\u044e ${targetIds.length} \u0441\u0435\u0433\u043c.`);
-
-      try {
-        const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/decisions:generate`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ segments: targetSegments })
-        });
-        if (!response.ok) throw new Error(data?.error ?? "\u041e\u0448\u0438\u0431\u043a\u0430 AI Help");
-        const decisions = Array.isArray(data?.decisions) ? data.decisions : [];
-        if (!decisions.length) throw new Error("AI Help: \u0440\u0435\u0448\u0435\u043d\u0438\u044f \u043d\u0435 \u043f\u0440\u0438\u0448\u043b\u0438");
-
-        const decisionMap = new Map(decisions.map((decision) => [decision.segment_id, decision]));
-        setSegments((prev) =>
-          prev.map((segment) => {
-            const decision = decisionMap.get(segment.segment_id);
-            if (!decision) return segment;
-            return {
-              ...segment,
-              visual_decision: normalizeVisualDecision(decision.visual_decision, config),
-              search_decision: normalizeSearchDecision(decision.search_decision, config)
-            };
-          })
-        );
-        setStatus(`AI Help: \u0433\u043e\u0442\u043e\u0432\u043e ${decisions.length}/${targetSegments.length}.`);
-      } catch (error) {
-        setStatus(error.message);
-      } finally {
-        setAiLoading((prev) => {
-          const next = { ...prev };
-          targetIds.forEach((id) => {
-            delete next[id];
-          });
-          return next;
-        });
-      }
-    },
-    [aiLoading, config, docId, groupedSegments]
-  );
   const handleGenerateSearch = React.useCallback(
     async (index) => {
       const segment = segments[index];
@@ -5873,13 +5684,13 @@ export default function App() {
   const handleRunSegmentResearch = React.useCallback(
     async (index, mode = "deep", options = {}) => {
       const segment = segments[index];
-      if (!segment) return;
+      if (!segment) return null;
       if (!docId) {
         setStatus("Сначала создайте или загрузите документ.");
-        return;
+        return null;
       }
       const segmentId = String(segment.segment_id ?? "").trim();
-      if (!segmentId || segmentResearchLoading[segmentId]) return;
+      if (!segmentId || segmentResearchLoading[segmentId]) return null;
       const normalizedMode = String(mode ?? "deep").trim().toLowerCase() === "fast" ? "fast" : "deep";
       const excludeSeen = Boolean(options?.excludeSeen);
       const override = options?.segmentOverride && typeof options.segmentOverride === "object" ? options.segmentOverride : {};
@@ -5916,9 +5727,12 @@ export default function App() {
               Array.isArray(data.run.ranked_results) ? data.run.ranked_results.length : 0
             } candidates`
           );
+          return data.run;
         }
+        return null;
       } catch (error) {
         setStatus(error.message);
+        return null;
       } finally {
         setSegmentResearchLoading((prev) => {
           const next = { ...prev };
@@ -5928,6 +5742,131 @@ export default function App() {
       }
     },
     [docId, mergeResearchRunHistory, segmentResearchLoading, segments]
+  );
+  const handleAiHelp = React.useCallback(
+    async (groupId) => {
+      if (!docId) {
+        setStatus("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u043e\u0437\u0434\u0430\u0439\u0442\u0435 \u0438\u043b\u0438 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442.");
+        return;
+      }
+      const group = groupedSegments.find((item) => item.id === groupId);
+      if (!group) {
+        setStatus("Не удалось определить тему для research.");
+        return;
+      }
+
+      const themeTitle = group.title === "Без темы" ? "" : String(group.title ?? "").trim();
+      const themeTags = normalizeSegmentTagList(group.topic_tags ?? group.section_tags ?? []);
+      const combinedQuote = [...new Set(
+        group.items
+          .map(({ segment }) => String(segment?.text_quote ?? "").replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+      )]
+        .slice(0, 6)
+        .join(". ");
+      const topicSeedText = combinedQuote || themeTitle || themeTags.join(", ");
+      if (!topicSeedText && !themeTitle && themeTags.length === 0) {
+        setStatus("В теме пока нет текста, заголовка или тегов для topic research.");
+        return;
+      }
+
+      let anchorItem =
+        group.items.find(({ segment }) => String(segment?.text_quote ?? "").trim()) ??
+        group.items[0] ??
+        group.topicResearchAnchor ??
+        null;
+      let anchorIndex = Number(anchorItem?.index ?? -1);
+      let anchorSegment = anchorItem?.segment ?? null;
+      let anchorSegmentId = String(anchorSegment?.segment_id ?? "").trim();
+
+      if (!anchorSegmentId) {
+        const sectionMeta = {
+          section_id: group.section_id ?? null,
+          section_title: themeTitle || (group.section_title ?? null),
+          section_index: group.section_index ?? null,
+          research_use_topic_title: Boolean(themeTitle),
+          research_use_theme_tags: themeTags.length > 0,
+          topic_tags: themeTags,
+          section_tags: themeTags
+        };
+        const nextSegments = [...segments];
+        const baseId = group.section_id ? `topic_${group.section_id}` : `topic_${Date.now()}`;
+        let nextSegmentId = baseId;
+        let suffix = 2;
+        while (nextSegments.some((item) => String(item?.segment_id ?? "").trim() === nextSegmentId)) {
+          nextSegmentId = `${baseId}_${suffix}`;
+          suffix += 1;
+        }
+        const nextSegment = {
+          ...emptySegment(nextSegments.length + 1, sectionMeta),
+          segment_id: nextSegmentId,
+          is_topic_research_anchor: true
+        };
+        const insertAt = Number.isFinite(Number(group?.linkSegment?.index))
+          ? Math.max(0, Number(group.linkSegment.index) + 1)
+          : nextSegments.length;
+        nextSegments.splice(insertAt, 0, nextSegment);
+        setSegments(nextSegments);
+        anchorItem = { segment: nextSegment, index: insertAt };
+        anchorIndex = insertAt;
+        anchorSegment = nextSegment;
+        anchorSegmentId = nextSegmentId;
+        if (docId) {
+          const snapshot = buildSessionPayloadFromState({ scriptText, notionUrl, segments: nextSegments });
+          saveSessionSnapshot(snapshot, "topic_research_anchor").catch(() => null);
+        }
+      }
+
+      if (!anchorSegmentId || anchorIndex < 0) {
+        setStatus("Не удалось определить сегмент-опору для topic research.");
+        return;
+      }
+
+      const groupSegmentIds = [
+        ...group.items
+        .map(({ segment }) => String(segment?.segment_id ?? "").trim())
+        .filter(Boolean),
+        anchorSegmentId
+      ];
+      if (groupSegmentIds.some((id) => aiLoading[id])) return;
+
+      setAiLoading((prev) => {
+        const next = { ...prev };
+        groupSegmentIds.forEach((id) => {
+          next[id] = true;
+        });
+        return next;
+      });
+      setSelectedResearchSegmentId(anchorSegmentId);
+      setSelectedResearchRunId("");
+      setAppMode("research");
+
+      try {
+        const run = await handleRunSegmentResearch(anchorIndex, "deep", {
+          segmentOverride: {
+            section_id: anchorSegment?.section_id ?? group.section_id ?? null,
+            section_title: themeTitle || (anchorSegment?.section_title ?? null),
+            text_quote: topicSeedText || (anchorSegment?.text_quote ?? ""),
+            research_use_topic_title: Boolean(themeTitle),
+            research_use_theme_tags: themeTags.length > 0,
+            topic_tags: themeTags,
+            section_tags: themeTags
+          }
+        });
+        if (run?.run_id) {
+          setSelectedResearchRunId(String(run.run_id));
+        }
+      } finally {
+        setAiLoading((prev) => {
+          const next = { ...prev };
+          groupSegmentIds.forEach((id) => {
+            delete next[id];
+          });
+          return next;
+        });
+      }
+    },
+    [aiLoading, docId, groupedSegments, handleRunSegmentResearch, notionUrl, saveSessionSnapshot, scriptText, segments]
   );
   const handleSelectSegmentResearchRun = React.useCallback(
     (index, runId) => {
@@ -5959,15 +5898,19 @@ export default function App() {
       }
       setSegmentResearchLoading((prev) => ({ ...prev, [segmentId]: true }));
       try {
+        const endpoint =
+          action === "delete_result"
+            ? `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research/remove`
+            : `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research/apply`;
         const { response, data } = await fetchJsonSafe(
-          `/api/documents/${encodeURIComponent(docId)}/segments/${encodeURIComponent(segmentId)}/research/apply`,
+          endpoint,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               run_id: runId,
               result_id: resultId,
-              action
+              ...(action === "delete_result" ? {} : { action })
             })
           }
         );
@@ -5980,9 +5923,16 @@ export default function App() {
           window.open(data.screenshot_lab_url, "_blank", "noopener,noreferrer");
         }
         if (action === "download" && data?.download_url) {
-          await handleDownloadMedia(data.download_url, segment.section_title ?? null);
+          await handleDownloadMedia(data.download_url, segment.section_title ?? null, {
+            segmentId,
+            runId,
+            resultId,
+            sourceTitle: String(data?.result?.title ?? "").trim(),
+            sourceDomain: String(data?.result?.domain ?? "").trim(),
+            textQuote: String(segment?.text_quote ?? "").trim()
+          });
         }
-        if ((action === "promote_to_decision" || action === "use_as_source") && data?.decision) {
+        if (data?.decision) {
           setSegments((prev) =>
             prev.map((item) =>
               String(item?.segment_id ?? "") === segmentId
@@ -5991,6 +5941,7 @@ export default function App() {
                     visual_decision: normalizeVisualDecision(data.decision.visual_decision, config),
                     search_decision: normalizeSearchDecision(data.decision.search_decision, config),
                     research_sources: normalizeResearchSources(data.decision.research_sources),
+                    research_dismissed_urls: normalizeResearchDismissedUrls(data.decision.research_dismissed_urls),
                     research_bundle_trace: normalizeResearchBundleTrace(data.decision.research_bundle_trace)
                   }
                 : item
@@ -6000,10 +5951,26 @@ export default function App() {
         if (action === "attach_asset" || action === "promote_to_decision" || action === "mark_helpful") {
           await refreshIntegration();
         }
-        if (action === "promote_to_decision" && data?.promoted_role) {
+        if (action === "delete_result") {
+          setStatus("Research result removed.");
+        } else if (action === "promote_to_decision" && data?.promoted_role) {
           setStatus(`Research promoted: ${String(data.promoted_role).replace(/_/g, " ")}`);
         } else if (action === "mark_helpful") {
           setStatus("Research candidate marked as helpful.");
+        } else if (action === "duplicate_story") {
+          setStatus("Research candidate marked as duplicate story.");
+        } else if (action === "bad_visual") {
+          setStatus("Research candidate marked as weak visual.");
+        } else if (action === "screenshot_failed") {
+          setStatus("Research candidate marked as screenshot failure.");
+        } else if (action === "download_failed") {
+          setStatus("Research candidate marked as download failure.");
+        } else if (action === "paywall") {
+          setStatus("Research candidate marked as paywalled.");
+        } else if (action === "anti_bot") {
+          setStatus("Research candidate marked as anti-bot blocked.");
+        } else if (action === "age_gate") {
+          setStatus("Research candidate marked as age-gated.");
         } else {
           setStatus(`Research action: ${action}`);
         }
@@ -6061,6 +6028,7 @@ export default function App() {
                     visual_decision: normalizeVisualDecision(data.decision.visual_decision, config),
                     search_decision: normalizeSearchDecision(data.decision.search_decision, config),
                     research_sources: normalizeResearchSources(data.decision.research_sources),
+                    research_dismissed_urls: normalizeResearchDismissedUrls(data.decision.research_dismissed_urls),
                     research_bundle_trace: normalizeResearchBundleTrace(data.decision.research_bundle_trace)
                   }
                 : item
@@ -6119,6 +6087,7 @@ export default function App() {
                     visual_decision: normalizeVisualDecision(data.decision.visual_decision, config),
                     search_decision: normalizeSearchDecision(data.decision.search_decision, config),
                     research_sources: normalizeResearchSources(data.decision.research_sources),
+                    research_dismissed_urls: normalizeResearchDismissedUrls(data.decision.research_dismissed_urls),
                     research_bundle_trace: normalizeResearchBundleTrace(data.decision.research_bundle_trace)
                   }
                 : item
@@ -6198,6 +6167,31 @@ export default function App() {
       setStatus(applied ? "Теги темы обновлены." : "Не удалось обновить теги темы.");
     },
     [docId, notionUrl, saveSessionSnapshot, scriptText, segments]
+  );
+  const handleEditThemeTags = React.useCallback(
+    (groupId) => {
+      const group = groupedSegments.find((item) => item.id === groupId);
+      if (!group) {
+        setStatus("В этой теме нет данных для тегов.");
+        return;
+      }
+      const anchorSegmentId = String(
+        group.items[0]?.segment?.segment_id ??
+          group.topicResearchAnchor?.segment?.segment_id ??
+          group.linkSegment?.segment?.segment_id ??
+          ""
+      ).trim();
+      if (!anchorSegmentId) {
+        setStatus("Не удалось определить тему для тегов.");
+        return;
+      }
+      if (typeof window === "undefined" || typeof window.prompt !== "function") return;
+      const currentValue = normalizeSegmentTagList(group.topic_tags ?? group.section_tags ?? []).join(", ");
+      const nextValue = window.prompt("Теги темы через запятую или с новой строки", currentValue);
+      if (nextValue === null) return;
+      void handleUpdateResearchThemeTags(anchorSegmentId, nextValue);
+    },
+    [groupedSegments, handleUpdateResearchThemeTags]
   );
   const handleUpdateResearchThemeContext = React.useCallback(
     async (segmentId, payload = {}) => {
@@ -7575,6 +7569,8 @@ export default function App() {
           setScriptText={setScriptText}
           handleGenerate={handleGenerate}
           canGenerate={canGenerate}
+          handleRecoverSegmentState={handleRecoverSegmentState}
+          canRecoverSegmentState={canRecoverSegmentState}
           notionHasUpdates={notionHasUpdates}
           handleMarkAllDone={handleMarkAllDone}
           segmentsCount={segmentsCount}
@@ -7616,9 +7612,15 @@ export default function App() {
               const limit = groupRenderLimits[group.id] ?? GROUP_RENDER_CHUNK;
               const visibleItems = isExpanded ? group.items.slice(0, limit) : [];
               const remaining = group.items.length - visibleItems.length;
-              const groupLoading = group.items.some(({ segment }) => aiLoading[segment.segment_id]);
+              const groupLoading =
+                group.items.some(({ segment }) => aiLoading[segment.segment_id]) ||
+                Boolean(group.topicResearchAnchor?.segment?.segment_id) &&
+                  Boolean(aiLoading[group.topicResearchAnchor.segment.segment_id]);
               const doneCount = group.items.filter(({ segment }) => Boolean(segment.is_done)).length;
-              const groupDone = group.items.length > 0 && doneCount === group.items.length;
+              const totalGroupSegments = group.items.length;
+              const completionPercent =
+                totalGroupSegments > 0 ? Math.round((doneCount / totalGroupSegments) * 100) : 0;
+              const groupDone = totalGroupSegments > 0 && doneCount === totalGroupSegments;
               const headingRuQuery = group.title === "Без темы" ? "" : group.title;
               const headingEnQuery = String(headingEnglishQueries[group.id] ?? headingRuQuery);
               const isHeadingSearchOpen = Boolean(headingSearchOpen[group.id]);
@@ -7634,6 +7636,9 @@ export default function App() {
                   visibleItems={visibleItems}
                   remaining={remaining}
                   groupDone={groupDone}
+                  groupDoneCount={doneCount}
+                  groupTotalSegments={totalGroupSegments}
+                  groupCompletionPercent={completionPercent}
                   groupLoading={groupLoading}
                   headingRuQuery={headingRuQuery}
                   headingEnQuery={headingEnQuery}
@@ -7647,6 +7652,7 @@ export default function App() {
                   docId={docId}
                   loading={loading}
                   handleAiHelp={handleAiHelp}
+                  handleEditThemeTags={handleEditThemeTags}
                   toggleHeadingSearch={toggleHeadingSearch}
                   handleExport={handleExport}
                   toggleGroup={toggleGroup}
@@ -7731,6 +7737,7 @@ function mergeSegmentsAndDecisions(segments = [], decisions = [], config = defau
         visual: item.visual_decision ?? item.visual,
         search: item.search_decision ?? item.search,
         research_sources: normalizeResearchSources(item.research_sources),
+        research_dismissed_urls: normalizeResearchDismissedUrls(item.research_dismissed_urls),
         research_bundle_trace: normalizeResearchBundleTrace(item.research_bundle_trace)
       }
     ])
@@ -7758,6 +7765,9 @@ function mergeSegmentsAndDecisions(segments = [], decisions = [], config = defau
     ),
     research_sources: normalizeResearchSources(
       decisionMap.get(segment.segment_id)?.research_sources ?? segment.research_sources
+    ),
+    research_dismissed_urls: normalizeResearchDismissedUrls(
+      decisionMap.get(segment.segment_id)?.research_dismissed_urls ?? segment.research_dismissed_urls
     ),
     research_bundle_trace: normalizeResearchBundleTrace(
       decisionMap.get(segment.segment_id)?.research_bundle_trace ?? segment.research_bundle_trace
@@ -7794,6 +7804,7 @@ function splitSegmentsAndDecisions(segments = []) {
         ? emptySearchDecision()
         : normalizeSearchDecision(segment.search_decision, defaultConfig),
     research_sources: normalizeResearchSources(segment.research_sources),
+    research_dismissed_urls: normalizeResearchDismissedUrls(segment.research_dismissed_urls),
     research_bundle_trace: normalizeResearchBundleTrace(segment.research_bundle_trace),
     version: segment.version ?? 1
   }));

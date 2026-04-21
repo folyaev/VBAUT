@@ -15,7 +15,7 @@
 
 ## 2) Компоненты
 
-- `frontend/` — React + Vite (`http://localhost:5173`)
+- `frontend/` — React + Vite (`http://localhost:5187`)
 - `frontend/src/components/ReleaseWorkspace.jsx` — координатор release-контурa
 - `frontend/src/components/ReleaseWorkspaceOverview.jsx` — overview ассистента, рекомендации, draft pack
 - `frontend/src/components/ReleaseWorkspaceBoard.jsx` — статусная доска выпуска

@@ -628,6 +628,38 @@
     return Array.from(byId.values());
   }
 
+  function isCommentsSegmentId(segmentId) {
+    return /^comments_/i.test(String(segmentId ?? "").trim());
+  }
+
+  function normalizeCommentAnchorBase(value) {
+    return String(value ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
+
+  function resolveCommentAnchorSegmentId(segmentId, oldMeta = []) {
+    if (!isCommentsSegmentId(segmentId)) return "";
+    const raw = String(segmentId ?? "").trim().replace(/^comments_/i, "");
+    if (!raw) return "";
+    let bestId = "";
+    let bestLength = -1;
+    oldMeta.forEach((item) => {
+      const candidateId = String(item?.segment?.segment_id ?? "").trim();
+      if (!candidateId || isCommentsSegmentId(candidateId)) return;
+      const normalizedCandidate = normalizeCommentAnchorBase(candidateId);
+      if (!normalizedCandidate) return;
+      if (raw === normalizedCandidate || raw.startsWith(`${normalizedCandidate}_`)) {
+        if (normalizedCandidate.length > bestLength) {
+          bestId = candidateId;
+          bestLength = normalizedCandidate.length;
+        }
+      }
+    });
+    return bestId;
+  }
+
   function isCustomSubSegmentId(segmentId) {
     return /^[a-z][a-z0-9_]*_\d{2}(?:_\d{2})+$/i.test(String(segmentId ?? "").trim());
   }
@@ -698,24 +730,40 @@
     const newMeta = newSegments.map((segment) => ({
       segment,
       normalized: normalizeTextForMatch(segment.text_quote),
+      tokens: tokenizeForMatch(segment.text_quote),
       sectionKey: getSectionMatchKey(segment)
     }));
     oldMeta.forEach((item) => {
       const segmentId = String(item.segment.segment_id ?? "").trim();
       if (!segmentId || usedOldIds.has(segmentId) || usedIds.has(segmentId)) return;
-      if (!isCustomSubSegmentId(segmentId)) return;
+      const isCommentsSegment = isCommentsSegmentId(segmentId);
+      if (!isCommentsSegment && !isCustomSubSegmentId(segmentId)) return;
       const sectionCandidates = item.sectionKey ? oldBySection.get(item.sectionKey) ?? [] : [];
       if (sectionCandidates.length === 0 && !item.normalized) return;
+      const anchorSourceId = isCommentsSegment ? resolveCommentAnchorSegmentId(segmentId, oldMeta) : "";
+      const anchorSourceMeta = anchorSourceId
+        ? oldMeta.find((entry) => String(entry?.segment?.segment_id ?? "").trim() === anchorSourceId) ?? null
+        : null;
+      const anchorStillPresent = anchorSourceMeta
+        ? newMeta.some((entry) => {
+            if (anchorSourceMeta.sectionKey && entry.sectionKey && anchorSourceMeta.sectionKey !== entry.sectionKey) {
+              return false;
+            }
+            return hasMeaningfulTokenOverlap(anchorSourceMeta.tokens ?? [], entry.tokens ?? []);
+          })
+        : false;
       const stillPresent = newMeta.some((entry) => {
         if (item.sectionKey && entry.sectionKey && item.sectionKey !== entry.sectionKey) return false;
         return normalizedContains(entry.normalized, item.normalized);
       });
-      if (!stillPresent) return;
+      if (!stillPresent && !anchorStillPresent) return;
       usedOldIds.add(segmentId);
       usedIds.add(segmentId);
       preserved.push({
         segment: { ...item.segment, segment_status: "same" },
-        sourceId: segmentId
+        sourceId: segmentId,
+        preserveKind: isCommentsSegment ? "comments" : "manual",
+        anchorSourceId
       });
     });
     return preserved;
@@ -780,6 +828,67 @@
     return map;
   }
 
+  function buildSectionSlotIndex(meta = []) {
+    const map = new Map();
+    meta.forEach((item) => {
+      const key = String(item?.sectionKey ?? "").trim();
+      if (!key) return;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(item);
+    });
+    map.forEach((list) => {
+      list.sort((left, right) => Number(left?.index ?? 0) - Number(right?.index ?? 0));
+    });
+    return map;
+  }
+
+  function hasMeaningfulTokenOverlap(tokensA = [], tokensB = []) {
+    if (!Array.isArray(tokensA) || !Array.isArray(tokensB) || !tokensA.length || !tokensB.length) return false;
+    const right = new Set(tokensB);
+    let overlap = 0;
+    let significantOverlap = 0;
+    for (const token of new Set(tokensA)) {
+      if (!right.has(token)) continue;
+      overlap += 1;
+      if (String(token ?? "").length >= 6) {
+        significantOverlap += 1;
+      }
+    }
+    return overlap >= 2 || significantOverlap >= 1;
+  }
+
+  function pickSectionSlotFallback({
+    segment,
+    sectionKey,
+    newIndex,
+    newBySection,
+    oldBySection,
+    usedOldIds
+  }) {
+    const normalizedSectionKey = String(sectionKey ?? "").trim();
+    if (!normalizedSectionKey) return null;
+    const newSectionItems = Array.isArray(newBySection.get(normalizedSectionKey)) ? newBySection.get(normalizedSectionKey) : [];
+    const oldSectionItems = Array.isArray(oldBySection.get(normalizedSectionKey)) ? oldBySection.get(normalizedSectionKey) : [];
+    if (!newSectionItems.length || !oldSectionItems.length) return null;
+
+    const newSectionFiltered = newSectionItems.filter(
+      (item) => String(item?.segment?.block_type ?? "").trim() === String(segment?.block_type ?? "").trim()
+    );
+    const oldSectionFiltered = oldSectionItems.filter(
+      (item) => String(item?.segment?.block_type ?? "").trim() === String(segment?.block_type ?? "").trim()
+    );
+    if (!newSectionFiltered.length || !oldSectionFiltered.length) return null;
+    if (newSectionFiltered.length !== oldSectionFiltered.length) return null;
+
+    const slotIndex = newSectionFiltered.findIndex((item) => Number(item?.index ?? -1) === Number(newIndex ?? -1));
+    if (slotIndex < 0) return null;
+    const candidate = oldSectionFiltered[slotIndex];
+    const oldId = String(candidate?.segment?.segment_id ?? "").trim();
+    if (!oldId || usedOldIds.has(oldId)) return null;
+    if (!hasMeaningfulTokenOverlap(candidate?.tokens ?? [], newSectionFiltered[slotIndex]?.tokens ?? [])) return null;
+    return candidate;
+  }
+
   function takeExactMatch(index, key, usedOldIds, options = {}) {
     const candidateIds = options?.candidateIds ?? null;
     const sectionKey = String(options?.sectionKey ?? "");
@@ -840,6 +949,14 @@
       if (!oldBySection.has(item.sectionKey)) oldBySection.set(item.sectionKey, []);
       oldBySection.get(item.sectionKey).push(item);
     });
+    const newMeta = newSegments.map((segment, index) => ({
+      segment,
+      index,
+      normalized: normalizeTextForMatch(segment.text_quote),
+      tokens: tokenizeForMatch(segment.text_quote),
+      sectionKey: getSectionMatchKey(segment)
+    }));
+    const newBySection = buildSectionSlotIndex(newMeta);
     const customMeta = oldMeta.filter((item) => isCustomSubSegmentId(item.segment.segment_id));
     const normalizedIndex = buildNormalizedIndex(oldSegmentsFiltered);
     const usedOldIds = new Set();
@@ -927,6 +1044,21 @@
           matchedSourceSegment = globalFuzzy.segment;
           status = "changed";
           usedOldIds.add(matchedId);
+        } else {
+          const sectionSlotFallback = pickSectionSlotFallback({
+            segment,
+            sectionKey,
+            newIndex,
+            newBySection,
+            oldBySection,
+            usedOldIds
+          });
+          if (sectionSlotFallback) {
+            matchedId = sectionSlotFallback.segment.segment_id;
+            matchedSourceSegment = sectionSlotFallback.segment;
+            status = "changed";
+            usedOldIds.add(matchedId);
+          }
         }
       }
 
@@ -955,9 +1087,49 @@
       newSegments,
       oldBySection
     });
-    const mergedSegments = [...matched.map((item) => item.segment), ...preservedManual.map((item) => item.segment)];
-    const decisionsOverride = matched.map((item) => {
-      const sourceId = item.matchedId ? String(item.matchedId) : "";
+    const oldToNextId = new Map(
+      matched
+        .filter((item) => String(item?.matchedId ?? "").trim())
+        .map((item) => [String(item.matchedId ?? "").trim(), String(item.segment?.segment_id ?? "").trim()])
+    );
+    const preservedByAnchor = new Map();
+    const preservedTail = [];
+    preservedManual.forEach((item) => {
+      const anchorTargetId =
+        String(oldToNextId.get(String(item?.anchorSourceId ?? "").trim()) ?? item?.anchorSourceId ?? "").trim();
+      if (item?.preserveKind === "comments" && anchorTargetId) {
+        if (!preservedByAnchor.has(anchorTargetId)) preservedByAnchor.set(anchorTargetId, []);
+        preservedByAnchor.get(anchorTargetId).push(item);
+        return;
+      }
+      preservedTail.push(item);
+    });
+
+    const orderedEntries = [];
+    matched.forEach((item) => {
+      const segmentId = String(item?.segment?.segment_id ?? "").trim();
+      const anchored = preservedByAnchor.get(segmentId) ?? [];
+      anchored.forEach((preserved) => {
+        orderedEntries.push({
+          segment: preserved.segment,
+          sourceId: String(preserved.sourceId ?? preserved.segment?.segment_id ?? "").trim()
+        });
+      });
+      orderedEntries.push({
+        segment: item.segment,
+        sourceId: item.matchedId ? String(item.matchedId) : ""
+      });
+    });
+    preservedTail.forEach((item) => {
+      orderedEntries.push({
+        segment: item.segment,
+        sourceId: String(item.sourceId ?? item.segment?.segment_id ?? "").trim()
+      });
+    });
+
+    const mergedSegments = orderedEntries.map((item) => item.segment);
+    const decisionsOverride = orderedEntries.map((item) => {
+      const sourceId = String(item.sourceId ?? "").trim();
       const existing = sourceId ? decisionMap.get(sourceId) : null;
       return {
         segment_id: item.segment.segment_id,
@@ -965,16 +1137,6 @@
         search_decision: existing?.search_decision ?? emptySearchDecision(),
         search_decision_en: existing?.search_decision_en ?? emptySearchDecision()
       };
-    });
-    preservedManual.forEach((item) => {
-      const sourceId = String(item.sourceId ?? item.segment.segment_id);
-      const existing = decisionMap.get(sourceId);
-      decisionsOverride.push({
-        segment_id: item.segment.segment_id,
-        visual_decision: existing?.visual_decision ?? emptyVisualDecision(),
-        search_decision: existing?.search_decision ?? emptySearchDecision(),
-        search_decision_en: existing?.search_decision_en ?? emptySearchDecision()
-      });
     });
     const oldIds = new Set(oldSegmentsFiltered.map((segment) => String(segment?.segment_id ?? "").trim()).filter(Boolean));
     const reusedOldIdsCount = Array.from(usedOldIds).filter((id) => oldIds.has(String(id))).length;

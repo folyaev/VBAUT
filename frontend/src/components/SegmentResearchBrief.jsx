@@ -1,5 +1,26 @@
 import React from "react";
 
+function formatBriefReasonTag(tag) {
+  const normalized = String(tag ?? "").trim().toLowerCase();
+  if (!normalized || normalized.startsWith("helpful:") || normalized.startsWith("used_before:")) return "";
+  if (normalized === "ru_blocked") return "RU blocked";
+  if (normalized === "responsive") return "Responsive";
+  if (normalized === "watermarks") return "Watermarks";
+  if (normalized === "dismissed_before") return "Dismissed before";
+  if (normalized === "duplicate_story") return "Repeat story";
+  if (normalized === "bad_visual_history") return "Weak visual history";
+  if (normalized === "screenshot_fail_risk") return "Screenshot risk";
+  if (normalized === "download_fail_risk") return "Download risk";
+  if (normalized === "paywall_prone") return "Paywall prone";
+  if (normalized === "anti_bot_prone") return "Anti-bot prone";
+  if (normalized === "age_gate_prone") return "Age-gate prone";
+  if (normalized.startsWith("story_cluster:")) {
+    const value = String(tag).split(":")[1] || "";
+    return value ? `Story dupes x${value}` : "Story dupes";
+  }
+  return String(tag ?? "").trim().replace(/_/g, " ");
+}
+
 export function SegmentResearchBrief({
   segmentId,
   researchResultsCount,
@@ -75,6 +96,9 @@ export function SegmentResearchBrief({
             <strong>{item.title}</strong>
             <span>{`${item.domain} · ${formatResearchCandidateRoleLabel(item.role)} · ${item.score.toFixed(2)}`}</span>
             {String(item?.memory_hint ?? "").trim() ? <span>{item.memory_hint}</span> : null}
+            {Array.isArray(item?.reason_tags) && item.reason_tags.length > 0 ? (
+              <span>{item.reason_tags.map(formatBriefReasonTag).filter(Boolean).slice(0, 3).join(" В· ")}</span>
+            ) : null}
           </div>
         ))}
       </div>

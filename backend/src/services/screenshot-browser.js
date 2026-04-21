@@ -38,9 +38,26 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+function normalizeHost(value = "") {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+/, "")
+    .replace(/:\d+$/, "");
+}
+
+function cookieDomainMatchesList(cookieDomain, domains = []) {
+  const host = normalizeHost(cookieDomain);
+  if (!host) return false;
+  return domains.some((domain) => {
+    const normalizedDomain = normalizeHost(domain);
+    return normalizedDomain && (host === normalizedDomain || host.endsWith(`.${normalizedDomain}`));
+  });
+}
+
 function normalizeCaptureViewport(width, height, zoom) {
   const outputWidth = clampNumber(width, 2560, 480, 3840);
-  const outputHeight = clampNumber(height, 1280, 320, 2160);
+  const outputHeight = clampNumber(height, 1280, 320, 5120);
   const zoomPercent = clampNumber(zoom, 100, 50, 800);
   const zoomFactor = zoomPercent / 100;
   return {
@@ -51,6 +68,16 @@ function normalizeCaptureViewport(width, height, zoom) {
     viewportWidth: Math.max(320, Math.round(outputWidth / zoomFactor)),
     viewportHeight: Math.max(240, Math.round(outputHeight / zoomFactor))
   };
+}
+
+function safeOrigin(value = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  try {
+    return new URL(text).origin;
+  } catch {
+    return "";
+  }
 }
 
 function fileExists(filePath) {
@@ -168,6 +195,56 @@ async function waitForPageToSettle(page, extraWaitMs = 0) {
   }
 }
 
+async function suppressPagePermissionPrompts(browser, page, url = "") {
+  const origin = safeOrigin(url);
+  if (origin && browser && typeof browser.overridePermissions === "function") {
+    try {
+      await browser.overridePermissions(origin, []);
+    } catch {
+      // noop
+    }
+  }
+  if (!page) return;
+  await page.evaluateOnNewDocument(() => {
+    try {
+      const notification = globalThis.Notification;
+      if (notification && typeof notification.requestPermission === "function") {
+        notification.requestPermission = async () => "denied";
+      }
+      if (notification && "permission" in notification) {
+        Object.defineProperty(notification, "permission", {
+          configurable: true,
+          get: () => "denied"
+        });
+      }
+    } catch {
+      // noop
+    }
+    try {
+      const permissions = navigator.permissions;
+      if (permissions && typeof permissions.query === "function") {
+        const originalQuery = permissions.query.bind(permissions);
+        permissions.query = async (descriptor) => {
+          if (descriptor && descriptor.name === "notifications") {
+            return {
+              state: "denied",
+              onchange: null,
+              addEventListener() {},
+              removeEventListener() {},
+              dispatchEvent() {
+                return false;
+              }
+            };
+          }
+          return originalQuery(descriptor);
+        };
+      }
+    } catch {
+      // noop
+    }
+  });
+}
+
 export function createPersistentScreenshotBrowserService(options = {}) {
   const env = options?.env ?? process.env;
   const dataDir = path.resolve(String(options?.dataDir ?? path.resolve(__dirname, "../../../data")).trim());
@@ -271,6 +348,8 @@ export function createPersistentScreenshotBrowserService(options = {}) {
         "--no-default-browser-check",
         "--disable-session-crashed-bubble",
         "--disable-infobars",
+        "--disable-notifications",
+        "--deny-permission-prompts",
         "--lang=ru-RU",
         `--remote-debugging-port=${remoteDebugPort}`
       ];
@@ -379,6 +458,7 @@ export function createPersistentScreenshotBrowserService(options = {}) {
   } = {}) {
     const activeBrowser = await ensureBrowser();
     const page = await activeBrowser.newPage();
+    await suppressPagePermissionPrompts(activeBrowser, page, url);
     await page.evaluateOnNewDocument(() => {
       try {
         Object.defineProperty(navigator, "webdriver", { get: () => false });
@@ -490,6 +570,82 @@ export function createPersistentScreenshotBrowserService(options = {}) {
     };
   }
 
+  async function exportCookies({ targetPath = "", domains = [] } = {}) {
+    const activeBrowser = await ensureBrowser();
+    const requestedDomains = splitList(domains).map((item) => normalizeHost(item)).filter(Boolean);
+    let tempPage = null;
+    try {
+      const existingPages = await activeBrowser.pages().catch(() => []);
+      const page = existingPages[0] ?? (await openPage({})).page;
+      if (!existingPages[0]) {
+        tempPage = page;
+      }
+      const cdp = await page.target().createCDPSession();
+      await cdp.send("Network.enable");
+      const cookiesPayload = await cdp.send("Network.getAllCookies");
+      const rawCookies = Array.isArray(cookiesPayload?.cookies) ? cookiesPayload.cookies : [];
+      const filtered = requestedDomains.length
+        ? rawCookies.filter((cookie) => cookieDomainMatchesList(cookie?.domain ?? "", requestedDomains))
+        : rawCookies;
+      const dedup = new Map();
+      for (const cookie of filtered) {
+        const domain = String(cookie?.domain ?? "").trim();
+        const pathValue = String(cookie?.path ?? "/").trim() || "/";
+        const name = String(cookie?.name ?? "").trim();
+        if (!domain || !name) continue;
+        const key = `${normalizeHost(domain)}|${pathValue}|${name}`;
+        if (dedup.has(key)) continue;
+        const normalized = {
+          name,
+          value: String(cookie?.value ?? ""),
+          domain,
+          path: pathValue,
+          secure: Boolean(cookie?.secure),
+          httpOnly: Boolean(cookie?.httpOnly)
+        };
+        const expires = Number(cookie?.expires ?? 0);
+        if (Number.isFinite(expires) && expires > 0) {
+          normalized.expires = Math.floor(expires);
+        }
+        const sameSiteRaw = String(cookie?.sameSite ?? "").trim();
+        if (sameSiteRaw) {
+          normalized.sameSite = sameSiteRaw.charAt(0).toUpperCase() + sameSiteRaw.slice(1).toLowerCase();
+        }
+        dedup.set(key, normalized);
+      }
+      const cookies = [...dedup.values()];
+      const pathValue = String(targetPath ?? "").trim();
+      if (pathValue) {
+        const resolved = path.resolve(pathValue);
+        await fs.mkdir(path.dirname(resolved), { recursive: true });
+        await fs.writeFile(
+          resolved,
+          JSON.stringify(
+            {
+              exported_at: new Date().toISOString(),
+              source: "persistent_screenshot_browser",
+              domains: requestedDomains,
+              cookies
+            },
+            null,
+            2
+          ),
+          "utf8"
+        );
+      }
+      return {
+        ok: true,
+        count: cookies.length,
+        domains: requestedDomains,
+        path: pathValue ? path.resolve(pathValue) : null
+      };
+    } finally {
+      if (tempPage) {
+        await closePage(tempPage);
+      }
+    }
+  }
+
   return {
     enabled,
     autoStart,
@@ -497,6 +653,7 @@ export function createPersistentScreenshotBrowserService(options = {}) {
     startBackground,
     openPage,
     closePage,
+    exportCookies,
     restart,
     stopBrowser,
     getRuntimeInfo

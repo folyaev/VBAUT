@@ -29,6 +29,7 @@ export function registerGenerationRoutes(app, deps) {
     normalizeSegmentWithVisual,
     normalizeVisualDecisionInput,
     readOptionalJson,
+    recoverDocumentSegmentState,
     saveVersioned,
     splitSegmentsAndDecisions,
     syncDocumentState,
@@ -68,6 +69,52 @@ export function registerGenerationRoutes(app, deps) {
       return versions[versions.length - 2];
     }
     return versions[versions.length - 1];
+  }
+
+  function pickRecoveryTargetStats(result) {
+    if (!result || typeof result !== "object") return null;
+    if (String(result?.strategy ?? "").trim().toLowerCase() === "layered") {
+      return result?.layered?.stats ?? null;
+    }
+    return result?.selected?.stats ?? null;
+  }
+
+  function listsDiffer(left, right) {
+    const a = Array.isArray(left) ? left.map((item) => String(item ?? "").trim()).filter(Boolean) : [];
+    const b = Array.isArray(right) ? right.map((item) => String(item ?? "").trim()).filter(Boolean) : [];
+    if (a.length !== b.length) return true;
+    for (let index = 0; index < a.length; index += 1) {
+      if (a[index] !== b[index]) return true;
+    }
+    return false;
+  }
+
+  function shouldApplyRecovery(result) {
+    const current = result?.current ?? null;
+    const target = pickRecoveryTargetStats(result);
+    if (!current || !target) return false;
+    const currentDone = Number(current?.done_non_links ?? 0);
+    const targetDone = Number(target?.done_non_links ?? 0);
+    const currentMedia = Number(current?.visual_media_segments ?? 0);
+    const targetMedia = Number(target?.visual_media_segments ?? 0);
+    const currentDescriptions = Number(current?.visual_descriptions ?? 0);
+    const targetDescriptions = Number(target?.visual_descriptions ?? 0);
+    if (targetDone > currentDone || targetMedia > currentMedia || targetDescriptions > currentDescriptions) {
+      return true;
+    }
+    if (targetDone >= currentDone && listsDiffer(current?.done_segment_ids, target?.done_segment_ids)) {
+      return true;
+    }
+    if (targetMedia >= currentMedia && listsDiffer(current?.visual_media_segment_ids, target?.visual_media_segment_ids)) {
+      return true;
+    }
+    if (
+      targetDescriptions >= currentDescriptions &&
+      listsDiffer(current?.visual_description_segment_ids, target?.visual_description_segment_ids)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   app.post("/api/documents/:id/segments:generate", async (req, res) => {
@@ -135,9 +182,54 @@ export function registerGenerationRoutes(app, deps) {
       );
       const ensuredMediaTopics = await ensureMediaTopicFoldersForSegments(segmentsData);
 
-      const segmentsVersion = await saveVersioned(docId, "segments", segmentsData);
-      const decisionsVersion = await saveVersioned(docId, "decisions", decisionsData);
+      let segmentsVersion = await saveVersioned(docId, "segments", segmentsData);
+      let decisionsVersion = await saveVersioned(docId, "decisions", decisionsData);
+      let responseSegments = segmentsData;
+      let responseDecisions = decisionsData;
+      let stateRecovery = null;
       await syncDocumentContext?.(docId, segmentsData, decisionsData, "segments_generate");
+
+      if (typeof recoverDocumentSegmentState === "function") {
+        const recoveryPreview = await recoverDocumentSegmentState({
+          docId,
+          apply: false,
+          scanLimit: 40
+        }).catch(() => null);
+        if (recoveryPreview && shouldApplyRecovery(recoveryPreview)) {
+          const recoveryApplied = await recoverDocumentSegmentState({
+            docId,
+            apply: true,
+            scanLimit: 40
+          }).catch(() => null);
+          if (recoveryApplied?.written) {
+            stateRecovery = {
+              strategy: recoveryApplied?.strategy ?? null,
+              current: recoveryApplied?.current ?? null,
+              target: pickRecoveryTargetStats(recoveryApplied),
+              selected: recoveryApplied?.selected ?? null,
+              layered: recoveryApplied?.layered ?? null,
+              written: recoveryApplied?.written ?? null
+            };
+            segmentsVersion = Number(recoveryApplied?.written?.segments_version ?? segmentsVersion);
+            decisionsVersion = Number(recoveryApplied?.written?.decisions_version ?? decisionsVersion);
+            const [recoveredSegments, recoveredDecisions] = await Promise.all([
+              readOptionalJson(path.join(dir, "segments.json")),
+              readOptionalJson(path.join(dir, "decisions.json"))
+            ]);
+            if (Array.isArray(recoveredSegments) && Array.isArray(recoveredDecisions)) {
+              responseSegments = recoveredSegments;
+              responseDecisions = recoveredDecisions;
+              await syncDocumentContext?.(docId, recoveredSegments, recoveredDecisions, "segments_generate_auto_recover");
+            }
+            await appendEvent(docId, {
+              timestamp: new Date().toISOString(),
+              event: "segments_generate_auto_recovered",
+              payload: stateRecovery
+            });
+          }
+        }
+      }
+
       markDocumentSegmented(document, text);
       document.updated_at = new Date().toISOString();
       await writeJson(path.join(dir, "document.json"), document);
@@ -151,6 +243,7 @@ export function registerGenerationRoutes(app, deps) {
           segmentsVersion,
           decisionsVersion,
           media_topic_folders_ensured: ensuredMediaTopics.length,
+          state_recovery: stateRecovery,
           segmentation_diff: {
             ...(diff ?? {}),
             link_topics_collapsed: mergedLinkTopicsCollapsed,
@@ -162,9 +255,10 @@ export function registerGenerationRoutes(app, deps) {
 
       res.json({
         document: normalizeDocumentForResponse(document),
-        segments: segmentsData,
-        decisions: decisionsData,
+        segments: responseSegments,
+        decisions: responseDecisions,
         media_topic_folders_ensured: ensuredMediaTopics.length,
+        state_recovery: stateRecovery,
         segmentation_diff: {
           ...(diff ?? {}),
           link_topics_collapsed: mergedLinkTopicsCollapsed,
@@ -352,6 +446,51 @@ export function registerGenerationRoutes(app, deps) {
         })),
         version
       });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents/:id/segment-state:recover", async (req, res) => {
+    try {
+      const docId = req.params.id;
+      const dir = getDocDir(docId);
+      const document = await loadGenerationDocumentState(docId);
+      if (!document) return res.status(404).json({ error: "Document not found" });
+      if (typeof recoverDocumentSegmentState !== "function") {
+        return res.status(500).json({ error: "Segment state recovery is not configured" });
+      }
+
+      const result = await recoverDocumentSegmentState({
+        docId,
+        sourceSegmentsVersion: req.body?.source_segments_version,
+        sourceDecisionsVersion: req.body?.source_decisions_version,
+        scanLimit: req.body?.scan_limit,
+        apply: req.body?.apply === true
+      });
+
+      if (req.body?.apply === true && result?.written) {
+        const [segmentsData, decisionsData] = await Promise.all([
+          readOptionalJson(path.join(dir, "segments.json")),
+          readOptionalJson(path.join(dir, "decisions.json"))
+        ]);
+        if (Array.isArray(segmentsData) && Array.isArray(decisionsData)) {
+          await syncDocumentContext?.(docId, segmentsData, decisionsData, "segment_state_recover");
+        }
+        await appendEvent(docId, {
+          timestamp: new Date().toISOString(),
+          event: "segment_state_recovered",
+          payload: {
+            strategy: result?.strategy ?? null,
+            current: result?.current ?? null,
+            selected: result?.selected ?? null,
+            layered: result?.layered ?? null,
+            written: result?.written ?? null
+          }
+        });
+      }
+
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

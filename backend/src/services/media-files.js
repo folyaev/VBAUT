@@ -6,6 +6,7 @@ export function createMediaFilesUtils(options = {}) {
   const mediaMaxFilesList = Number.isFinite(Number(options.mediaMaxFilesList))
     ? Math.max(20, Number(options.mediaMaxFilesList))
     : 500;
+  const ignoredRootFolders = new Set(["unsorted", "archive_projects", "graphics"]);
 
   function getMediaDir() {
     return mediaRoot;
@@ -65,6 +66,7 @@ export function createMediaFilesUtils(options = {}) {
         if (files.length >= mediaMaxFilesList) break;
         const relPath = currentRel ? path.join(currentRel, entry.name) : entry.name;
         if (entry.isDirectory()) {
+          if (!currentRel && ignoredRootFolders.has(String(entry.name ?? "").trim().toLowerCase())) continue;
           stack.push(relPath);
           continue;
         }
@@ -94,6 +96,7 @@ export function createMediaFilesUtils(options = {}) {
     if (!normalized) return true;
     if (normalized.includes("newfile")) return true;
     if (normalized.endsWith(".txt")) return true;
+    if (normalized.endsWith(".xml")) return true;
     if (normalized.endsWith(".db")) return true;
     if (normalized.endsWith(".py")) return true;
     if (normalized.endsWith(".sqlite")) return true;

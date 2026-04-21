@@ -2,7 +2,9 @@ import path from "node:path";
 import { nanoid } from "nanoid";
 import { createDocumentRouteLoaders } from "../services/document-route-loaders.js";
 import { canonicalizeLinkUrl, normalizeLinkUrl } from "../services/links.js";
-import { isBlockedResearchDomain } from "../services/source-profiles.js";
+import { normalizeResearchDismissedUrlsInput } from "../services/normalizers.js";
+import { isBlockedResearchDomain, isUaResearchDomain } from "../services/source-profiles.js";
+import { dedupeRankedResearchResultsByStory } from "../services/research-story-clusters.js";
 
 function normalizeUrl(input) {
   return normalizeLinkUrl(input);
@@ -11,6 +13,22 @@ function normalizeUrl(input) {
 function normalizeUrlForKey(input) {
   return canonicalizeLinkUrl(input);
 }
+
+const RESEARCH_APPLY_ACTIONS = new Set([
+  "use_as_source",
+  "mark_helpful",
+  "promote_to_decision",
+  "screenshot",
+  "download",
+  "attach_asset",
+  "duplicate_story",
+  "bad_visual",
+  "screenshot_failed",
+  "download_failed",
+  "paywall",
+  "anti_bot",
+  "age_gate"
+]);
 
 function dedupeResultsByUrl(results = []) {
   const seen = new Set();
@@ -25,14 +43,19 @@ function dedupeResultsByUrl(results = []) {
 function filterBlockedResearchResults(results = [], sourceProfiles = {}) {
   const allowed = [];
   const blocked = [];
+  const uaFallback = [];
   (Array.isArray(results) ? results : []).forEach((item) => {
     if (isBlockedResearchDomain(item?.domain, sourceProfiles)) {
       blocked.push(item);
       return;
     }
+    if (isUaResearchDomain(item?.domain)) {
+      uaFallback.push(item);
+      return;
+    }
     allowed.push(item);
   });
-  return { allowed, blocked };
+  return { allowed, blocked, uaFallback };
 }
 
 function collectSeenResearchUrls(runs = []) {
@@ -40,6 +63,10 @@ function collectSeenResearchUrls(runs = []) {
   (Array.isArray(runs) ? runs : []).forEach((run) => {
     (Array.isArray(run?.results) ? run.results : []).forEach((item) => {
       const key = normalizeUrlForKey(item?.url);
+      if (key) seen.add(key);
+    });
+    (Array.isArray(run?.applied) ? run.applied : []).forEach((item) => {
+      const key = normalizeUrlForKey(item?.meta?.url);
       if (key) seen.add(key);
     });
   });
@@ -58,19 +85,135 @@ function collectDocumentScenarioLinkUrls(segments = []) {
   return seen;
 }
 
-function buildScreenshotLabUrl({ url, docId, segmentId, title }) {
+function collectDismissedResearchUrlKeys(decision = null) {
+  const seen = new Set();
+  (Array.isArray(decision?.research_dismissed_urls) ? decision.research_dismissed_urls : []).forEach((item) => {
+    const key = normalizeUrlForKey(item?.url ?? item);
+    if (key) seen.add(key);
+  });
+  return seen;
+}
+
+function appendDismissedResearchUrlEntries(current = [], entries = []) {
+  return normalizeResearchDismissedUrlsInput([...(Array.isArray(current) ? current : []), ...entries]);
+}
+
+function buildScreenshotLabUrl({ url, docId, segmentId, runId, resultId, title, textQuote }) {
   const params = new URLSearchParams({
     urls: url,
     mode: "screenshot"
   });
   if (docId) params.set("doc_id", docId);
   if (segmentId) params.set("segment_id", segmentId);
+  if (runId) params.set("run_id", runId);
+  if (resultId) params.set("result_id", resultId);
   if (title) params.set("note", title);
+  if (textQuote) params.set("text_quote", textQuote);
   return `/tools/screenshot-lab?${params.toString()}`;
 }
 
 function compactText(input) {
   return String(input ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getResearchSectionKey(segment = {}) {
+  const sectionId = compactText(segment?.section_id).toLowerCase();
+  if (sectionId) return `id:${sectionId}`;
+  const sectionTitle = compactText(segment?.section_title).toLowerCase();
+  if (sectionTitle) return `title:${sectionTitle}`;
+  return "";
+}
+
+function isResearchContextTextSegment(segment = {}) {
+  const blockType = compactText(segment?.block_type).toLowerCase();
+  if (blockType === "links") return false;
+  if (/^comments_/i.test(compactText(segment?.segment_id))) return false;
+  return Boolean(compactText(segment?.text_quote));
+}
+
+function extractResearchLinkHintDomains(linkHints = []) {
+  const seen = new Set();
+  const domains = [];
+  (Array.isArray(linkHints) ? linkHints : []).forEach((item) => {
+    const raw = compactText(item);
+    if (!raw) return;
+    try {
+      const parsed = new URL(raw);
+      const hostname = compactText(parsed.hostname).replace(/^www\./i, "").toLowerCase();
+      if (!hostname || seen.has(hostname)) return;
+      seen.add(hostname);
+      domains.push(hostname);
+    } catch {
+      // Ignore malformed URLs in hints.
+    }
+  });
+  return domains.slice(0, 4);
+}
+
+function buildSectionResearchContext(segments = [], targetSegment = {}) {
+  const sectionKey = getResearchSectionKey(targetSegment);
+  if (!sectionKey) {
+    return {
+      section_context_text: "",
+      section_link_hints: []
+    };
+  }
+  const source = Array.isArray(segments) ? segments : [];
+  const currentSegmentId = compactText(targetSegment?.segment_id);
+  const sameSection = source.filter((item) => getResearchSectionKey(item) === sectionKey);
+  if (sameSection.length === 0) {
+    return {
+      section_context_text: "",
+      section_link_hints: []
+    };
+  }
+
+  const currentIndex = sameSection.findIndex((item) => compactText(item?.segment_id) === currentSegmentId);
+  const contextTexts = sameSection
+    .map((item, index) => {
+      if (!isResearchContextTextSegment(item)) return null;
+      if (compactText(item?.segment_id) === currentSegmentId) return null;
+      const text = compactText(item?.text_quote);
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      const linkCount = Array.isArray(item?.links) ? item.links.length : 0;
+      const distance = currentIndex === -1 ? 99 : Math.abs(index - currentIndex);
+      const score =
+        (linkCount * 120) +
+        Math.max(0, 40 - (distance * 8)) +
+        Math.min(text.length, 220) / 3 +
+        Math.min(wordCount, 24) * 4;
+      return { text, score };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score);
+
+  const seenTexts = new Set();
+  const selectedTexts = [];
+  contextTexts.forEach((item) => {
+    const normalized = item.text.toLowerCase();
+    if (seenTexts.has(normalized)) return;
+    seenTexts.add(normalized);
+    selectedTexts.push(item.text);
+  });
+
+  const linkHints = [];
+  const seenLinkHints = new Set();
+  sameSection.forEach((item) => {
+    (Array.isArray(item?.links) ? item.links : []).forEach((entry) => {
+      const url = compactText(entry?.url ?? entry);
+      if (!url || seenLinkHints.has(url)) return;
+      seenLinkHints.add(url);
+      linkHints.push(url);
+    });
+  });
+
+  return {
+    section_context_text: selectedTexts.slice(0, 3).join("\n"),
+    section_link_hints: [
+      ...linkHints.slice(0, 4),
+      ...extractResearchLinkHintDomains(linkHints)
+    ].slice(0, 6)
+  };
 }
 
 function tokenizeKeywords(...parts) {
@@ -103,18 +246,21 @@ async function enrichSegmentWithTranslatedText(segment = {}, translateHeadingToE
       translated_text_quote: ""
     };
   }
-  const textQuote = compactText(segment?.text_quote);
-  if (!textQuote || typeof translateHeadingToEnglishQuery !== "function") {
+  const translationSeed = [compactText(segment?.text_quote), compactText(segment?.section_context_text)]
+    .filter(Boolean)
+    .join(". ")
+    .slice(0, 320);
+  if (!translationSeed || typeof translateHeadingToEnglishQuery !== "function") {
     return {
       ...segment,
       translated_text_quote: ""
     };
   }
   try {
-    const translated = compactText(await translateHeadingToEnglishQuery(textQuote.slice(0, 320)));
+    const translated = compactText(await translateHeadingToEnglishQuery(translationSeed));
     return {
       ...segment,
-      translated_text_quote: translated && translated.toLowerCase() !== textQuote.toLowerCase() ? translated : ""
+      translated_text_quote: translated && translated.toLowerCase() !== translationSeed.toLowerCase() ? translated : ""
     };
   } catch {
     return {
@@ -468,6 +614,7 @@ export function registerResearchRoutes(app, deps) {
         visual_decision: { type: "no_visual", description: "", format_hint: null, duration_hint_sec: null, priority: null },
         search_decision: { keywords: [], queries: [] },
         search_decision_en: { keywords: [], queries: [] },
+        research_dismissed_urls: [],
         version: 1
       };
     return { dir, document, segments, decisions, segment, decision };
@@ -483,6 +630,7 @@ export function registerResearchRoutes(app, deps) {
             visual_decision: emptyVisualDecision(),
             search_decision: emptySearchDecision(),
             search_decision_en: emptySearchDecision(),
+            research_dismissed_urls: [],
             version: 1
           };
     const nextRaw = updater(current);
@@ -493,6 +641,9 @@ export function registerResearchRoutes(app, deps) {
       visual_decision: normalizeVisualDecisionInput(nextRaw?.visual_decision ?? current?.visual_decision),
       search_decision: normalizeSearchDecisionInput(nextRaw?.search_decision ?? current?.search_decision),
       search_decision_en: normalizeSearchDecisionInput(nextRaw?.search_decision_en ?? current?.search_decision_en),
+      research_dismissed_urls: normalizeResearchDismissedUrlsInput(
+        nextRaw?.research_dismissed_urls ?? current?.research_dismissed_urls
+      ),
       version: Number(current?.version ?? 1)
     };
     const nextDecisions = [...context.decisions];
@@ -701,7 +852,10 @@ export function registerResearchRoutes(app, deps) {
               url: normalizedUrl,
               docId,
               segmentId,
-              title: result.title
+              runId,
+              resultId,
+              title: result.title,
+              textQuote: context.segment.text_quote
             })
           : null,
       download_url: action === "download" ? normalizedUrl : null,
@@ -710,6 +864,109 @@ export function registerResearchRoutes(app, deps) {
         total_domains: Object.keys(sourceMemory?.domains ?? {}).length,
         total_urls: Object.keys(sourceMemory?.urls ?? {}).length
       }
+    };
+  }
+
+  async function removeResearchResult({ docId, segmentId, runId, resultId }) {
+    const context = await loadSegmentContext(docId, segmentId);
+    if (context.error) {
+      const error = new Error(context.error);
+      error.status = context.status;
+      throw error;
+    }
+    const run = await getRunById(docId, runId);
+    if (!run || String(run.segment_id ?? "") !== String(segmentId)) {
+      const error = new Error("Research run not found");
+      error.status = 404;
+      throw error;
+    }
+    const result =
+      (Array.isArray(run.results) ? run.results : []).find((item) => String(item?.id ?? "") === String(resultId ?? "")) ?? null;
+    if (!result) {
+      const error = new Error("Research result not found");
+      error.status = 404;
+      throw error;
+    }
+
+    const nextResults = (Array.isArray(run.results) ? run.results : []).filter(
+      (item) => String(item?.id ?? "") !== String(resultId ?? "")
+    );
+    const nextRankedResults = (Array.isArray(run.ranked_results) ? run.ranked_results : []).filter(
+      (item) => String(item?.result_id ?? "") !== String(resultId ?? "")
+    );
+    const nextApplied = [
+      ...(Array.isArray(run.applied) ? run.applied : []).filter(
+        (item) => !(String(item?.result_id ?? "") === String(resultId ?? "") && String(item?.action ?? "") !== "dismissed")
+      ),
+      {
+        result_id: String(resultId ?? ""),
+        action: "dismissed",
+        asset_id: null,
+        applied_at: new Date().toISOString(),
+        meta: {
+          url: normalizeUrl(result?.url),
+          domain: compactText(result?.domain),
+          title: compactText(result?.title)
+        }
+      }
+    ];
+    const nextSummary = buildResearchSummary(nextRankedResults, {
+      queries: Array.isArray(run?.queries) ? run.queries : [],
+      results: nextResults
+    });
+    const nextBrief = buildResearchBrief(nextResults, nextRankedResults, context.decision, { summary: nextSummary });
+    const updatedRun = await saveRun(docId, {
+      ...run,
+      status: nextRankedResults.length > 0 ? "done" : "done_empty",
+      results: nextResults,
+      ranked_results: nextRankedResults,
+      applied: nextApplied,
+      summary: nextSummary,
+      brief: nextBrief,
+      updated_at: new Date().toISOString()
+    });
+    const updatedDecision = await writeDecisionUpdate(context, segmentId, (current) => ({
+      ...current,
+      research_dismissed_urls: appendDismissedResearchUrlEntries(current?.research_dismissed_urls, [
+        {
+          url: normalizeUrl(result?.url),
+          domain: compactText(result?.domain),
+          title: compactText(result?.title),
+          dismissed_at: new Date().toISOString(),
+          source: "research_remove"
+        }
+      ])
+    }));
+    await recordSourceUsage({
+      doc_id: docId,
+      segment_id: segmentId,
+      domain: result.domain,
+      url: normalizeUrl(result?.url),
+      uploader: result?.uploader,
+      uploader_url: result?.uploader_url,
+      title: result.title,
+      section_title: context.segment.section_title,
+      text_quote: context.segment.text_quote,
+      action: "dismissed",
+      used_at: new Date().toISOString()
+    });
+
+    await appendEvent(docId, {
+      timestamp: new Date().toISOString(),
+      event: "segment_research_result_removed",
+      payload: {
+        segment_id: segmentId,
+        run_id: runId,
+        result_id: resultId,
+        url: normalizeUrl(result?.url)
+      }
+    });
+
+    return {
+      ok: true,
+      run: updatedRun,
+      decision: updatedDecision,
+      removed_result_id: resultId
     };
   }
 
@@ -812,8 +1069,12 @@ export function registerResearchRoutes(app, deps) {
             research_use_topic_title: Boolean(context.segment?.research_use_topic_title),
             research_use_theme_tags: Boolean(context.segment?.research_use_theme_tags)
           };
-      const rankingSegment = await enrichSegmentWithTranslatedText({
+      const effectiveSegmentWithContext = {
         ...effectiveSegment,
+        ...buildSectionResearchContext(context.segments, effectiveSegment)
+      };
+      const rankingSegment = await enrichSegmentWithTranslatedText({
+        ...effectiveSegmentWithContext,
         visual_decision: context.decision.visual_decision,
         search_decision: context.decision.search_decision
       }, translateHeadingToEnglishQuery);
@@ -827,11 +1088,25 @@ export function registerResearchRoutes(app, deps) {
       let filteredResults = dedupeResultsByUrl(searchResult.results);
       const warnings = Array.isArray(searchResult?.warnings) ? [...searchResult.warnings] : [];
       const blockedFilter = filterBlockedResearchResults(filteredResults, sourceProfiles);
-      filteredResults = blockedFilter.allowed;
+      filteredResults = blockedFilter.allowed.length > 0 ? blockedFilter.allowed : blockedFilter.uaFallback;
       if (blockedFilter.blocked.length > 0) {
         warnings.push(`Skipped ${blockedFilter.blocked.length} blocked source result(s).`);
       }
+      if (blockedFilter.uaFallback.length > 0 && blockedFilter.allowed.length > 0) {
+        warnings.push(`Skipped ${blockedFilter.uaFallback.length} .ua result(s) because non-.ua sources were available.`);
+      } else if (blockedFilter.uaFallback.length > 0 && blockedFilter.allowed.length === 0) {
+        warnings.push(`Used ${blockedFilter.uaFallback.length} .ua result(s) as fallback because no other sources were found.`);
+      }
       const documentScenarioLinks = collectDocumentScenarioLinkUrls(context.segments);
+      const dismissedKeys = collectDismissedResearchUrlKeys(context.decision);
+      if (dismissedKeys.size > 0) {
+        const beforeDismissedCount = filteredResults.length;
+        filteredResults = filteredResults.filter((item) => !dismissedKeys.has(normalizeUrlForKey(item?.url)));
+        const removedDismissed = beforeDismissedCount - filteredResults.length;
+        if (removedDismissed > 0) {
+          warnings.push(`Skipped ${removedDismissed} previously dismissed link(s).`);
+        }
+      }
       if (documentScenarioLinks.size > 0) {
         const beforeDocumentDedupCount = filteredResults.length;
         filteredResults = filteredResults.filter((item) => !documentScenarioLinks.has(normalizeUrlForKey(item?.url)));
@@ -860,25 +1135,37 @@ export function registerResearchRoutes(app, deps) {
         sourceProfiles,
         sourceMemory,
         {
-          section_title: effectiveSegment.section_title,
-          research_use_topic_title: Boolean(effectiveSegment?.research_use_topic_title),
-          research_use_theme_tags: Boolean(effectiveSegment?.research_use_theme_tags),
-          topic_tags: Array.isArray(effectiveSegment?.topic_tags) ? effectiveSegment.topic_tags : [],
-          section_tags: Array.isArray(effectiveSegment?.section_tags) ? effectiveSegment.section_tags : [],
-          text_quote: effectiveSegment.text_quote,
+          section_title: effectiveSegmentWithContext.section_title,
+          research_use_topic_title: Boolean(effectiveSegmentWithContext?.research_use_topic_title),
+          research_use_theme_tags: Boolean(effectiveSegmentWithContext?.research_use_theme_tags),
+          topic_tags: Array.isArray(effectiveSegmentWithContext?.topic_tags) ? effectiveSegmentWithContext.topic_tags : [],
+          section_tags: Array.isArray(effectiveSegmentWithContext?.section_tags) ? effectiveSegmentWithContext.section_tags : [],
+          text_quote: effectiveSegmentWithContext.text_quote,
+          section_context_text: effectiveSegmentWithContext.section_context_text ?? "",
+          section_link_hints: Array.isArray(effectiveSegmentWithContext?.section_link_hints)
+            ? effectiveSegmentWithContext.section_link_hints
+            : [],
           translated_text_quote: rankingSegment.translated_text_quote ?? "",
           visual_description: context.decision?.visual_decision?.description ?? "",
           search_queries: Array.isArray(context.decision?.search_decision?.queries) ? context.decision.search_decision.queries : [],
           search_keywords: Array.isArray(context.decision?.search_decision?.keywords) ? context.decision.search_decision.keywords : []
         }
       );
-      const summary = buildResearchSummary(rankedResults, {
+      const storyDedupe = dedupeRankedResearchResultsByStory(filteredResults, rankedResults);
+      filteredResults = storyDedupe.results;
+      const finalRankedResults = storyDedupe.ranked_results;
+      if (storyDedupe.removed_count > 0) {
+        warnings.push(
+          `Collapsed ${storyDedupe.removed_count} repeat story result(s) into ${storyDedupe.cluster_count} cluster(s).`
+        );
+      }
+      const summary = buildResearchSummary(finalRankedResults, {
         queries,
         results: filteredResults
       });
-      const brief = buildResearchBrief(filteredResults, rankedResults, context.decision, { summary });
+      const brief = buildResearchBrief(filteredResults, finalRankedResults, context.decision, { summary });
       const nowIso = new Date().toISOString();
-      const status = rankedResults.length > 0 ? "done" : "done_empty";
+      const status = finalRankedResults.length > 0 ? "done" : "done_empty";
       const run = await saveRun(docId, {
         run_id: runId,
         segment_id: segmentId,
@@ -888,7 +1175,7 @@ export function registerResearchRoutes(app, deps) {
         mode,
         queries,
         results: filteredResults,
-        ranked_results: rankedResults,
+        ranked_results: finalRankedResults,
         summary,
         brief,
         warnings,
@@ -926,6 +1213,9 @@ export function registerResearchRoutes(app, deps) {
       const action = String(req.body?.action ?? "").trim();
       if (!runId || !resultId || !action) {
         return res.status(400).json({ error: "run_id, result_id and action are required" });
+      }
+      if (!RESEARCH_APPLY_ACTIONS.has(action)) {
+        return res.status(400).json({ error: `Unsupported research action: ${action}` });
       }
 
       const payload = await applyResearchAction({
@@ -1107,13 +1397,16 @@ export function registerResearchRoutes(app, deps) {
         decision: updatedDecision,
         screenshot_lab_url:
           action === "screenshot"
-            ? buildScreenshotLabUrl({
-                url: normalizedUrl,
-                docId,
-                segmentId,
-                title: result.title
-              })
-            : null,
+          ? buildScreenshotLabUrl({
+              url: normalizedUrl,
+              docId,
+              segmentId,
+              runId,
+              resultId,
+              title: result.title,
+              textQuote: context.segment.text_quote
+            })
+          : null,
         download_url: action === "download" ? normalizedUrl : null,
         run: updatedRun,
         source_memory_summary: {
@@ -1300,6 +1593,77 @@ export function registerResearchRoutes(app, deps) {
         decision: context.decision ?? lastPayload?.decision ?? null,
         run: lastPayload?.run ?? currentRun,
         source_memory_summary: lastPayload?.source_memory_summary ?? null
+      });
+    } catch (error) {
+      res.status(error?.status ?? 500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents/:id/segments/:segmentId/research/remove", async (req, res) => {
+    try {
+      const docId = req.params.id;
+      const segmentId = req.params.segmentId;
+      const runId = String(req.body?.run_id ?? "").trim();
+      const resultId = String(req.body?.result_id ?? "").trim();
+      if (!runId || !resultId) {
+        return res.status(400).json({ error: "run_id and result_id are required" });
+      }
+
+      const payload = await removeResearchResult({
+        docId,
+        segmentId,
+        runId,
+        resultId
+      });
+      res.json(payload);
+    } catch (error) {
+      res.status(error?.status ?? 500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/documents/:id/segments/:segmentId/research/dismiss", async (req, res) => {
+    try {
+      const docId = req.params.id;
+      const segmentId = req.params.segmentId;
+      const context = await loadSegmentContext(docId, segmentId);
+      if (context.error) {
+        return res.status(context.status).json({ error: context.error });
+      }
+      const url = normalizeUrl(req.body?.url);
+      if (!url) {
+        return res.status(400).json({ error: "url is required" });
+      }
+      const title = compactText(req.body?.title);
+      const domain = compactText(req.body?.domain);
+      const source = compactText(req.body?.source) || "research_dismiss";
+      const dismissedAt = new Date().toISOString();
+      const updatedDecision = await writeDecisionUpdate(context, segmentId, (current) => ({
+        ...current,
+        research_dismissed_urls: appendDismissedResearchUrlEntries(current?.research_dismissed_urls, [
+          {
+            url,
+            title,
+            domain,
+            dismissed_at: dismissedAt,
+            source
+          }
+        ])
+      }));
+      await appendEvent(docId, {
+        timestamp: dismissedAt,
+        event: "segment_research_url_dismissed",
+        payload: {
+          segment_id: segmentId,
+          url,
+          title,
+          domain,
+          source
+        }
+      });
+      res.json({
+        ok: true,
+        decision: updatedDecision,
+        dismissed_url: url
       });
     } catch (error) {
       res.status(error?.status ?? 500).json({ error: error.message });

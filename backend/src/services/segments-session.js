@@ -2,6 +2,7 @@ export function createSegmentsSessionUtils(deps) {
   const {
     normalizeLinksInput,
     normalizeResearchBundleTraceInput,
+    normalizeResearchDismissedUrlsInput,
     normalizeResearchSourcesInput,
     normalizeSearchDecisionInput,
     normalizeVisualDecisionInput
@@ -27,6 +28,7 @@ export function createSegmentsSessionUtils(deps) {
       search_decision: normalizeSearchDecisionInput(segment.search_decision),
       search_decision_en: normalizeSearchDecisionInput(segment.search_decision_en),
       research_sources: normalizeResearchSourcesInput(segment.research_sources),
+      research_dismissed_urls: normalizeResearchDismissedUrlsInput(segment.research_dismissed_urls),
       research_bundle_trace: normalizeResearchBundleTraceInput(segment.research_bundle_trace),
       version: 1
     }));

@@ -76,6 +76,8 @@ export function useMediaManager({
         status: String(job.status ?? ""),
         sectionTitle: String(job.section_title ?? ""),
         error: String(job.error ?? ""),
+        operatorTitle: String(job?.operator_notice?.title ?? ""),
+        operatorHint: String(job?.operator_notice?.hint ?? ""),
         outputCount: Array.isArray(job.output_files) ? job.output_files.length : 0
       });
     });
@@ -98,7 +100,10 @@ export function useMediaManager({
         const outputCount = Array.isArray(job.output_files) ? job.output_files.length : 0;
         statusMessage = `Media completed: ${title}${outputCount > 0 ? ` (${outputCount})` : ""}`;
       } else if (job.status === "failed") {
-        statusMessage = `Media failed: ${title}${job.error ? ` - ${job.error}` : ""}`;
+        const operatorTitle = String(job?.operator_notice?.title ?? "").trim();
+        statusMessage = `Media failed: ${title}${job.error ? ` - ${job.error}` : ""}${
+          operatorTitle ? ` · ${operatorTitle}` : ""
+        }`;
       } else if (job.status === "canceled") {
         statusMessage = `Media canceled: ${title}`;
       }
@@ -245,7 +250,7 @@ export function useMediaManager({
   );
 
   const handleDownloadMedia = React.useCallback(
-    async (url, sectionTitle = null) => {
+    async (url, sectionTitle = null, options = {}) => {
       const normalized = normalizeLinkUrl(url);
       if (!docId || !normalized) return;
       if (!isYtDlpCandidateUrl(normalized)) {
@@ -264,7 +269,16 @@ export function useMediaManager({
         const { response, data } = await fetchJsonSafe(`/api/documents/${docId}/media:download`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ url: normalized, section_title: sectionTitle ?? null })
+          body: JSON.stringify({
+            url: normalized,
+            section_title: sectionTitle ?? null,
+            segment_id: String(options?.segmentId ?? "").trim() || null,
+            run_id: String(options?.runId ?? "").trim() || null,
+            result_id: String(options?.resultId ?? "").trim() || null,
+            source_title: String(options?.sourceTitle ?? "").trim() || null,
+            source_domain: String(options?.sourceDomain ?? "").trim() || null,
+            text_quote: String(options?.textQuote ?? "").trim() || null
+          })
         });
         if (!response.ok) throw new Error(data?.error ?? "Media download error");
         if (data?.already_downloaded) {

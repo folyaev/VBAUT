@@ -264,7 +264,10 @@
         docId: String(searchParams.get("doc_id") || "").trim(),
         releaseId: String(searchParams.get("release_id") || "").trim(),
         segmentId: String(searchParams.get("segment_id") || "").trim(),
-        note: String(searchParams.get("note") || "").trim()
+        runId: String(searchParams.get("run_id") || "").trim(),
+        resultId: String(searchParams.get("result_id") || "").trim(),
+        note: String(searchParams.get("note") || "").trim(),
+        textQuote: String(searchParams.get("text_quote") || "").trim()
       };
       const MANUAL_HOST_PROFILE_STORAGE_KEY = "vbaut_screenshot_lab_manual_host_profiles_v1";
       let manualHostProfiles = loadManualHostProfiles();
@@ -355,7 +358,17 @@
       function screenshotSrc(url, version = "10") {
         const normalized = normalizeUrl(url);
         if (!normalized) return "";
-        return `/api/link/screenshot?url=${encodeURIComponent(normalized)}&v=${encodeURIComponent(String(version || "11"))}`;
+        const params = new URLSearchParams({
+          url: normalized,
+          v: String(version || "11")
+        });
+        if (captureContext.docId) params.set("doc_id", captureContext.docId);
+        if (captureContext.segmentId) params.set("segment_id", captureContext.segmentId);
+        if (captureContext.runId) params.set("run_id", captureContext.runId);
+        if (captureContext.resultId) params.set("result_id", captureContext.resultId);
+        if (captureContext.note) params.set("note", captureContext.note);
+        if (captureContext.textQuote) params.set("text_quote", captureContext.textQuote);
+        return `/api/link/screenshot?${params.toString()}`;
       }
 
       function revokeObjectUrlSafe(value) {
@@ -396,6 +409,7 @@
         if (captureContext.docId) parts.push(`doc ${captureContext.docId}`);
         if (captureContext.releaseId) parts.push(`release ${captureContext.releaseId}`);
         if (captureContext.segmentId) parts.push(`segment ${captureContext.segmentId}`);
+        if (captureContext.runId) parts.push(`run ${captureContext.runId}`);
         return parts.join(" · ");
       }
 
@@ -772,6 +786,9 @@
               doc_id: captureContext.docId,
               release_id: captureContext.releaseId,
               segment_id: captureContext.segmentId,
+              run_id: captureContext.runId,
+              result_id: captureContext.resultId,
+              text_quote: captureContext.textQuote,
               note: [captureContext.note, targetItem.title || "", targetItem.url].filter(Boolean).join(" | ")
             })
           });

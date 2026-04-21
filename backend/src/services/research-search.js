@@ -35,6 +35,56 @@ function normalizeDomain(input) {
   }
 }
 
+function isStaticAssetPath(url = "") {
+  return /\.(?:svg|png|jpe?g|gif|webp|ico|css|js|mjs|map|woff2?|ttf|otf)(?:[?#].*)?$/i.test(String(url ?? "").trim());
+}
+
+function isGarbageResearchResult(item = {}) {
+  const url = String(item?.url ?? "").trim();
+  const title = String(item?.title ?? "").trim();
+  const snippet = String(item?.snippet ?? item?.content ?? "").trim();
+  const domain = String(item?.domain ?? normalizeDomain(url)).trim().toLowerCase();
+  const haystack = `${title} ${snippet} ${url} ${domain}`.toLowerCase();
+  const pathname = (() => {
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+
+  if (!url) return true;
+
+  const junkDomains = [
+    "cdn.jsdelivr.net",
+    "unpkg.com",
+    "cdnjs.cloudflare.com",
+    "raw.githubusercontent.com",
+    "registry.npmjs.org"
+  ];
+  if (junkDomains.some((candidate) => domain === candidate || domain.endsWith(`.${candidate}`))) {
+    return true;
+  }
+
+  if (isStaticAssetPath(url) && /(icon|sprite|logo|devicon|lucide|npm|cdn|assets?)/i.test(haystack)) {
+    return true;
+  }
+
+  if (/\/(?:npm|gh)\//.test(pathname) && /(icons?|devicon|lucide-static)/i.test(pathname)) {
+    return true;
+  }
+
+  if (/^(?:gallery|align|alarm|aftereffects|firebase|camera|cable|bell|book-image|camera-off)(?:[-\w]*)$/i.test(title)) {
+    return true;
+  }
+
+  if (snippet && /^(carousel|pictures|images|scroll|swipe|album|portfolio|history|versions|backup|time machine)\b/i.test(snippet)) {
+    return true;
+  }
+
+  return false;
+}
+
 function normalizeSeedResults(seedResults = []) {
   return (Array.isArray(seedResults) ? seedResults : []).map((item, index) => ({
     id: String(item?.id ?? `seed_${index + 1}`),
@@ -48,7 +98,7 @@ function normalizeSeedResults(seedResults = []) {
     published_at: String(item?.published_at ?? item?.published ?? "").trim() || null,
     position: Number.isFinite(Number(item?.position)) ? Number(item.position) : index + 1,
     content_type: String(item?.content_type ?? "article").trim() || "article"
-  })).filter((item) => item.url);
+  })).filter((item) => item.url && !isGarbageResearchResult(item));
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -108,6 +158,7 @@ export async function searchQueries(queries = [], options = {}) {
 
   const results = [];
   const warnings = [];
+  let skippedGarbageCount = 0;
   const mode = String(options?.mode ?? "fast").trim().toLowerCase() || "fast";
   const perQueryLimit = Number.isFinite(Number(options.limit_per_query))
     ? Math.max(1, Number(options.limit_per_query))
@@ -139,15 +190,20 @@ export async function searchQueries(queries = [], options = {}) {
       }
       const payload = await response.json();
       const items = Array.isArray(payload?.results) ? payload.results : [];
-      results.push(
-        ...items
-          .slice(0, perQueryLimit)
-          .map((item, index) => normalizeSearxResult(item, query, index))
-          .filter((item) => item.url)
-      );
+      const normalizedItems = items
+        .slice(0, perQueryLimit)
+        .map((item, index) => normalizeSearxResult(item, query, index))
+        .filter((item) => item.url);
+      const filteredItems = normalizedItems.filter((item) => !isGarbageResearchResult(item));
+      skippedGarbageCount += Math.max(0, normalizedItems.length - filteredItems.length);
+      results.push(...filteredItems);
     } catch (error) {
       warnings.push(`SearxNG request failed for query ${query.text}: ${error.message}`);
     }
+  }
+
+  if (skippedGarbageCount > 0) {
+    warnings.push(`Skipped ${skippedGarbageCount} technical/static asset result(s).`);
   }
 
   return { results, warnings };

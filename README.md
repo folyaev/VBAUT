@@ -6,8 +6,8 @@
 
 Важно: если какие-то более старые bullets ниже противоречат этому блоку, ориентируйся на этот блок как на актуальное поведение.
 
-- `Newsroom` вынесен с главной страницы на отдельный route: `http://localhost:5173/newsroom`.
-- `Research` вынесен в отдельный workspace: `http://localhost:5173/research`.
+- `Newsroom` вынесен с главной страницы на отдельный route: `http://localhost:5187/newsroom`.
+- `Research` вынесен в отдельный workspace: `http://localhost:5187/research`.
 - Основной `Research` workflow сейчас один: ranked list результатов, мультивыбор, `Add Selected Links`, `Искать заново`; старый `deep/main/backup pair` больше не является основным UX.
 - `Research` учитывает `visual description`, `search queries/keywords`, может учитывать родительское имя темы и `theme tags`, а также не показывает дубликаты, уже лежащие в `Все ссылки` документа или в прошлых research-runs.
 - У темы есть ручной research-context: `theme tags`, плюс независимые переключатели `учитывать имя темы` и `учитывать theme tags`.
@@ -19,6 +19,21 @@
   если ссылка не скачиваемая, она сначала добавляется в `Ссылки темы`, а затем бот присылает `screenshot preview`.
 - На `screenshot preview` в `SDVG`: `+` привязывает screenshot к сегменту как visual, `-` убирает preview, `✖️` делает перескрин с другими browser params.
 - Нажатие `+` на research-ссылке в `SDVG` теперь запускает тот же путь, как будто пользователь сам отправил эту ссылку в сегмент.
+
+## Downloader tools
+
+- `yt-dlp` и `gallery-dl` версии видны в `GET /api/health` (`health.downloader_tools`) и в `GET /api/downloader/tools/versions`.
+- Ручные проверки версий:
+  - `GET /api/downloader/yt-dlp/version`
+  - `GET /api/downloader/gallery-dl/version`
+- Ручные обновления:
+  - `POST /api/downloader/yt-dlp:update`
+  - `POST /api/downloader/gallery-dl:update`
+- Фоновая проверка версий включена по умолчанию.
+- Управление через env:
+  - `MEDIA_TOOL_VERSION_CHECK_ENABLED=0` отключает фоновую проверку
+  - `MEDIA_TOOL_VERSION_CHECK_MS=21600000` меняет интервал проверки
+  - `MEDIA_TOOL_AUTO_UPDATE_ENABLED=1` включает автообновление при отсутствии активных media jobs
 
 ## Что умеет сейчас
 
@@ -276,7 +291,7 @@ Safety policy:
 
 ## Как устроено
 
-- Frontend (Vite): `http://localhost:5173`
+- Frontend (Vite): `http://localhost:5187`
 - Backend (Express API): `http://localhost:8787`
 - HeadlessNotion bot (опционально): `http://localhost:3131`
 - Хранилище документов: `data/` (или `DATA_DIR`)
@@ -284,7 +299,7 @@ Safety policy:
 Producer mode:
 
 ```text
-http://localhost:5173/?mode=producer&release=<release_id>
+http://localhost:5187/?mode=producer&release=<release_id>
 ```
 
 Этот экран сделан под удалённый просмотр через ngrok и обновляет release-состояние каждые 15 секунд.
@@ -292,7 +307,7 @@ http://localhost:5173/?mode=producer&release=<release_id>
 On Air mode:
 
 ```text
-http://localhost:5173/?mode=onair&release=<release_id>
+http://localhost:5187/?mode=onair&release=<release_id>
 ```
 
 Этот режим сделан как эфирный пульт: меньше второстепенного UI, крупнее статус и есть кнопка `Fullscreen`.
@@ -440,7 +455,7 @@ npm run dev:screenshot-lab
 start-dev.cmd
 ```
 
-### Перезапуск с очисткой портов 8787/5173/3131
+### Перезапуск с очисткой портов 8787/5187/3131
 
 ```bat
 restart-dev.cmd
@@ -769,7 +784,7 @@ start-dev.cmd
 ### 3) Поднимите туннель на фронт
 
 ```powershell
-ngrok http 5173
+ngrok http 5187
 ```
 
 Используйте выданный URL вида `https://xxxx.ngrok-free.app`.

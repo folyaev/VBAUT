@@ -2,6 +2,11 @@ import React from "react";
 import { SegmentLinkedReleasePanel } from "./SegmentLinkedReleasePanel.jsx";
 import { SegmentResearchHeader } from "./SegmentResearchHeader.jsx";
 import { SegmentResearchResultsPanel } from "./SegmentResearchResultsPanel.jsx";
+import {
+  buildResearchCategoryBuckets,
+  RESEARCH_CATEGORY_ORDER,
+  RESEARCH_CATEGORY_LABELS
+} from "../utils/researchCategories.js";
 
 function getResearchResultPhase(result) {
   const phase = String(result?.phase ?? result?.kind ?? "").trim().toLowerCase();
@@ -136,56 +141,16 @@ export function ResearchWorkspace({
       .slice(0, 12);
   }, [researchRun]);
 
-  const researchBuckets = React.useMemo(() => {
-    const allItems = Array.isArray(researchResults) ? researchResults : [];
-    const sources = [...allItems]
-      .sort(
-        (a, b) =>
-          Number(b?.ranked?.source_score ?? 0) - Number(a?.ranked?.source_score ?? 0) ||
-          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
-      )
-      .slice(0, 6);
-    const visuals = [...allItems]
-      .filter((item) => {
-        const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
-        return (
-          hints.length > 0 ||
-          Number(item?.ranked?.montage_score ?? 0) >= 0.55 ||
-          Number(item?.ranked?.visual_score ?? 0) >= 0.58
-        );
-      })
-      .sort(
-        (a, b) =>
-          Number(b?.ranked?.montage_score ?? b?.ranked?.visual_score ?? 0) -
-            Number(a?.ranked?.montage_score ?? a?.ranked?.visual_score ?? 0) ||
-          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
-      )
-      .slice(0, 6);
-    const downloadables = [...allItems]
-      .filter((item) => {
-        const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
-        return hints.includes("downloadable") || Number(item?.ranked?.downloadability_score ?? 0) >= 0.62;
-      })
-      .sort(
-        (a, b) =>
-          Number(b?.ranked?.downloadability_score ?? 0) - Number(a?.ranked?.downloadability_score ?? 0) ||
-          Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
-      )
-      .slice(0, 6);
-    return {
-      all: allItems.slice(0, 6),
-      sources,
-      visuals,
-      downloadables
-    };
-  }, [researchResults]);
+  const researchBuckets = React.useMemo(() => buildResearchCategoryBuckets(researchResults), [researchResults]);
 
   const researchViewTabs = React.useMemo(
     () => [
-      { id: "all", label: "All", count: researchBuckets.all.length },
-      { id: "sources", label: "Top Sources", count: researchBuckets.sources.length },
-      { id: "visuals", label: "Top Visuals", count: researchBuckets.visuals.length },
-      { id: "downloadables", label: "Downloadables", count: researchBuckets.downloadables.length }
+      { id: "all", label: RESEARCH_CATEGORY_LABELS.all, count: researchBuckets.all.length },
+      ...RESEARCH_CATEGORY_ORDER.map((categoryId) => ({
+        id: categoryId,
+        label: RESEARCH_CATEGORY_LABELS[categoryId],
+        count: researchBuckets[categoryId]?.length ?? 0
+      }))
     ],
     [researchBuckets]
   );
@@ -251,8 +216,27 @@ export function ResearchWorkspace({
     });
   }, [inferResearchCandidateRole, researchBuckets, researchPhaseFilter, researchRoleFilter, researchView, selectedSegment]);
 
-  const bestSourceCandidate = researchBuckets.sources[0]?.result ?? null;
-  const bestVisualCandidate = researchBuckets.visuals[0]?.result ?? null;
+  const bestSourceCandidate = [...researchResults]
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.source_score ?? 0) - Number(a?.ranked?.source_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.result ?? null;
+  const bestVisualCandidate = [...researchResults]
+    .filter((item) => {
+      const hints = Array.isArray(item?.ranked?.visual_hints) ? item.ranked.visual_hints : [];
+      return (
+        hints.length > 0 ||
+        Number(item?.ranked?.montage_score ?? 0) >= 0.55 ||
+        Number(item?.ranked?.visual_score ?? 0) >= 0.58
+      );
+    })
+    .sort(
+      (a, b) =>
+        Number(b?.ranked?.montage_score ?? b?.ranked?.visual_score ?? 0) -
+          Number(a?.ranked?.montage_score ?? a?.ranked?.visual_score ?? 0) ||
+        Number(b?.ranked?.total_score ?? 0) - Number(a?.ranked?.total_score ?? 0)
+    )[0]?.result ?? null;
   const bestVisibleCandidate = visibleResearchResults[0]?.result ?? null;
   const bestContextPhaseCandidate =
     researchResults.find(({ result }) => getResearchResultPhase(result) === "context")?.result ?? null;

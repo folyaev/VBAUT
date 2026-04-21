@@ -395,7 +395,7 @@ export function useReleaseWorkspaceData({
   React.useEffect(() => {
     if (appMode === "workspace" || !selectedReleaseId) return;
     const timer = setInterval(() => {
-      refreshIntegration();
+      if (typeof document !== "undefined" && document.hidden) return;
       loadReleaseDetail(selectedReleaseId);
       loadReleaseAssistantPass(selectedReleaseId);
       loadReleasePublishChecklist(selectedReleaseId);
@@ -412,7 +412,6 @@ export function useReleaseWorkspaceData({
     loadReleaseControlPanel,
     loadReleaseDetail,
     loadReleasePublishChecklist,
-    refreshIntegration,
     selectedReleaseId
   ]);
 
