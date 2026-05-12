@@ -33,6 +33,7 @@ test("createTelegramSdvgBotService does not start without TELEGRAM_BOT_TOKEN", a
 });
 
 test("telegram SDVG control detector allows commands and callbacks in ignored threads", () => {
+  assert.equal(isTelegramSdvgControlCommandText("/start"), true);
   assert.equal(isTelegramSdvgControlCommandText("/sdvg"), true);
   assert.equal(isTelegramSdvgControlCommandText("/sdvg random"), true);
   assert.equal(isTelegramSdvgControlCommandText("/sdvg@utsearchbot doc_1"), true);

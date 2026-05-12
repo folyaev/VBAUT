@@ -213,7 +213,7 @@ function extractUpdateThreadContext(update) {
 export function isTelegramSdvgControlCommandText(text) {
   const value = String(text ?? "").trim();
   if (!value) return false;
-  return /^\/(?:sdvg|download|donwload|research|notion|threadid|topicid)(?:@[a-z0-9_]+)?(?:\s|$)/i.test(value);
+  return /^\/(?:start|sdvg|download|donwload|research|notion|threadid|topicid)(?:@[a-z0-9_]+)?(?:\s|$)/i.test(value);
 }
 
 export function isTelegramSdvgControlUpdate(update) {
@@ -7416,7 +7416,7 @@ export function createTelegramSdvgBotService(deps) {
   function parseSdvgCommand(text) {
     const value = String(text ?? "").trim();
     if (!value) return null;
-    const match = value.match(/^\/sdvg(?:@[a-z0-9_]+)?(?:\s+(.+))?$/i);
+    const match = value.match(/^\/(?:sdvg|сдвг|сдвнг)(?:@[a-z0-9_]+)?(?:\s+(.+))?$/i);
     if (!match) return null;
     const rawArgs = String(match[1] ?? "").trim();
     const tokens = rawArgs ? rawArgs.split(/\s+/).filter(Boolean) : [];
@@ -7863,6 +7863,13 @@ export function createTelegramSdvgBotService(deps) {
     const userId = message?.from?.id;
     if (!message || !chatId) return;
     const text = String(message?.text ?? "").trim();
+    if (text.startsWith("/")) {
+      console.log(
+        `[telegram-sdvg] command chat=${String(chatId)} thread=${String(message?.message_thread_id ?? "none")} user=${String(
+          userId ?? ""
+        )} text=${JSON.stringify(text)}`
+      );
+    }
     if (parseThreadInfoCommand(text)) {
       const threadId = message?.message_thread_id ?? null;
       await sendMessage(
@@ -8076,6 +8083,10 @@ export function createTelegramSdvgBotService(deps) {
 
   async function processUpdate(update) {
     if (isIgnoredThreadUpdate(update) && !isTelegramSdvgControlUpdate(update)) {
+      const context = extractUpdateThreadContext(update);
+      console.log(
+        `[telegram-sdvg] ignored update chat=${context?.chatId ?? "unknown"} thread=${context?.threadId ?? "unknown"}`
+      );
       return;
     }
     if (update?.callback_query) {
@@ -8121,6 +8132,7 @@ export function createTelegramSdvgBotService(deps) {
         if (!Array.isArray(updates) || updates.length === 0) {
           continue;
         }
+        console.log(`[telegram-sdvg] received updates=${updates.length}`);
         for (const update of updates) {
           state.offset = Math.max(state.offset, Number(update?.update_id ?? 0) + 1);
           try {
