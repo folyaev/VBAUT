@@ -67,7 +67,10 @@ export function createIntegrationStore({ dataDir, readOptionalJson, writeJson, o
     await Promise.all(
       Object.keys(COLLECTION_FILES).map(async (name) => {
         const filePath = collectionPath(name);
-        if (await fileExists(filePath)) return;
+        if (await fileExists(filePath)) {
+          const stat = await fs.stat(filePath);
+          if (stat.size > 0) return;
+        }
         await writeJson(filePath, []);
       })
     );
@@ -76,7 +79,14 @@ export function createIntegrationStore({ dataDir, readOptionalJson, writeJson, o
   async function readCollection(name) {
     await ensureStore();
     const filePath = collectionPath(name);
-    const value = await readOptionalJson(filePath);
+    let value;
+    try {
+      value = await readOptionalJson(filePath);
+    } catch (error) {
+      throw new Error(`Failed to read integration collection ${name} at ${filePath}: ${error.message}`, {
+        cause: error
+      });
+    }
     return Array.isArray(value) ? value : [];
   }
 

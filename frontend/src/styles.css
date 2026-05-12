@@ -195,6 +195,49 @@ body::before {
   max-width: 100%;
 }
 
+.integrity-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid var(--stroke);
+  background: linear-gradient(160deg, var(--card-soft), rgba(var(--accent-rgb), 0.04));
+  box-shadow: var(--shadow);
+}
+
+.integrity-banner-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.integrity-banner-copy strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.integrity-banner-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.integrity-banner.is-success {
+  border-color: rgba(36, 124, 81, 0.38);
+  background: linear-gradient(160deg, rgba(36, 124, 81, 0.16), rgba(36, 124, 81, 0.06));
+}
+
+.integrity-banner.is-warning {
+  border-color: rgba(183, 146, 34, 0.42);
+  background: linear-gradient(160deg, rgba(183, 146, 34, 0.18), rgba(183, 146, 34, 0.08));
+}
+
+.integrity-banner.is-neutral {
+  border-color: rgba(var(--accent-rgb), 0.2);
+}
+
 .hero-card,
 .hero-recent,
 .hero-stat,
@@ -3513,6 +3556,10 @@ body::before {
   .hero {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+  .integrity-banner {
+    flex-direction: column;
+    align-items: stretch;
   }
   .owner-dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

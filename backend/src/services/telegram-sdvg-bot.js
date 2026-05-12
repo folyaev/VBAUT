@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { loadIndexedArrayWithFallback, loadIndexedObjectWithFallback } from "./indexed-fallback-loaders.js";
 import {
+  applyVisualDecisionFieldOrigins,
   emptySearchDecision,
   emptyVisualDecision,
   normalizeDecisionsInput,
@@ -209,6 +210,19 @@ function extractUpdateThreadContext(update) {
   };
 }
 
+export function isTelegramSdvgControlCommandText(text) {
+  const value = String(text ?? "").trim();
+  if (!value) return false;
+  return /^\/(?:sdvg|download|donwload|research|notion|threadid|topicid)(?:@[a-z0-9_]+)?(?:\s|$)/i.test(value);
+}
+
+export function isTelegramSdvgControlUpdate(update) {
+  const callbackData = String(update?.callback_query?.data ?? "").trim();
+  if (callbackData && callbackData.startsWith("sdvg_")) return true;
+  const message = update?.message ?? null;
+  return isTelegramSdvgControlCommandText(message?.text ?? message?.caption ?? "");
+}
+
 function toSessionTouchTimestamp(value = Date.now()) {
   const parsed =
     value instanceof Date ? value.getTime() : Number.isFinite(Number(value)) ? Number(value) : Date.parse(String(value ?? ""));
@@ -236,6 +250,7 @@ export function createEmptyTelegramSdvgSession(defaultDocId = null, lastTouchedA
     ad_hoc_research_seen_keys: new Set(),
     pending_inbox_media_groups: new Map(),
     pending_sdvg_media_groups: new Map(),
+    telegram_media_batches: new Map(),
     download_theme_create_request: null,
     download_theme_search_request: null,
     screenshot_preview_contexts: new Map(),
@@ -268,6 +283,7 @@ export function clearTelegramSdvgSessionEphemeralState(session) {
   if (session.download_theme_contexts instanceof Map) session.download_theme_contexts.clear();
   if (session.pending_inbox_media_groups instanceof Map) session.pending_inbox_media_groups.clear();
   if (session.pending_sdvg_media_groups instanceof Map) session.pending_sdvg_media_groups.clear();
+  if (session.telegram_media_batches instanceof Map) session.telegram_media_batches.clear();
   if (session.screenshot_preview_contexts instanceof Map) session.screenshot_preview_contexts.clear();
   if (session.card_action_locks instanceof Set) session.card_action_locks.clear();
   session.download_theme_create_request = null;
@@ -325,6 +341,77 @@ export function buildDownloadThemeMoveAuditPayload({ chatId, context = {}, selec
       renamed_with_suffix: Boolean(item?.renamed_with_suffix)
     }))
   };
+}
+
+export function ensureTelegramMediaBatchMap(session) {
+  if (!session || typeof session !== "object") return new Map();
+  if (!(session.telegram_media_batches instanceof Map)) {
+    session.telegram_media_batches = new Map();
+  }
+  return session.telegram_media_batches;
+}
+
+function normalizeTelegramMediaBatchFailedItems(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      return {
+        file_id: compactText(item.file_id ?? item.fileId),
+        file_unique_id: compactText(item.file_unique_id ?? item.fileUniqueId),
+        file_name: compactText(item.file_name ?? item.fileName),
+        mime_type: compactText(item.mime_type ?? item.mimeType),
+        kind: compactText(item.kind),
+        error: compactText(item.error),
+        retry_count: Math.max(0, Number(item.retry_count ?? item.retryCount ?? 0) || 0)
+      };
+    })
+    .filter((item) => item?.file_id)
+    .slice(0, 32);
+}
+
+export function upsertTelegramMediaBatchAudit(session, batchId, patch = {}) {
+  const normalizedBatchId = compactText(batchId);
+  if (!normalizedBatchId) return null;
+  const batches = ensureTelegramMediaBatchMap(session);
+  const nowIso = new Date().toISOString();
+  const current = batches.get(normalizedBatchId) ?? {
+    batch_id: normalizedBatchId,
+    expected: 0,
+    downloaded: 0,
+    failed: 0,
+    retried: 0,
+    status: "queued",
+    failed_items: [],
+    created_at: nowIso,
+    updated_at: nowIso
+  };
+  const next = {
+    ...current,
+    ...patch,
+    batch_id: normalizedBatchId,
+    expected: Math.max(0, Number(patch.expected ?? current.expected ?? 0) || 0),
+    downloaded: Math.max(0, Number(patch.downloaded ?? current.downloaded ?? 0) || 0),
+    failed: Math.max(0, Number(patch.failed ?? current.failed ?? 0) || 0),
+    retried: Math.max(0, Number(patch.retried ?? current.retried ?? 0) || 0),
+    failed_items: normalizeTelegramMediaBatchFailedItems(patch.failed_items ?? current.failed_items),
+    created_at: String(current.created_at ?? nowIso),
+    updated_at: nowIso
+  };
+  batches.set(normalizedBatchId, next);
+  if (batches.size > 40) {
+    const oldestKey = batches.keys().next().value;
+    if (oldestKey && oldestKey !== normalizedBatchId) {
+      batches.delete(oldestKey);
+    }
+  }
+  return next;
+}
+
+export function getTelegramMediaBatchAudit(session, batchId) {
+  const normalizedBatchId = compactText(batchId);
+  if (!normalizedBatchId) return null;
+  return ensureTelegramMediaBatchMap(session).get(normalizedBatchId) ?? null;
 }
 
 export function buildTelegramAssetPathRepairPlan(assets = [], existingRelativePaths = []) {
@@ -1991,6 +2078,13 @@ export function createTelegramSdvgBotService(deps) {
     return false;
   }
 
+  function looksGenericDownloaderTitle(value) {
+    const normalized = cleanupCaptionText(value)
+      .replace(/\.[a-z0-9]{2,5}$/i, "")
+      .toLowerCase();
+    return ["preview", "video", "file", "download", "media", "ok_preview"].includes(normalized);
+  }
+
   function extractHostLabel(rawUrl) {
     const value = String(rawUrl ?? "").trim();
     if (!value) return "";
@@ -2004,12 +2098,12 @@ export function createTelegramSdvgBotService(deps) {
 
   function buildSafeMediaTitle({ metadataTitle, fileName, sourceUrl, isVideo }) {
     const cleanedMetaTitle = cleanupCaptionText(metadataTitle);
-    if (cleanedMetaTitle && !looksCorruptedText(cleanedMetaTitle)) {
+    if (cleanedMetaTitle && !looksCorruptedText(cleanedMetaTitle) && !looksGenericDownloaderTitle(cleanedMetaTitle)) {
       return cleanedMetaTitle;
     }
 
     const parsedFromFile = cleanupCaptionText(parseTitleFromFileName(fileName) || fileName);
-    if (parsedFromFile && !looksCorruptedText(parsedFromFile)) {
+    if (parsedFromFile && !looksCorruptedText(parsedFromFile) && !looksGenericDownloaderTitle(parsedFromFile)) {
       return parsedFromFile;
     }
 
@@ -4373,10 +4467,19 @@ export function createTelegramSdvgBotService(deps) {
       const mergedDescription = visual.description ? `${visual.description}\n${incoming}` : incoming;
       const nextDecision = {
         segment_id: segmentId,
-        visual_decision: normalizeVisualDecisionInput({
-          ...visual,
-          description: mergedDescription
-        }),
+        visual_decision:
+          typeof applyVisualDecisionFieldOrigins === "function"
+            ? applyVisualDecisionFieldOrigins(visual, {
+                ...visual,
+                description: mergedDescription
+              }, {
+                description_origin: "user",
+                updated_at: new Date().toISOString()
+              })
+            : normalizeVisualDecisionInput({
+                ...visual,
+                description: mergedDescription
+              }),
         search_decision: normalizeSearchDecisionInput(current.search_decision),
         search_decision_en: normalizeSearchDecisionInput(current.search_decision_en),
         version: Number(current.version ?? 1)
@@ -4453,13 +4556,25 @@ export function createTelegramSdvgBotService(deps) {
       const mergedTimecodes = firstVideoPath ? nextTimecodes : {};
       const nextDecision = {
         segment_id: segmentId,
-        visual_decision: normalizeVisualDecisionInput({
-          ...mergedVisual,
-          media_file_timecodes: mergedTimecodes,
-          media_start_timecode: firstVideoPath
-            ? normalizedMediaStartTimecode ?? mergedTimecodes[firstVideoPath] ?? null
-            : null
-        }),
+        visual_decision:
+          typeof applyVisualDecisionFieldOrigins === "function"
+            ? applyVisualDecisionFieldOrigins(visual, {
+                ...mergedVisual,
+                media_file_timecodes: mergedTimecodes,
+                media_start_timecode: firstVideoPath
+                  ? normalizedMediaStartTimecode ?? mergedTimecodes[firstVideoPath] ?? null
+                  : null
+              }, {
+                media_origin: "user",
+                updated_at: new Date().toISOString()
+              })
+            : normalizeVisualDecisionInput({
+                ...mergedVisual,
+                media_file_timecodes: mergedTimecodes,
+                media_start_timecode: firstVideoPath
+                  ? normalizedMediaStartTimecode ?? mergedTimecodes[firstVideoPath] ?? null
+                  : null
+              }),
         search_decision: normalizeSearchDecisionInput(current.search_decision),
         search_decision_en: normalizeSearchDecisionInput(current.search_decision_en),
         version: Number(current.version ?? 1)
@@ -5451,23 +5566,80 @@ export function createTelegramSdvgBotService(deps) {
       sourceMessageId
     });
   }
-  async function handleTelegramMediaInput(chatId, session, segment, mediaItems, sourceMessageId = null) {
+  function buildTelegramMediaBatchKeyboard(batch = null) {
+    const batchId = compactText(batch?.batch_id);
+    const failedCount = Array.isArray(batch?.failed_items) ? batch.failed_items.length : 0;
+    if (!batchId || failedCount <= 0) return undefined;
+    return {
+      inline_keyboard: [[{ text: `🔁 Retry failed (${failedCount})`, callback_data: `sdvg_batch:retry:${batchId}` }]]
+    };
+  }
+
+  function buildTelegramMediaBatchSummary(segmentId, downloadedCount, totalCount, attachedCount, failedCount) {
+    const lines = [
+      "Готово.",
+      `Сегмент: ${segmentId}`,
+      `Скачано файлов из Telegram: ${downloadedCount}/${totalCount}`,
+      `Файлов добавлено: ${attachedCount}`
+    ];
+    if (failedCount > 0) {
+      lines.push(`Ошибок: ${failedCount}`);
+      lines.push("Доступен Retry failed.");
+    }
+    return lines.join("\n");
+  }
+
+  function toTelegramBatchFailedItem(item, error = "", retryCount = 0) {
+    return {
+      file_id: compactText(item?.fileId),
+      file_unique_id: compactText(item?.fileUniqueId),
+      file_name: compactText(item?.fileName),
+      mime_type: compactText(item?.mimeType),
+      kind: compactText(item?.kind),
+      error: clipText(error, 240),
+      retry_count: Math.max(0, Number(retryCount ?? 0) || 0)
+    };
+  }
+
+  async function handleTelegramMediaInput(chatId, session, segment, mediaItems, sourceMessageId = null, options = {}) {
     if (!Array.isArray(mediaItems) || mediaItems.length === 0) return;
-    const totalCount = mediaItems.length;
-    const status = await sendMessage(
-      chatId,
-      `\u0421\u0435\u0433\u043C\u0435\u043D\u0442: ${segment.segment_id}\n\u0421\u043A\u0430\u0447\u0430\u043D\u043E \u0444\u0430\u0439\u043B\u043E\u0432 \u0438\u0437 Telegram: 0/${totalCount}`
-    );
+    const retryOnly = options.retryOnly === true;
+    const batchId = compactText(options.batchId) || `tgm_${createPickerToken()}`;
+    const previousBatch = getTelegramMediaBatchAudit(session, batchId);
+    const totalCount = Math.max(mediaItems.length, Number(previousBatch?.expected ?? 0) || 0);
+    let statusMessageId = Number(options.statusMessageId ?? previousBatch?.status_message_id ?? 0) || null;
+    if (!statusMessageId) {
+      const status = await sendMessage(
+        chatId,
+        `Сегмент: ${segment.segment_id}\nСкачано файлов из Telegram: ${Number(previousBatch?.downloaded ?? 0) || 0}/${totalCount}`
+      );
+      statusMessageId = Number(status?.message_id ?? 0) || null;
+    }
+    upsertTelegramMediaBatchAudit(session, batchId, {
+      doc_id: String(session?.doc_id ?? "").trim(),
+      segment_id: String(segment?.segment_id ?? "").trim(),
+      chat_id: String(chatId ?? ""),
+      source_message_id: Number(sourceMessageId ?? previousBatch?.source_message_id ?? 0) || null,
+      status_message_id: statusMessageId,
+      expected: totalCount,
+      downloaded: Number(previousBatch?.downloaded ?? 0) || 0,
+      failed: retryOnly ? 0 : Number(previousBatch?.failed ?? 0) || 0,
+      retried: Number(previousBatch?.retried ?? 0) || 0,
+      failed_items: retryOnly ? [] : previousBatch?.failed_items ?? [],
+      status: retryOnly ? "retrying" : "running"
+    });
     const attachedPaths = [];
     const echoedUploads = [];
-    let downloadedCount = 0;
+    const nextFailedItems = [];
+    let downloadedCount = Number(previousBatch?.downloaded ?? 0) || 0;
+    let retriedCount = Number(previousBatch?.retried ?? 0) || 0;
     const sectionTitle = sanitizeMediaTopicName(segment?.section_title ?? "");
     for (let index = 0; index < mediaItems.length; index += 1) {
       const item = mediaItems[index];
       await editMessage(
         chatId,
-        status?.message_id,
-        `\u0421\u0435\u0433\u043C\u0435\u043D\u0442: ${segment.segment_id}\n\u0421\u043A\u0430\u0447\u0430\u043D\u043E \u0444\u0430\u0439\u043B\u043E\u0432 \u0438\u0437 Telegram: ${downloadedCount}/${totalCount}\n\u0421\u0435\u0439\u0447\u0430\u0441 \u0441\u043A\u0430\u0447\u0438\u0432\u0430\u044E: ${index + 1}/${totalCount}`
+        statusMessageId,
+        `Сегмент: ${segment.segment_id}\nСкачано файлов из Telegram: ${downloadedCount}/${totalCount}\nСейчас скачиваю: ${index + 1}/${mediaItems.length}`
       ).catch(() => null);
       const shouldRename = shouldRenameIncomingImage(item);
       const shouldConvertWebp = isIncomingWebpImage(item);
@@ -5476,7 +5648,27 @@ export function createTelegramSdvgBotService(deps) {
         : shouldConvertWebp
           ? replaceFileExtension(item.fileName, ".png")
           : item.fileName;
-      let savedPath = await downloadTelegramFileToTopic(item.fileId, sectionTitle, preferredName);
+      const previousRetryCount =
+        retryOnly
+          ? Number(
+              (Array.isArray(previousBatch?.failed_items) ? previousBatch.failed_items : []).find(
+                (entry) => String(entry?.file_id ?? "") === String(item?.fileId ?? "")
+              )?.retry_count ?? 0
+            ) || 0
+          : 0;
+      let savedPath = null;
+      let lastError = null;
+      let attempt = 0;
+      while (attempt < 2 && !savedPath) {
+        try {
+          if (attempt > 0) retriedCount += 1;
+          savedPath = await downloadTelegramFileToTopic(item.fileId, sectionTitle, preferredName);
+        } catch (error) {
+          lastError = error;
+          attempt += 1;
+          if (attempt < 2) await delay(300);
+        }
+      }
       let finalSavedPath = savedPath;
       let finalFileName = preferredName;
       if (savedPath && shouldConvertWebp) {
@@ -5491,6 +5683,10 @@ export function createTelegramSdvgBotService(deps) {
         } catch (error) {
           await sendMessage(chatId, `Не удалось конвертировать WEBP в PNG: ${error?.message ?? error}`).catch(() => null);
         }
+      }
+      if (!finalSavedPath) {
+        nextFailedItems.push(toTelegramBatchFailedItem(item, lastError?.message ?? "download_failed", previousRetryCount + 1));
+        continue;
       }
       if (finalSavedPath) {
         attachedPaths.push(finalSavedPath);
@@ -5531,8 +5727,8 @@ export function createTelegramSdvgBotService(deps) {
         downloadedCount += 1;
         await editMessage(
           chatId,
-          status?.message_id,
-          `\u0421\u0435\u0433\u043C\u0435\u043D\u0442: ${segment.segment_id}\n\u0421\u043A\u0430\u0447\u0430\u043D\u043E \u0444\u0430\u0439\u043B\u043E\u0432 \u0438\u0437 Telegram: ${downloadedCount}/${totalCount}`
+          statusMessageId,
+          `Сегмент: ${segment.segment_id}\nСкачано файлов из Telegram: ${downloadedCount}/${totalCount}`
         ).catch(() => null);
       }
     }
@@ -5565,10 +5761,31 @@ export function createTelegramSdvgBotService(deps) {
         await deleteMessage(chatId, sourceMessageId).catch(() => null);
       }
     }
+    const finalBatch = upsertTelegramMediaBatchAudit(session, batchId, {
+      doc_id: String(session?.doc_id ?? "").trim(),
+      segment_id: String(segment?.segment_id ?? "").trim(),
+      chat_id: String(chatId ?? ""),
+      source_message_id: Number(sourceMessageId ?? previousBatch?.source_message_id ?? 0) || null,
+      status_message_id: statusMessageId,
+      expected: totalCount,
+      downloaded: downloadedCount,
+      failed: nextFailedItems.length,
+      retried: retriedCount,
+      failed_items: nextFailedItems,
+      status:
+        nextFailedItems.length > 0
+          ? downloadedCount > 0
+            ? "partial"
+            : "failed"
+          : "completed"
+    });
     await editMessage(
       chatId,
-      status?.message_id,
-      `\u0413\u043E\u0442\u043E\u0432\u043E.\n\u0421\u0435\u0433\u043C\u0435\u043D\u0442: ${segment.segment_id}\n\u0421\u043A\u0430\u0447\u0430\u043D\u043E \u0444\u0430\u0439\u043B\u043E\u0432 \u0438\u0437 Telegram: ${downloadedCount}/${totalCount}\n\u0424\u0430\u0439\u043B\u043E\u0432 \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u043E: ${attachedPaths.length}`
+      statusMessageId,
+      buildTelegramMediaBatchSummary(segment.segment_id, downloadedCount, totalCount, attachedPaths.length, nextFailedItems.length),
+      finalBatch?.status === "partial" || finalBatch?.status === "failed"
+        ? { reply_markup: buildTelegramMediaBatchKeyboard(finalBatch) }
+        : { reply_markup: { inline_keyboard: [] } }
     ).catch(() => null);
   }
 
@@ -7078,6 +7295,60 @@ export function createTelegramSdvgBotService(deps) {
       releaseCardActionLock(session, actionLock);
     }
   }
+
+  async function handleTelegramMediaBatchRetryCallback(chatId, callbackId, session, data) {
+    const batchId = compactText(String(data ?? "").slice("sdvg_batch:retry:".length));
+    if (!batchId) {
+      await answerCallback(callbackId, "", false).catch(() => null);
+      return;
+    }
+    const batch = getTelegramMediaBatchAudit(session, batchId);
+    if (!batch) {
+      await answerCallback(callbackId, "Batch уже недоступен.", true).catch(() => null);
+      return;
+    }
+    const failedItems = Array.isArray(batch.failed_items) ? batch.failed_items : [];
+    if (failedItems.length === 0) {
+      await answerCallback(callbackId, "Ошибок для retry нет.", false).catch(() => null);
+      return;
+    }
+    const docId = String(batch.doc_id ?? "").trim();
+    const segmentId = String(batch.segment_id ?? "").trim();
+    if (!docId || !segmentId) {
+      await answerCallback(callbackId, "Batch потерял контекст документа.", true).catch(() => null);
+      return;
+    }
+    const payload = await readDocPayload(docId);
+    if (!payload) {
+      await answerCallback(callbackId, SDVG_MESSAGES.documentUnavailable, true).catch(() => null);
+      return;
+    }
+    const segment = findSdvgDisplaySegment(payload.segments, segmentId);
+    if (!segment) {
+      await answerCallback(callbackId, SDVG_MESSAGES.segmentNotFound, true).catch(() => null);
+      return;
+    }
+    await answerCallback(callbackId, "Повторяю недокачанные файлы...", false).catch(() => null);
+    await handleTelegramMediaInput(
+      chatId,
+      session,
+      segment,
+      failedItems.map((item) => ({
+        fileId: item.file_id,
+        fileUniqueId: item.file_unique_id,
+        fileName: item.file_name,
+        mimeType: item.mime_type,
+        kind: item.kind
+      })),
+      batch.source_message_id,
+      {
+        batchId,
+        retryOnly: true,
+        statusMessageId: batch.status_message_id
+      }
+    );
+  }
+
   async function handleCallbackQuery(update) {
     const callback = update?.callback_query;
     if (!callback) return;
@@ -7106,6 +7377,10 @@ export function createTelegramSdvgBotService(deps) {
     }
     if (data.startsWith("sdvg_shot:")) {
       await handleScreenshotPreviewCallback(chatId, callbackId, messageId, session, data);
+      return;
+    }
+    if (data.startsWith("sdvg_batch:retry:")) {
+      await handleTelegramMediaBatchRetryCallback(chatId, callbackId, session, data);
       return;
     }
     if (data === "sdvg_cheer:mute") {
@@ -7800,7 +8075,7 @@ export function createTelegramSdvgBotService(deps) {
   }
 
   async function processUpdate(update) {
-    if (isIgnoredThreadUpdate(update) && !isNotionOnlyCommandMessage(update)) {
+    if (isIgnoredThreadUpdate(update) && !isTelegramSdvgControlUpdate(update)) {
       return;
     }
     if (update?.callback_query) {
@@ -7870,6 +8145,10 @@ export function createTelegramSdvgBotService(deps) {
       bot_username: state.botUsername,
       drop_pending_updates_on_start: dropPendingUpdatesOnStart,
       session_count: state.sessions.size,
+      telegram_media_batch_count: Array.from(state.sessions.values()).reduce(
+        (sum, session) => sum + (session?.telegram_media_batches instanceof Map ? session.telegram_media_batches.size : 0),
+        0
+      ),
       session_ttl_ms: sessionTtlMs,
       session_cleanup_interval_ms: sessionCleanupIntervalMs,
       ignored_thread_keys_count: ignoredThreadKeys.size,

@@ -36,14 +36,52 @@ export function emptyVisualDecision() {
   return {
     type: "no_visual",
     description: "",
+    description_meta: null,
     format_hint: null,
     duration_hint_sec: null,
     priority: null,
     media_file_path: null,
     media_file_paths: [],
     media_file_timecodes: {},
-    media_start_timecode: null
+    media_start_timecode: null,
+    media_meta: null
   };
+}
+
+function normalizeOwnershipOrigin(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "user" || normalized === "system") return normalized;
+  return null;
+}
+
+function normalizeOwnershipTimestamp(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return Number.isFinite(Date.parse(normalized)) ? normalized : null;
+}
+
+export function normalizeOwnershipMeta(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const origin = normalizeOwnershipOrigin(raw.origin);
+  if (!origin) return null;
+  return {
+    origin,
+    updated_at: normalizeOwnershipTimestamp(raw.updated_at) ?? null
+  };
+}
+
+export function buildOwnershipMeta(origin, updatedAt = new Date().toISOString()) {
+  const normalizedOrigin = normalizeOwnershipOrigin(origin);
+  if (!normalizedOrigin) return null;
+  return {
+    origin: normalizedOrigin,
+    updated_at: normalizeOwnershipTimestamp(updatedAt) ?? new Date().toISOString()
+  };
+}
+
+export function isUserOwnedMeta(raw) {
+  return normalizeOwnershipMeta(raw)?.origin === "user";
 }
 
 function normalizeMediaStartTimecode(value) {
@@ -159,14 +197,95 @@ export function normalizeVisualDecisionInput(raw) {
   return {
     type,
     description,
+    description_meta: normalizeOwnershipMeta(raw.description_meta),
     format_hint: formatHint,
     duration_hint_sec: durationHint,
     priority,
     media_file_path: mediaFilePath,
     media_file_paths: mediaFilePaths,
     media_file_timecodes: mediaFileTimecodes,
-    media_start_timecode: mediaStartTimecode
+    media_start_timecode: mediaStartTimecode,
+    media_meta: normalizeOwnershipMeta(raw.media_meta)
   };
+}
+
+export function compareVisualMediaState(leftRaw, rightRaw) {
+  const left = normalizeVisualDecisionInput(leftRaw);
+  const right = normalizeVisualDecisionInput(rightRaw);
+  const leftPaths = Array.isArray(left.media_file_paths) ? left.media_file_paths : [];
+  const rightPaths = Array.isArray(right.media_file_paths) ? right.media_file_paths : [];
+  if (leftPaths.length !== rightPaths.length) return false;
+  for (let index = 0; index < leftPaths.length; index += 1) {
+    if (leftPaths[index] !== rightPaths[index]) return false;
+  }
+  const leftTimecodes = left.media_file_timecodes ?? {};
+  const rightTimecodes = right.media_file_timecodes ?? {};
+  const leftKeys = Object.keys(leftTimecodes).sort();
+  const rightKeys = Object.keys(rightTimecodes).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let index = 0; index < leftKeys.length; index += 1) {
+    const key = leftKeys[index];
+    if (key !== rightKeys[index]) return false;
+    if (String(leftTimecodes[key] ?? "") !== String(rightTimecodes[key] ?? "")) return false;
+  }
+  return String(left.media_start_timecode ?? "") === String(right.media_start_timecode ?? "");
+}
+
+export function applyVisualDecisionFieldOrigins(currentRaw, nextRaw, options = {}) {
+  const current = normalizeVisualDecisionInput(currentRaw);
+  const next = normalizeVisualDecisionInput(nextRaw);
+  const updatedAt = normalizeOwnershipTimestamp(options.updated_at) ?? new Date().toISOString();
+  const descriptionChanged = String(current.description ?? "") !== String(next.description ?? "");
+  const mediaChanged = !compareVisualMediaState(current, next);
+  return normalizeVisualDecisionInput({
+    ...next,
+    description_meta:
+      descriptionChanged && options.description_origin
+        ? buildOwnershipMeta(options.description_origin, updatedAt)
+        : normalizeOwnershipMeta(next.description_meta) ?? normalizeOwnershipMeta(current.description_meta),
+    media_meta:
+      mediaChanged && options.media_origin
+        ? buildOwnershipMeta(options.media_origin, updatedAt)
+        : normalizeOwnershipMeta(next.media_meta) ?? normalizeOwnershipMeta(current.media_meta)
+  });
+}
+
+export function mergeVisualDecisionWithOrigin(existingRaw, incomingRaw, options = {}) {
+  const existing = normalizeVisualDecisionInput(existingRaw);
+  const incoming = normalizeVisualDecisionInput(incomingRaw);
+  const preserveUserOwned = options.preserve_user_owned === true;
+  const merged = normalizeVisualDecisionInput({
+    ...existing,
+    ...incoming
+  });
+  const next = { ...merged };
+  if (
+    preserveUserOwned &&
+    isUserOwnedMeta(existing.description_meta) &&
+    String(existing.description ?? "").trim() &&
+    String(merged.description ?? "") !== String(existing.description ?? "")
+  ) {
+    next.description = existing.description;
+    next.description_meta = existing.description_meta;
+  }
+  if (
+    preserveUserOwned &&
+    isUserOwnedMeta(existing.media_meta) &&
+    Array.isArray(existing.media_file_paths) &&
+    existing.media_file_paths.length > 0 &&
+    !compareVisualMediaState(existing, merged)
+  ) {
+    next.media_file_path = existing.media_file_path;
+    next.media_file_paths = [...existing.media_file_paths];
+    next.media_file_timecodes = { ...(existing.media_file_timecodes ?? {}) };
+    next.media_start_timecode = existing.media_start_timecode ?? null;
+    next.media_meta = existing.media_meta;
+  }
+  return applyVisualDecisionFieldOrigins(existing, next, {
+    description_origin: options.incoming_origin ?? null,
+    media_origin: options.incoming_origin ?? null,
+    updated_at: options.updated_at
+  });
 }
 
 export function normalizeSegmentForDecision(segment) {

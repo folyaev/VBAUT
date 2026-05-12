@@ -5,6 +5,7 @@ export function createSegmentStateRecoveryUtils(deps) {
   const {
     getDocDir,
     mergeSegmentsWithHistory,
+    mergeVisualDecisionWithOrigin,
     normalizeDecisionsInput,
     normalizeSearchDecisionInput,
     normalizeSegmentsInput,
@@ -106,9 +107,21 @@ export function createSegmentStateRecoveryUtils(deps) {
   function pickVisualDecision(currentDecision, sourceDecision) {
     const currentVisual = normalizeVisualDecisionInput(currentDecision?.visual_decision);
     const sourceVisual = normalizeVisualDecisionInput(sourceDecision?.visual_decision);
-    if (sourceVisual.media_file_path) return sourceVisual;
-    if (Array.isArray(sourceVisual.media_file_paths) && sourceVisual.media_file_paths.length > 0) return sourceVisual;
-    if (!hasVisualSignal(currentDecision) && hasVisualSignal(sourceDecision)) return sourceVisual;
+    if (sourceVisual.media_file_path) {
+      return typeof mergeVisualDecisionWithOrigin === "function"
+        ? mergeVisualDecisionWithOrigin(currentVisual, sourceVisual, { preserve_user_owned: true })
+        : sourceVisual;
+    }
+    if (Array.isArray(sourceVisual.media_file_paths) && sourceVisual.media_file_paths.length > 0) {
+      return typeof mergeVisualDecisionWithOrigin === "function"
+        ? mergeVisualDecisionWithOrigin(currentVisual, sourceVisual, { preserve_user_owned: true })
+        : sourceVisual;
+    }
+    if (!hasVisualSignal(currentDecision) && hasVisualSignal(sourceDecision)) {
+      return typeof mergeVisualDecisionWithOrigin === "function"
+        ? mergeVisualDecisionWithOrigin(currentVisual, sourceVisual, { preserve_user_owned: true })
+        : sourceVisual;
+    }
     return currentVisual;
   }
 
@@ -136,9 +149,10 @@ export function createSegmentStateRecoveryUtils(deps) {
     const firstVideoPath =
       mergedPaths.find((mediaPath) => /\.(mp4|m4v|mov|webm|mkv|avi|mpg|mpeg|mts|m2ts)(?:$|[?#])/i.test(mediaPath)) ??
       null;
-    return normalizeVisualDecisionInput({
+    const mergedVisual = normalizeVisualDecisionInput({
       type: baseVisual.type && baseVisual.type !== "no_visual" ? baseVisual.type : sourceVisual.type,
       description: String(baseVisual.description ?? "").trim() || String(sourceVisual.description ?? "").trim(),
+      description_meta: String(baseVisual.description ?? "").trim() ? baseVisual.description_meta : sourceVisual.description_meta,
       format_hint: baseVisual.format_hint ?? sourceVisual.format_hint ?? null,
       duration_hint_sec: baseVisual.duration_hint_sec ?? sourceVisual.duration_hint_sec ?? null,
       priority: baseVisual.priority ?? sourceVisual.priority ?? null,
@@ -149,8 +163,17 @@ export function createSegmentStateRecoveryUtils(deps) {
         (firstVideoPath ? mergedTimecodes[firstVideoPath] : null) ??
         baseVisual.media_start_timecode ??
         sourceVisual.media_start_timecode ??
-        null
+        null,
+      media_meta:
+        hasVisualMedia(baseVisual)
+          ? baseVisual.media_meta
+          : hasVisualMedia(sourceVisual)
+            ? sourceVisual.media_meta
+            : null
     });
+    return typeof mergeVisualDecisionWithOrigin === "function"
+      ? mergeVisualDecisionWithOrigin(baseVisual, mergedVisual, { preserve_user_owned: true })
+      : mergedVisual;
   }
 
   function buildRecoveredState({ currentSegments, currentDecisions, mergedSegments, decisionsOverride }) {

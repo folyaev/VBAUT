@@ -9,6 +9,7 @@ export function registerGenerationRoutes(app, deps) {
     appendLinkDecisionsOverride,
     buildSegmentLinkHintsFromRawText,
     collapseDuplicateLinkOnlyTopics,
+    buildDocumentIntegritySnapshot,
     ensureMediaTopicFoldersForSegments,
     generateEnglishSearchDecisionsForSegments,
     generateSearchDecisionsForSegments,
@@ -24,6 +25,7 @@ export function registerGenerationRoutes(app, deps) {
     normalizeDocumentForResponse,
     normalizeLinkSegmentsInput,
     normalizeSegmentLinkHintsInput,
+    mergeVisualDecisionWithOrigin,
     normalizeSearchDecisionInput,
     normalizeSegmentForDecision,
     normalizeSegmentWithVisual,
@@ -32,6 +34,7 @@ export function registerGenerationRoutes(app, deps) {
     recoverDocumentSegmentState,
     saveVersioned,
     splitSegmentsAndDecisions,
+    applyDocumentIntegritySnapshot,
     syncDocumentState,
     syncDocumentContext,
     syncDocumentSegmentationState,
@@ -153,6 +156,10 @@ export function registerGenerationRoutes(app, deps) {
         existingDecisions
       );
       const incomingLinkSegments = normalizeLinkSegmentsInput(req.body?.link_segments);
+      const integritySnapshot =
+        typeof buildDocumentIntegritySnapshot === "function"
+          ? buildDocumentIntegritySnapshot(existingSegments, existingDecisions)
+          : null;
       const mergedLinkSegments = mergeLinkSegmentsBySection(existingLinkSegments, incomingLinkSegments);
       const explicitSegmentHints = normalizeSegmentLinkHintsInput(req.body?.segment_link_hints);
       const collapsedLinkTopicsResult = collapseDuplicateLinkOnlyTopics(
@@ -180,14 +187,25 @@ export function registerGenerationRoutes(app, deps) {
         mergedWithSegmentLinks,
         decisionsOverrideWithLinks
       );
-      const ensuredMediaTopics = await ensureMediaTopicFoldersForSegments(segmentsData);
+      const integrityApplied =
+        typeof applyDocumentIntegritySnapshot === "function"
+          ? applyDocumentIntegritySnapshot({
+              snapshot: integritySnapshot,
+              segments: segmentsData,
+              decisions: decisionsData
+            })
+          : { segments: segmentsData, decisions: decisionsData, report: null };
+      const finalSegmentsData = Array.isArray(integrityApplied?.segments) ? integrityApplied.segments : segmentsData;
+      const finalDecisionsData = Array.isArray(integrityApplied?.decisions) ? integrityApplied.decisions : decisionsData;
+      const integrityReport = integrityApplied?.report ?? null;
+      const ensuredMediaTopics = await ensureMediaTopicFoldersForSegments(finalSegmentsData);
 
-      let segmentsVersion = await saveVersioned(docId, "segments", segmentsData);
-      let decisionsVersion = await saveVersioned(docId, "decisions", decisionsData);
-      let responseSegments = segmentsData;
-      let responseDecisions = decisionsData;
+      let segmentsVersion = await saveVersioned(docId, "segments", finalSegmentsData);
+      let decisionsVersion = await saveVersioned(docId, "decisions", finalDecisionsData);
+      let responseSegments = finalSegmentsData;
+      let responseDecisions = finalDecisionsData;
       let stateRecovery = null;
-      await syncDocumentContext?.(docId, segmentsData, decisionsData, "segments_generate");
+      await syncDocumentContext?.(docId, finalSegmentsData, finalDecisionsData, "segments_generate");
 
       if (typeof recoverDocumentSegmentState === "function") {
         const recoveryPreview = await recoverDocumentSegmentState({
@@ -238,14 +256,15 @@ export function registerGenerationRoutes(app, deps) {
       await appendEvent(docId, {
         timestamp: new Date().toISOString(),
         event: "segments_generated",
-        payload: {
-          document_version: documentVersion,
-          segmentsVersion,
-          decisionsVersion,
-          media_topic_folders_ensured: ensuredMediaTopics.length,
-          state_recovery: stateRecovery,
-          segmentation_diff: {
-            ...(diff ?? {}),
+          payload: {
+            document_version: documentVersion,
+            segmentsVersion,
+            decisionsVersion,
+            media_topic_folders_ensured: ensuredMediaTopics.length,
+            integrity_report: integrityReport,
+            state_recovery: stateRecovery,
+            segmentation_diff: {
+              ...(diff ?? {}),
             link_topics_collapsed: mergedLinkTopicsCollapsed,
             segment_link_hints: segmentHints.length,
             segment_links_applied: segmentLinksApplied
@@ -258,6 +277,7 @@ export function registerGenerationRoutes(app, deps) {
         segments: responseSegments,
         decisions: responseDecisions,
         media_topic_folders_ensured: ensuredMediaTopics.length,
+        integrity_report: integrityReport,
         state_recovery: stateRecovery,
         segmentation_diff: {
           ...(diff ?? {}),
@@ -413,13 +433,18 @@ export function registerGenerationRoutes(app, deps) {
 
       generated.forEach((decision) => {
         const existing = decisionMap.get(decision.segment_id);
-        const mergedVisual = {
-          ...(existing?.visual_decision ?? {}),
-          ...(decision.visual_decision ?? {})
-        };
         decisionMap.set(decision.segment_id, {
           segment_id: decision.segment_id,
-          visual_decision: normalizeVisualDecisionInput(mergedVisual),
+          visual_decision:
+            typeof mergeVisualDecisionWithOrigin === "function"
+              ? mergeVisualDecisionWithOrigin(existing?.visual_decision, decision.visual_decision, {
+                  incoming_origin: "system",
+                  preserve_user_owned: true
+                })
+              : normalizeVisualDecisionInput({
+                  ...(existing?.visual_decision ?? {}),
+                  ...(decision.visual_decision ?? {})
+                }),
           search_decision: normalizeSearchDecisionInput(existing?.search_decision),
           search_decision_en: normalizeSearchDecisionInput(existing?.search_decision_en),
           version: 1

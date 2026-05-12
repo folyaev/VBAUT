@@ -13,6 +13,7 @@ export function registerDocumentRoutes(app, deps) {
     inferNeedsSegmentationFromFileState,
     isNotionUrl,
     listDocuments,
+    applyVisualDecisionFieldOrigins,
     normalizeDecisionsInput,
     normalizeDocumentForResponse,
     normalizeNotionUrl,
@@ -77,6 +78,26 @@ export function registerDocumentRoutes(app, deps) {
         links: dedupedLinks
       };
     });
+  }
+
+  function applyUserOwnedDecisionChanges(decisions = [], currentDecisions = []) {
+    const updatedAt = new Date().toISOString();
+    const currentMap = new Map(
+      (Array.isArray(currentDecisions) ? currentDecisions : [])
+        .map((decision) => [String(decision?.segment_id ?? "").trim(), decision])
+        .filter(([segmentId]) => Boolean(segmentId))
+    );
+    return normalizeDecisionsInput(Array.isArray(decisions) ? decisions : []).map((decision) => ({
+      ...decision,
+      visual_decision:
+        typeof applyVisualDecisionFieldOrigins === "function"
+          ? applyVisualDecisionFieldOrigins(currentMap.get(String(decision?.segment_id ?? "").trim())?.visual_decision, decision.visual_decision, {
+              description_origin: "user",
+              media_origin: "user",
+              updated_at: updatedAt
+            })
+          : normalizeVisualDecisionInput(decision.visual_decision)
+    }));
   }
 
 app.get("/api/documents", async (_req, res) => {
@@ -289,8 +310,9 @@ app.put("/api/documents/:id/session", async (req, res) => {
     if (!segments) return res.status(400).json({ error: "segments must be an array" });
     if (!decisions) return res.status(400).json({ error: "decisions must be an array" });
 
+    const { decisions: currentDecisions } = await loadDocumentRouteContext(docId);
     const normalizedSegments = dedupeLinkDuplicatesAcrossSections(normalizeSegmentsInput(segments));
-    const normalizedDecisions = normalizeDecisionsInput(decisions);
+    const normalizedDecisions = applyUserOwnedDecisionChanges(decisions, currentDecisions);
 
     const previousRawText = String(document.raw_text ?? "");
     let rawTextChanged = false;
@@ -385,7 +407,8 @@ app.put("/api/documents/:id/decisions", async (req, res) => {
     const decisions = Array.isArray(req.body?.decisions) ? req.body.decisions : null;
     if (!decisions) return res.status(400).json({ error: "decisions must be an array" });
 
-    const normalized = normalizeDecisionsInput(decisions);
+    const { decisions: currentDecisions } = await loadDocumentRouteContext(docId);
+    const normalized = applyUserOwnedDecisionChanges(decisions, currentDecisions);
     const version = await saveVersioned(docId, "decisions", normalized);
     const { segments: currentSegments } = await loadDocumentRouteContext(docId);
     await syncDocumentContext?.(docId, Array.isArray(currentSegments) ? currentSegments : [], normalized, "decisions_updated");

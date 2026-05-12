@@ -7,8 +7,13 @@ import {
   clearTelegramSdvgSessionEphemeralState,
   createEmptyTelegramSdvgSession,
   createTelegramSdvgBotService,
+  ensureTelegramMediaBatchMap,
+  getTelegramMediaBatchAudit,
+  isTelegramSdvgControlCommandText,
+  isTelegramSdvgControlUpdate,
   sweepIdleTelegramSdvgSessions,
-  touchTelegramSdvgSession
+  touchTelegramSdvgSession,
+  upsertTelegramMediaBatchAudit
 } from "../src/services/telegram-sdvg-bot.js";
 
 test("createTelegramSdvgBotService does not start without TELEGRAM_BOT_TOKEN", async (t) => {
@@ -27,6 +32,21 @@ test("createTelegramSdvgBotService does not start without TELEGRAM_BOT_TOKEN", a
   assert.equal(service.start(), false);
 });
 
+test("telegram SDVG control detector allows commands and callbacks in ignored threads", () => {
+  assert.equal(isTelegramSdvgControlCommandText("/sdvg"), true);
+  assert.equal(isTelegramSdvgControlCommandText("/sdvg random"), true);
+  assert.equal(isTelegramSdvgControlCommandText("/sdvg@utsearchbot doc_1"), true);
+  assert.equal(isTelegramSdvgControlCommandText("/download"), true);
+  assert.equal(isTelegramSdvgControlCommandText("/research"), true);
+  assert.equal(isTelegramSdvgControlCommandText("/threadid"), true);
+  assert.equal(isTelegramSdvgControlCommandText("plain text"), false);
+  assert.equal(isTelegramSdvgControlCommandText("/sdvgx"), false);
+
+  assert.equal(isTelegramSdvgControlUpdate({ message: { text: "/sdvg", message_thread_id: 10 } }), true);
+  assert.equal(isTelegramSdvgControlUpdate({ callback_query: { data: "sdvg_next" } }), true);
+  assert.equal(isTelegramSdvgControlUpdate({ callback_query: { data: "other" } }), false);
+});
+
 test("clearTelegramSdvgSessionEphemeralState clears pending timers and volatile maps", () => {
   const session = createEmptyTelegramSdvgSession("doc_test");
   session.card_contexts.set("1", { ok: true });
@@ -43,6 +63,7 @@ test("clearTelegramSdvgSessionEphemeralState clears pending timers and volatile 
   session.pending_inbox_media_groups.set("grp", { timeout, mediaItems: [{ id: 1 }] });
   const sdvgTimeout = setTimeout(() => {}, 60_000);
   session.pending_sdvg_media_groups.set("sdvg", { timeout: sdvgTimeout, mediaItems: [{ id: 2 }] });
+  ensureTelegramMediaBatchMap(session).set("batch_1", { ok: true });
 
   clearTelegramSdvgSessionEphemeralState(session);
 
@@ -54,6 +75,7 @@ test("clearTelegramSdvgSessionEphemeralState clears pending timers and volatile 
   assert.equal(session.screenshot_preview_contexts.size, 0);
   assert.equal(session.pending_inbox_media_groups.size, 0);
   assert.equal(session.pending_sdvg_media_groups.size, 0);
+  assert.equal(session.telegram_media_batches.size, 0);
   assert.equal(session.card_action_locks.size, 0);
   assert.equal(session.project_archive_request, null);
   assert.equal(session.download_theme_create_request, null);
@@ -157,4 +179,33 @@ test("buildTelegramAssetPathRepairPlan repairs only unique stale unsorted assets
       next_relative_path: "Topic A/a.mp4"
     }
   ]);
+});
+
+test("telegram media batch audit upserts and returns normalized state", () => {
+  const session = createEmptyTelegramSdvgSession("doc_test");
+  const batch = upsertTelegramMediaBatchAudit(session, "batch_1", {
+    doc_id: "doc_test",
+    segment_id: "news_01",
+    expected: 3,
+    downloaded: 2,
+    failed: 1,
+    retried: 1,
+    status: "partial",
+    failed_items: [
+      {
+        file_id: "file_1",
+        file_unique_id: "uniq_1",
+        file_name: "shot.png",
+        retry_count: 2
+      }
+    ]
+  });
+
+  assert.equal(batch.batch_id, "batch_1");
+  assert.equal(batch.expected, 3);
+  assert.equal(batch.downloaded, 2);
+  assert.equal(batch.failed, 1);
+  assert.equal(batch.retried, 1);
+  assert.equal(batch.failed_items.length, 1);
+  assert.equal(getTelegramMediaBatchAudit(session, "batch_1")?.segment_id, "news_01");
 });

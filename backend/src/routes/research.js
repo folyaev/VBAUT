@@ -561,6 +561,7 @@ function mergeStoredResearchBrief(run = {}, rebuiltBrief = {}) {
 
 export function registerResearchRoutes(app, deps) {
   const {
+    applyVisualDecisionFieldOrigins,
     appendEvent,
     attachAsset,
     createAsset,
@@ -620,7 +621,7 @@ export function registerResearchRoutes(app, deps) {
     return { dir, document, segments, decisions, segment, decision };
   }
 
-  async function writeDecisionUpdate(context, segmentId, updater) {
+  async function writeDecisionUpdate(context, segmentId, updater, options = {}) {
     const existingIndex = context.decisions.findIndex((item) => String(item?.segment_id ?? "") === String(segmentId ?? ""));
     const current =
       existingIndex >= 0
@@ -634,11 +635,19 @@ export function registerResearchRoutes(app, deps) {
             version: 1
           };
     const nextRaw = updater(current);
+    const updatedAt = new Date().toISOString();
     const normalized = {
       ...current,
       ...nextRaw,
       segment_id: String(segmentId ?? ""),
-      visual_decision: normalizeVisualDecisionInput(nextRaw?.visual_decision ?? current?.visual_decision),
+      visual_decision:
+        typeof applyVisualDecisionFieldOrigins === "function"
+          ? applyVisualDecisionFieldOrigins(current?.visual_decision, nextRaw?.visual_decision ?? current?.visual_decision, {
+              description_origin: options.visualOrigin ?? "system",
+              media_origin: options.visualOrigin ?? "system",
+              updated_at: updatedAt
+            })
+          : normalizeVisualDecisionInput(nextRaw?.visual_decision ?? current?.visual_decision),
       search_decision: normalizeSearchDecisionInput(nextRaw?.search_decision ?? current?.search_decision),
       search_decision_en: normalizeSearchDecisionInput(nextRaw?.search_decision_en ?? current?.search_decision_en),
       research_dismissed_urls: normalizeResearchDismissedUrlsInput(

@@ -43,6 +43,8 @@ import { registerMiscRoutes } from "./routes/misc.js";
 import { registerIntegrationRoutes } from "./routes/integration.js";
 import { registerResearchRoutes } from "./routes/research.js";
 import {
+  applyVisualDecisionFieldOrigins,
+  mergeVisualDecisionWithOrigin,
   emptySearchDecision,
   emptyVisualDecision,
   normalizeDecisionsInput,
@@ -67,6 +69,9 @@ import { canonicalizeLinkUrl, isHttpUrl, normalizeLinkUrl, normalizeLinksInput }
 import { isNotionUrl, normalizeNotionUrl } from "./services/notion-url.js";
 import { createSegmentsSessionUtils } from "./services/segments-session.js";
 import { createSegmentStateRecoveryUtils } from "./services/segment-state-recovery.js";
+import { createDocumentIntegrityUtils } from "./services/document-integrity.js";
+import { createDocumentContextHashUtils } from "./services/document-context-hash.js";
+import { createDocumentJobQueue } from "./services/document-job-queue.js";
 import { createXmlTimelineMirrorService } from "./services/xml-timeline-mirror.js";
 import { createRequestAuditLogger } from "./services/request-audit.js";
 import { createUiActionsAuditStore } from "./services/ui-actions-audit.js";
@@ -332,12 +337,30 @@ const {
 const { recoverDocumentSegmentState } = createSegmentStateRecoveryUtils({
   getDocDir,
   mergeSegmentsWithHistory,
+  mergeVisualDecisionWithOrigin,
   normalizeDecisionsInput,
   normalizeSearchDecisionInput,
   normalizeSegmentsInput,
   normalizeVisualDecisionInput,
   readOptionalJson,
   saveVersioned
+});
+const {
+  applyDocumentIntegritySnapshot,
+  buildDocumentIntegritySnapshot
+} = createDocumentIntegrityUtils({
+  normalizeDecisionsInput,
+  normalizeSearchDecisionInput,
+  normalizeSegmentsInput,
+  normalizeVisualDecisionInput
+});
+const { buildDocumentContextHash } = createDocumentContextHashUtils({
+  getMediaDir,
+  normalizeVisualDecisionInput,
+  sanitizeMediaTopicName
+});
+const documentJobQueue = createDocumentJobQueue({
+  logger: console
 });
 
 const downloaderTools = await resolveDownloaderTools();
@@ -882,7 +905,7 @@ async function getIntegrationReleaseSafe(releaseId) {
 
 async function syncDocumentContextSafe(docId, segments = [], decisions = [], reason = "doc_context_update") {
   integrationSqliteMirror.syncDocumentContext(docId, segments, decisions, { reason, doc_id: docId });
-  xmlTimelineMirrorService?.enqueueDocumentContextSync?.(docId, segments, decisions, { reason });
+  await xmlTimelineMirrorService?.enqueueDocumentContextSync?.(docId, segments, decisions, { reason });
 }
 
 async function syncDocumentStateSafe(docId, document = null, reason = "doc_state_update") {
@@ -1369,10 +1392,11 @@ const {
   safeResolveMediaPath
 });
 const xmlTimelineMirrorService = createXmlTimelineMirrorService({
+  buildDocumentContextHash,
   buildXmlExportPayload,
+  documentJobQueue,
   getDataDir,
   getMediaDir,
-  normalizeVisualDecisionInput,
   sanitizeMediaTopicName,
   XML_EXPORT_DEFAULT_DURATION_SEC,
   XML_EXPORT_FPS,
@@ -1416,6 +1440,7 @@ void syncXmlTimelineMirrorFromDisk().catch((error) => {
 });
 
 registerDocumentRoutes(app, {
+  applyVisualDecisionFieldOrigins,
   appendEvent,
   emptySearchDecision,
   ensureDataDir,
@@ -1450,7 +1475,9 @@ registerGenerationRoutes(app, {
   applySegmentLinkHintsToSegments,
   appendEvent,
   appendLinkDecisionsOverride,
+  applyDocumentIntegritySnapshot,
   buildSegmentLinkHintsFromRawText,
+  buildDocumentIntegritySnapshot,
   collapseDuplicateLinkOnlyTopics,
   ensureMediaTopicFoldersForSegments,
   generateEnglishSearchDecisionsForSegments,
@@ -1461,6 +1488,7 @@ registerGenerationRoutes(app, {
   listDocDecisions: listDocDecisionsSafe,
   listDocSegments: listDocSegmentsSafe,
   markDocumentSegmented,
+  mergeVisualDecisionWithOrigin,
   mergeLinkSegmentsBySection,
   mergeSegmentsWithHistory,
   normalizeDocumentForResponse,
@@ -1557,6 +1585,7 @@ registerIntegrationRoutes(app, {
 });
 
 registerResearchRoutes(app, {
+  applyVisualDecisionFieldOrigins,
   appendEvent,
   attachAsset: integrationStore.attachAsset,
   createAsset: integrationStore.createAsset,
@@ -1663,7 +1692,8 @@ export function getServerRuntimeInfo() {
     health: {
       cookies: { ...screenshotCookiesHealthState },
       link_integrity_audit: { ...linkIntegrityAuditState },
-      downloader_tools: getDownloaderToolVersionState()
+      downloader_tools: getDownloaderToolVersionState(),
+      document_job_queue: documentJobQueue.getSnapshot()
     }
   };
 }

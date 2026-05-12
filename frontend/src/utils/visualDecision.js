@@ -47,13 +47,38 @@ export function emptyVisualDecision() {
   return {
     type: "no_visual",
     description: "",
+    description_meta: null,
     format_hint: null,
     duration_hint_sec: null,
     priority: null,
     media_file_path: null,
     media_file_paths: [],
     media_file_timecodes: {},
-    media_start_timecode: null
+    media_start_timecode: null,
+    media_meta: null
+  };
+}
+
+function normalizeOwnershipOrigin(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "user" || normalized === "system") return normalized;
+  return null;
+}
+
+function normalizeOwnershipTimestamp(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return Number.isFinite(Date.parse(normalized)) ? normalized : null;
+}
+
+export function normalizeOwnershipMeta(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const origin = normalizeOwnershipOrigin(raw.origin);
+  if (!origin) return null;
+  return {
+    origin,
+    updated_at: normalizeOwnershipTimestamp(raw.updated_at) ?? null
   };
 }
 
@@ -269,13 +294,15 @@ export function normalizeVisualDecision(decision, config) {
   return {
     type,
     description,
+    description_meta: normalizeOwnershipMeta(decision.description_meta),
     format_hint,
     duration_hint_sec,
     priority,
     media_file_path,
     media_file_paths,
     media_file_timecodes,
-    media_start_timecode
+    media_start_timecode,
+    media_meta: normalizeOwnershipMeta(decision.media_meta)
   };
 }
 

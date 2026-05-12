@@ -28,12 +28,24 @@ export async function ensureDocDir(docId) {
 
 export async function writeJson(filePath, data) {
   const json = JSON.stringify(data, null, 2);
-  await fs.writeFile(filePath, json, "utf8");
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.writeFile(tempPath, json, "utf8");
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => {});
+    throw error;
+  }
 }
 
 export async function readJson(filePath) {
   const raw = await fs.readFile(filePath, "utf8");
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Failed to parse JSON at ${filePath}: ${error.message}`, { cause: error });
+  }
 }
 
 export async function fileExists(filePath) {
@@ -47,6 +59,8 @@ export async function fileExists(filePath) {
 
 export async function readOptionalJson(filePath) {
   if (!(await fileExists(filePath))) return null;
+  const stat = await fs.stat(filePath);
+  if (stat.size === 0) return null;
   return readJson(filePath);
 }
 

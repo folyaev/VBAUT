@@ -370,6 +370,58 @@ const formatRelativeEventLabel = (value) => {
   if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
   return `${Math.round(diffSec / 86400)}d ago`;
 };
+const buildIntegrityNotice = (report) => {
+  if (!report || typeof report !== "object") return null;
+  const snapshotItems = Number(report.snapshot_items ?? 0);
+  const unresolvedItems = Number(report.unresolved_items ?? 0);
+  const restored = report?.restored ?? {};
+  const moved = report?.moved ?? {};
+  const restoredEntries = [
+    Number(restored.is_done ?? 0) > 0 ? `${Number(restored.is_done ?? 0)} done` : "",
+    Number(restored.visual_description ?? 0) > 0
+      ? `${Number(restored.visual_description ?? 0)} description`
+      : "",
+    Number(restored.media ?? 0) > 0 ? `${Number(restored.media ?? 0)} media` : "",
+    Number(restored.comments ?? 0) > 0 ? `${Number(restored.comments ?? 0)} comments` : "",
+    Number(restored.links ?? 0) > 0 ? `${Number(restored.links ?? 0)} links` : ""
+  ].filter(Boolean);
+  const movedEntries = [
+    Number(moved.visual_description ?? 0) > 0
+      ? `${Number(moved.visual_description ?? 0)} description`
+      : "",
+    Number(moved.media ?? 0) > 0 ? `${Number(moved.media ?? 0)} media` : ""
+  ].filter(Boolean);
+
+  if (snapshotItems <= 0 && restoredEntries.length === 0 && unresolvedItems <= 0) {
+    return null;
+  }
+
+  if (unresolvedItems > 0) {
+    return {
+      tone: "warning",
+      title: "Integrity check: есть unresolved",
+      summary:
+        restoredEntries.length > 0
+          ? `Восстановлено: ${restoredEntries.join(", ")}. Unresolved: ${unresolvedItems}.`
+          : `После re-segmentation осталось unresolved: ${unresolvedItems}.`
+    };
+  }
+
+  if (restoredEntries.length > 0) {
+    const movedSummary = movedEntries.length > 0 ? ` Сдвиги исправлены: ${movedEntries.join(", ")}.` : "";
+    return {
+      tone: "success",
+      title: "Integrity restored",
+      summary: `Автовосстановление вернуло: ${restoredEntries.join(", ")}.${movedSummary}`
+    };
+  }
+
+  return {
+    tone: "neutral",
+    title: "Integrity check passed",
+    summary: "После re-segmentation потерь ручного состояния не обнаружено."
+  };
+};
 const formatAssetKindLabel = (value) => {
   const key = String(value ?? "").trim().toLowerCase();
   const labels = {
@@ -3956,6 +4008,7 @@ export default function App() {
   const [recentDocs, setRecentDocs] = useState([]);
   const [recentDocId, setRecentDocId] = useState("");
   const [status, setStatus] = useState("");
+  const [integrityNotice, setIntegrityNotice] = useState(null);
   const [scenarioPanelOpen, setScenarioPanelOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState({});
@@ -4561,6 +4614,7 @@ export default function App() {
         setDocId(targetId);
         setScriptText(rawText);
         setNotionUrl(loadedNotion);
+        setIntegrityNotice(null);
         setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
         setSegments(ordered);
         setSegmentResearchRuns(buildLatestResearchRunMap(data?.research_runs));
@@ -4647,6 +4701,7 @@ export default function App() {
     setScriptText(NEW_SCENARIO_TEMPLATE);
     setNotionUrl("");
     setNotionHasUpdates(false);
+    setIntegrityNotice(null);
     setSegments([]);
     setLinksPanelOpen(false);
     setMediaPanelOpen(false);
@@ -4924,6 +4979,7 @@ export default function App() {
   }, [buildSessionPayload, collabSessionEnabled, docId, isSnapshotDirty, loadDocumentById]);
   const handleGenerate = async () => {
     setLoading(true);
+    setIntegrityNotice(null);
     setStatus("\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f \u0441\u0435\u0433\u043c\u0435\u043d\u0442\u043e\u0432...");
     try {
       // After a Notion refresh, local segments/decisions may be older than backend state
@@ -4974,6 +5030,7 @@ export default function App() {
       ));
       setSegments(orderedSegments);
       setNotionHasUpdates(getNeedsSegmentationFromDocument(data?.document));
+      setIntegrityNotice(buildIntegrityNotice(data?.integrity_report));
 
       const visualCount = mergedWithSegmentLinks.filter((segment) => hasVisualDecisionContent(segment.visual_decision)).length;
       const searchCount = mergedWithSegmentLinks.filter((segment) => hasSearchDecisionContent(segment.search_decision)).length;
@@ -5483,7 +5540,18 @@ export default function App() {
       prev.map((segment, idx) =>
         idx === index
           ? (() => {
+              const ownershipUpdatedAt = new Date().toISOString();
               const nextVisual = { ...segment.visual_decision, ...(updates ?? {}) };
+              const touchesDescription = updates && Object.prototype.hasOwnProperty.call(updates, "description");
+              const touchesMedia = Boolean(
+                updates &&
+                  (
+                    Object.prototype.hasOwnProperty.call(updates, "media_file_paths") ||
+                    Object.prototype.hasOwnProperty.call(updates, "media_file_path") ||
+                    Object.prototype.hasOwnProperty.call(updates, "media_file_timecodes") ||
+                    Object.prototype.hasOwnProperty.call(updates, "media_start_timecode")
+                  )
+              );
               if (updates && Object.prototype.hasOwnProperty.call(updates, "type")) {
                 const nextType = String(updates.type ?? "").trim().toLowerCase();
                 const defaults = getVisualDefaultsByType(nextType, config);
@@ -5498,10 +5566,12 @@ export default function App() {
                       ...nextVisual,
                       ...defaults,
                       description: "",
+                      description_meta: { origin: "user", updated_at: ownershipUpdatedAt },
                       media_file_path: null,
                       media_file_paths: [],
                       media_file_timecodes: {},
-                      media_start_timecode: null
+                      media_start_timecode: null,
+                      media_meta: { origin: "user", updated_at: ownershipUpdatedAt }
                     }
                   };
                 }
@@ -5531,6 +5601,12 @@ export default function App() {
               }
               nextVisual.media_file_timecodes = mediaFileTimecodes;
               nextVisual.media_start_timecode = videoMediaPaths[0] ? mediaFileTimecodes[videoMediaPaths[0]] ?? null : null;
+              if (touchesDescription) {
+                nextVisual.description_meta = { origin: "user", updated_at: ownershipUpdatedAt };
+              }
+              if (touchesMedia) {
+                nextVisual.media_meta = { origin: "user", updated_at: ownershipUpdatedAt };
+              }
               return { ...segment, visual_decision: nextVisual };
             })()
           : segment
@@ -7553,6 +7629,17 @@ export default function App() {
         autoOpenLastDocEnabled={autoOpenLastDocEnabled}
         setAutoOpenLastDocEnabled={setAutoOpenLastDocEnabled}
       />
+      {integrityNotice ? (
+        <section className={`integrity-banner is-${integrityNotice.tone}`}>
+          <div className="integrity-banner-copy">
+            <strong>{integrityNotice.title}</strong>
+            <span>{integrityNotice.summary}</span>
+          </div>
+          <button className="btn ghost small" type="button" onClick={() => setIntegrityNotice(null)}>
+            Закрыть
+          </button>
+        </section>
+      ) : null}
       <React.Suspense fallback={<LazySectionFallback label="Loading scenario editor..." />}>
         <ScenarioEditorPanel
           scenarioPanelOpen={scenarioPanelOpen}
