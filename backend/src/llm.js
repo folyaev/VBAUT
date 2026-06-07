@@ -1334,13 +1334,12 @@ const SEGMENT_MIN_CHARS = 20;
 const AUTO_DURATION_SYLLABLES_PER_SEC = Number.isFinite(Number(process.env.AUTO_DURATION_SYLLABLES_PER_SEC))
   ? Math.max(1, Number(process.env.AUTO_DURATION_SYLLABLES_PER_SEC))
   : 6;
-const NARRATIVE_SPLIT_RE = /(?<=[.!?…])\s+/u;
 const CLAUSE_PIVOT_RE =
   /,\s+(если|но|а|и|однако|зато|при этом|чтобы|когда|где|так как|потому что|котор(?:ый|ая|ое|ые|ого|ому|ым|ых)?)\b/iu;
 const HARD_SENTENCE_START_RE = /^(а|но|однако|зато|при этом|например|во-первых|во-вторых|кстати)\b/iu;
 
 function splitIntoParagraphs(text) {
-  const normalized = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const normalized = normalizeProtectedNarrativeText(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const paragraphs = normalized
     .split(/\n\s*\n+/)
     .map((part) => part.trim())
@@ -1355,9 +1354,43 @@ function splitIntoParagraphs(text) {
 }
 
 function normalizeSegmentText(text) {
-  return String(text ?? "")
+  return normalizeProtectedNarrativeText(text)
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeProtectedNarrativeText(text) {
+  return String(text ?? "")
+    .replace(/(^|[^\p{L}\p{N}_])[МM]\.\s*Видео(?=$|[^\p{L}\p{N}_])/giu, "$1М.Видео")
+    .replace(/(^|[^\p{L}\p{N}_])[МM]\.\s*Video(?=$|[^\p{L}\p{N}_])/giu, "$1M.Video");
+}
+
+function shouldKeepSentenceBoundaryInsideToken(text, punctuationIndex) {
+  const source = String(text ?? "");
+  if (source[punctuationIndex] !== ".") return false;
+  const before = source.slice(0, punctuationIndex).match(/([\p{L}])$/u)?.[1] ?? "";
+  if (!before) return false;
+  const tokenStart = source.slice(0, punctuationIndex).match(/(?:^|\s)([\p{L}])$/u);
+  if (!tokenStart) return false;
+  const after = source.slice(punctuationIndex + 1).match(/^\s*([\p{L}])/u)?.[1] ?? "";
+  if (!after) return false;
+  return before.toLocaleUpperCase("ru-RU") === before && after.toLocaleUpperCase("ru-RU") === after;
+}
+
+function splitTextIntoSentences(text) {
+  const source = String(text ?? "");
+  const parts = [];
+  let start = 0;
+  for (const match of source.matchAll(/[.!?…]\s+/gu)) {
+    const boundaryIndex = Number(match.index ?? -1);
+    if (boundaryIndex < start) continue;
+    if (shouldKeepSentenceBoundaryInsideToken(source, boundaryIndex)) continue;
+    const end = boundaryIndex + 1;
+    parts.push(source.slice(start, end));
+    start = boundaryIndex + match[0].length;
+  }
+  parts.push(source.slice(start));
+  return parts;
 }
 
 function countPunctuationSentences(text) {
@@ -1414,8 +1447,7 @@ function splitParagraphIntoNarrativeSegments(paragraph) {
   if (!text) return [];
   if (text.startsWith("/")) return [text];
 
-  const sentences = text
-    .split(NARRATIVE_SPLIT_RE)
+  const sentences = splitTextIntoSentences(text)
     .map((part) => normalizeSegmentText(part))
     .filter(Boolean)
     .flatMap((part) => splitLongClause(part));

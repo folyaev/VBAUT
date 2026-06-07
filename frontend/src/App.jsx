@@ -1717,19 +1717,31 @@ const extractLinksFromScript = (text) => {
   let sectionIndex = 0;
   const sectionTitleCounts = new Map();
   let currentSection = null;
-  const addLinkToGroup = (section, link) => {
-    if (!link) return;
-    const key = getSectionKeyFromMeta(section);
-    if (!linkGroups.has(key)) {
-      linkGroups.set(key, {
+    const addLinkToGroup = (section, link) => {
+      if (!link) return;
+      const key = getSectionKeyFromMeta(section);
+      if (!linkGroups.has(key)) {
+        linkGroups.set(key, {
         section_id: section?.section_id ?? null,
         section_title: section?.section_title ?? null,
         section_index: section?.section_index ?? null,
         links: []
       });
-    }
-    linkGroups.get(key).links.push(link);
-  };
+      }
+      linkGroups.get(key).links.push(link);
+    };
+    const takeInlineSlashHint = () => {
+      for (let idx = cleanLines.length - 1; idx >= 0; idx -= 1) {
+        const candidate = String(cleanLines[idx] ?? "").trim();
+        if (!candidate) continue;
+        if (/^#{1,6}\s/.test(candidate)) return "";
+        if (parseLinkLine(candidate)) return "";
+        return candidate.startsWith("/") && !candidate.startsWith("//") && !candidate.startsWith("/http")
+          ? candidate
+          : "";
+      }
+      return "";
+    };
   for (const block of blocks) {
     if (block.heading) {
       const hasContent = block.lines.some((line) => {
@@ -1818,12 +1830,23 @@ const extractLinksFromScript = (text) => {
       if (skipUntil > 0 && lineIndex < skipUntil) {
         continue;
       }
-      const link = parseLinkLine(line);
-      if (link) {
-        addLinkToGroup(currentSection, link);
-        cleanLines.push("");
-        continue;
-      }
+        const link = parseLinkLine(line);
+        if (link) {
+          addLinkToGroup(currentSection, link);
+          const hintText = takeInlineSlashHint();
+          if (hintText) {
+            segmentLinkHints.push({
+              section_id: currentSection?.section_id ?? null,
+              section_title: currentSection?.section_title ?? null,
+              section_index: currentSection?.section_index ?? null,
+              url: link.url,
+              raw: link.raw ?? String(line ?? "").trim(),
+              quote_hint: hintText
+            });
+          }
+          cleanLines.push("");
+          continue;
+        }
       cleanLines.push(line);
     }
   }
@@ -5009,7 +5032,7 @@ export default function App() {
       const { response, data } = await fetchJsonSafe(`/api/documents/${targetDocId}/segments:generate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ raw_text: cleanText, link_segments: mergedLinks })
+        body: JSON.stringify({ raw_text: cleanText, link_segments: mergedLinks, ensure_media_folders: true })
       });
       if (!response.ok) throw new Error(data?.error ?? "\u041e\u0448\u0438\u0431\u043a\u0430 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438");
 

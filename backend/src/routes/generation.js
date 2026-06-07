@@ -198,7 +198,10 @@ export function registerGenerationRoutes(app, deps) {
       const finalSegmentsData = Array.isArray(integrityApplied?.segments) ? integrityApplied.segments : segmentsData;
       const finalDecisionsData = Array.isArray(integrityApplied?.decisions) ? integrityApplied.decisions : decisionsData;
       const integrityReport = integrityApplied?.report ?? null;
-      const ensuredMediaTopics = await ensureMediaTopicFoldersForSegments(finalSegmentsData);
+      const shouldEnsureMediaFolders = req.body?.ensure_media_folders === true;
+      const ensuredMediaTopics = shouldEnsureMediaFolders && typeof ensureMediaTopicFoldersForSegments === "function"
+        ? await ensureMediaTopicFoldersForSegments(finalSegmentsData)
+        : [];
 
       let segmentsVersion = await saveVersioned(docId, "segments", finalSegmentsData);
       let decisionsVersion = await saveVersioned(docId, "decisions", finalDecisionsData);
@@ -260,6 +263,7 @@ export function registerGenerationRoutes(app, deps) {
             document_version: documentVersion,
             segmentsVersion,
             decisionsVersion,
+            media_topic_folders_requested: shouldEnsureMediaFolders,
             media_topic_folders_ensured: ensuredMediaTopics.length,
             integrity_report: integrityReport,
             state_recovery: stateRecovery,
@@ -277,6 +281,7 @@ export function registerGenerationRoutes(app, deps) {
         segments: responseSegments,
         decisions: responseDecisions,
         media_topic_folders_ensured: ensuredMediaTopics.length,
+        media_topic_folders_requested: shouldEnsureMediaFolders,
         integrity_report: integrityReport,
         state_recovery: stateRecovery,
         segmentation_diff: {

@@ -226,6 +226,7 @@ export function createIntegrationSqliteMirrorService({ dataDir }) {
       CREATE TABLE IF NOT EXISTS doc_segments (
         id TEXT PRIMARY KEY,
         doc_id TEXT NOT NULL,
+        sort_order INTEGER,
         block_type TEXT,
         section_id TEXT,
         section_title TEXT,
@@ -260,6 +261,12 @@ export function createIntegrationSqliteMirrorService({ dataDir }) {
       .get();
     if (!hasSourceMemoryHelpfulCount) {
       db.exec("ALTER TABLE source_memory_domains ADD COLUMN helpful_count INTEGER DEFAULT 0");
+    }
+    const hasDocSegmentsSortOrder = db
+      .prepare("SELECT 1 AS ok FROM pragma_table_info('doc_segments') WHERE name = 'sort_order'")
+      .get();
+    if (!hasDocSegmentsSortOrder) {
+      db.exec("ALTER TABLE doc_segments ADD COLUMN sort_order INTEGER");
     }
     return db;
   }
@@ -649,16 +656,17 @@ export function createIntegrationSqliteMirrorService({ dataDir }) {
       if (Array.isArray(segments) && segments.length > 0) {
         const segmentStmt = database.prepare(`
           INSERT INTO doc_segments (
-            id, doc_id, block_type, section_id, section_title, text_quote, updated_at, raw_json
+            id, doc_id, sort_order, block_type, section_id, section_title, text_quote, updated_at, raw_json
           ) VALUES (
-            :id, :doc_id, :block_type, :section_id, :section_title, :text_quote, :updated_at, :raw_json
+            :id, :doc_id, :sort_order, :block_type, :section_id, :section_title, :text_quote, :updated_at, :raw_json
           )
         `);
-        for (const item of segments) {
+        for (const [index, item] of segments.entries()) {
           const segmentId = safeText(item?.segment_id);
           segmentStmt.run({
             id: safeText(`${normalizedDocId}::${segmentId}`),
             doc_id: normalizedDocId,
+            sort_order: index,
             block_type: safeText(item?.block_type),
             section_id: safeText(item?.section_id),
             section_title: safeText(item?.section_title),
@@ -1127,7 +1135,10 @@ export function createIntegrationSqliteMirrorService({ dataDir }) {
           SELECT raw_json
           FROM doc_segments
           WHERE doc_id = ?
-          ORDER BY section_title ASC, id ASC
+          ORDER BY
+            CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END ASC,
+            sort_order ASC,
+            rowid ASC
         `
       )
       .all(normalizedDocId)

@@ -687,9 +687,31 @@
     return union === 0 ? 0 : intersection / union;
   }
 
-  function ensureUniqueSegmentId(segment, usedIds, counters) {
+  function getIndexedSegmentIdParts(segmentId) {
+    const match = String(segmentId ?? "").trim().match(/^([a-z][a-z0-9]*)_(\d+)$/i);
+    if (!match) return null;
+    const index = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(index) || index < 1) return null;
+    return {
+      base: match[1],
+      index
+    };
+  }
+
+  function buildNextIdCounters(...segmentLists) {
+    const counters = new Map();
+    segmentLists.flat().forEach((segment) => {
+      const parts = getIndexedSegmentIdParts(segment?.segment_id);
+      if (!parts) return;
+      const current = counters.get(parts.base) ?? 1;
+      counters.set(parts.base, Math.max(current, parts.index + 1));
+    });
+    return counters;
+  }
+
+  function ensureUniqueSegmentId(segment, usedIds, counters, reservedIds = new Set()) {
     const desired = String(segment.segment_id ?? "").trim();
-    if (desired && !usedIds.has(desired)) {
+    if (desired && !usedIds.has(desired) && !reservedIds.has(desired)) {
       usedIds.add(desired);
       return desired;
     }
@@ -699,7 +721,7 @@
     do {
       candidate = `${base}_${String(index).padStart(2, "0")}`;
       index += 1;
-    } while (usedIds.has(candidate));
+    } while (usedIds.has(candidate) || reservedIds.has(candidate));
     counters.set(base, index);
     usedIds.add(candidate);
     return candidate;
@@ -959,9 +981,10 @@
     const newBySection = buildSectionSlotIndex(newMeta);
     const customMeta = oldMeta.filter((item) => isCustomSubSegmentId(item.segment.segment_id));
     const normalizedIndex = buildNormalizedIndex(oldSegmentsFiltered);
+    const oldIds = new Set(oldSegmentsFiltered.map((segment) => String(segment?.segment_id ?? "").trim()).filter(Boolean));
     const usedOldIds = new Set();
     const usedIds = new Set();
-    const counters = new Map();
+    const counters = buildNextIdCounters(oldSegmentsFiltered, newSegments);
 
     const matched = [];
     newSegments.forEach((segment, newIndex) => {
@@ -1068,7 +1091,7 @@
         status = "new";
       }
       if (!nextId) {
-        nextId = ensureUniqueSegmentId(segment, usedIds, counters);
+        nextId = ensureUniqueSegmentId(segment, usedIds, counters, oldIds);
       } else {
         usedIds.add(nextId);
       }
@@ -1138,7 +1161,6 @@
         search_decision_en: existing?.search_decision_en ?? emptySearchDecision()
       };
     });
-    const oldIds = new Set(oldSegmentsFiltered.map((segment) => String(segment?.segment_id ?? "").trim()).filter(Boolean));
     const reusedOldIdsCount = Array.from(usedOldIds).filter((id) => oldIds.has(String(id))).length;
     const added = matched.filter((item) => item.segment.segment_status === "new").length;
     const changed = matched.filter((item) => item.segment.segment_status === "changed").length;

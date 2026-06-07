@@ -4,3 +4,4 @@ backend/node_modules/
 data/
 .env
 MediaDownloaderQt6-5.4.2/
+scrapes/

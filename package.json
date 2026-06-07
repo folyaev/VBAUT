@@ -8,6 +8,7 @@
     "dev:frontend:wait": "wait-on tcp:127.0.0.1:8787 && npm --prefix frontend run dev",
     "audit:links": "node scripts/audit-link-integrity.mjs",
     "cleanup:unsorted": "node scripts/cleanup-unsorted-duplicates.mjs",
+    "timeline:align": "node scripts/align-transcript-timeline.mjs",
     "research:searxng:start": "powershell -ExecutionPolicy Bypass -File scripts/start-searxng-local.ps1",
     "research:searxng:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-searxng-local.ps1",
     "test:backend": "npm --prefix backend test",

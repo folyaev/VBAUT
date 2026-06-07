@@ -110,6 +110,44 @@ test("mergeSegmentsWithHistory keeps decision for exact text match", () => {
   assert.equal(String(decisionsOverride?.[0]?.visual_decision?.description ?? ""), "Правильный комментарий");
 });
 
+test("mergeSegmentsWithHistory does not let unmatched generated ids steal later exact matches", () => {
+  const oldSegments = [
+    {
+      segment_id: "news_12",
+      block_type: "news",
+      text_quote: "Unitree showed a useful robot suit demo.",
+      section_title: "Unitree",
+      is_done: true
+    }
+  ];
+  const oldDecisions = [makeDecision("news_12", "Unitree media")];
+  const newSegments = [
+    {
+      segment_id: "news_12",
+      block_type: "news",
+      text_quote: "A different story got inserted before Unitree.",
+      section_title: "Inserted"
+    },
+    {
+      segment_id: "news_13",
+      block_type: "news",
+      text_quote: "Unitree showed a useful robot suit demo.",
+      section_title: "Unitree"
+    }
+  ];
+
+  const { mergedSegments, decisionsOverride } = mergeSegmentsWithHistory(newSegments, oldSegments, oldDecisions);
+
+  assert.equal(mergedSegments.length, 2);
+  assert.notEqual(String(mergedSegments[0]?.segment_id ?? ""), "news_12");
+  assert.equal(String(mergedSegments[1]?.segment_id ?? ""), "news_12");
+  assert.equal(Boolean(mergedSegments[1]?.is_done), true);
+  assert.equal(
+    String(decisionsOverride.find((item) => item.segment_id === "news_12")?.visual_decision?.description ?? ""),
+    "Unitree media"
+  );
+});
+
 test("mergeLinkSegmentsBySection keeps each URL in one topic and lets incoming explicit placement win", () => {
   const existing = [
     {

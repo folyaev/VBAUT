@@ -61,8 +61,10 @@ const YTDLP_CANDIDATE_HOSTS = [
   /(^|\.)soundcloud\.com$/i
 ];
 const TIKTOK_SHORT_HOSTS = new Set(["vt.tiktok.com", "vm.tiktok.com"]);
+const TIKTOK_CDN_HOST_RE = /(^|\.)tiktokcdn(?:-[a-z0-9-]+)?\.com$/i;
 
-const DIRECT_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|m3u8|mp3|m4a|wav|flac)(?:$|[?#])/i;
+const DIRECT_IMAGE_PATH_RE = /\.(jpg|jpeg|png|webp|gif)(?:$|[?#])/i;
+const DIRECT_MEDIA_PATH_RE = /\.(mp4|m4v|mov|webm|mkv|m3u8|mp3|m4a|wav|flac|jpg|jpeg|png|webp|gif)(?:$|[?#])/i;
 
 function isVkVideoUrl(parsedUrl) {
   if (!parsedUrl) return false;
@@ -80,6 +82,44 @@ function isVkVideoUrl(parsedUrl) {
   return false;
 }
 
+function isTikTokCdnVideoUrl(parsedUrl) {
+  if (!parsedUrl) return false;
+  const host = String(parsedUrl.hostname ?? "").toLowerCase();
+  if (!TIKTOK_CDN_HOST_RE.test(host)) return false;
+
+  const mimeType = String(parsedUrl.searchParams.get("mime_type") ?? "").toLowerCase();
+  if (mimeType.includes("video") || mimeType.includes("mp4")) return true;
+
+  const pathname = String(parsedUrl.pathname ?? "").toLowerCase();
+  return pathname.includes("/video/");
+}
+
+function isTikTokCdnImageUrl(parsedUrl) {
+  if (!parsedUrl) return false;
+  const host = String(parsedUrl.hostname ?? "").toLowerCase();
+  if (!TIKTOK_CDN_HOST_RE.test(host)) return false;
+
+  const mimeType = String(parsedUrl.searchParams.get("mime_type") ?? "").toLowerCase();
+  if (mimeType.includes("image") || /jpe?g|png|webp|gif/.test(mimeType)) return true;
+
+  const pathname = String(parsedUrl.pathname ?? "").toLowerCase();
+  return pathname.includes("/image/");
+}
+
+function isDirectImageDownloadUrl(rawUrl) {
+  const value = String(rawUrl ?? "").trim();
+  if (!value) return false;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (DIRECT_IMAGE_PATH_RE.test(parsed.pathname + parsed.search)) return true;
+  return isTikTokCdnImageUrl(parsed);
+}
+
 export function isYtDlpCandidateUrl(rawUrl) {
   const value = String(rawUrl ?? "").trim();
   if (!value) return false;
@@ -92,6 +132,8 @@ export function isYtDlpCandidateUrl(rawUrl) {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
   if (DIRECT_MEDIA_PATH_RE.test(parsed.pathname + parsed.search)) return true;
   const host = parsed.hostname.toLowerCase();
+  if (isTikTokCdnVideoUrl(parsed)) return true;
+  if (isTikTokCdnImageUrl(parsed)) return true;
   if (host === "vk.com" || host.endsWith(".vk.com") || host === "vk.ru" || host.endsWith(".vk.ru") || host === "vkvideo.ru" || host.endsWith(".vkvideo.ru")) {
     return isVkVideoUrl(parsed);
   }
@@ -1138,6 +1180,14 @@ export class MediaDownloadQueue {
         }
 
         if (displayFiles.size === 0) {
+          const directImagePath = await this._tryDirectImageDownload(job, mediaId);
+          if (directImagePath) {
+            absoluteFiles.add(directImagePath);
+            displayFiles.add(toRelativeDisplayPath(job.output_dir, directImagePath));
+          }
+        }
+
+        if (displayFiles.size === 0) {
           const previewFallbackPath = await this._tryPagePreviewImageFallback(job, mediaId);
           if (previewFallbackPath) {
             absoluteFiles.add(previewFallbackPath);
@@ -1237,6 +1287,17 @@ export class MediaDownloadQueue {
 
       const instagramFallbackError = await this._tryInstagramGalleryFallback(job, beforeSnapshot);
       if (job.status === "completed" || job.status === "canceled") {
+        return;
+      }
+
+      const directImagePath = await this._tryDirectImageDownload(job, mediaId);
+      if (directImagePath) {
+        const finalAbsoluteFiles = await normalizeTrackedOutputFiles([directImagePath], job?.meta_title || "");
+        job.output_files = finalAbsoluteFiles.map((item) => toRelativeDisplayPath(job.output_dir, item));
+        job.status = "completed";
+        this._setProgress(job, 100, true);
+        job.finished_at = new Date().toISOString();
+        this._emit(job);
         return;
       }
 
@@ -2017,6 +2078,51 @@ export class MediaDownloadQueue {
     }
   }
 
+  async _tryDirectImageDownload(job, mediaId = "") {
+    const imageUrl = String(job?.url ?? "").trim();
+    if (!isDirectImageDownloadUrl(imageUrl)) return null;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), THUMBNAIL_FALLBACK_TIMEOUT_MS);
+    try {
+      job.last_message = "yt-dlp produced no image file, trying direct image download...";
+      this._emit(job);
+
+      const response = await fetch(imageUrl, {
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "user-agent": "Mozilla/5.0",
+          accept: "image/*,*/*;q=0.8"
+        }
+      });
+      if (!response.ok) return null;
+
+      const contentType = String(response.headers.get("content-type") ?? "").toLowerCase();
+      if (contentType && !contentType.startsWith("image/")) return null;
+
+      const contentLength = Number(response.headers.get("content-length") ?? 0);
+      if (Number.isFinite(contentLength) && contentLength > 50 * 1024 * 1024) {
+        return null;
+      }
+
+      const fileExt = inferImageExtensionFromResponse(response.url || imageUrl, contentType);
+      const sourceName = inferFileStemFromUrl(response.url || imageUrl);
+      const title = sanitizeFileStem(job?.meta_title || sourceName || job?.section_title || "image");
+      const idPart = String(mediaId ?? "").trim() ? ` [${String(mediaId).trim()}]` : "";
+      const fileName = `${title}${idPart}.${fileExt}`;
+      const absolutePath = path.join(job.output_dir, fileName);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) return null;
+      await fs.writeFile(absolutePath, bytes);
+      return absolutePath;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async _tryPagePreviewImageFallback(job, mediaId = "") {
     const pageUrl = String(job?.url ?? "").trim();
     if (!pageUrl || !/^https?:\/\//i.test(pageUrl)) return null;
@@ -2359,6 +2465,18 @@ function inferImageExtensionFromResponse(url, contentType = "") {
     // noop
   }
   return "jpg";
+}
+
+function inferFileStemFromUrl(url) {
+  try {
+    const parsed = new URL(String(url ?? "").trim());
+    const basename = path.basename(decodeURIComponent(parsed.pathname || ""));
+    const extension = path.extname(basename);
+    const stem = extension ? basename.slice(0, -extension.length) : basename;
+    return sanitizeFileStem(stem || "");
+  } catch {
+    return "";
+  }
 }
 
 function decodeHtmlEntities(value) {

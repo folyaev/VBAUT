@@ -46,11 +46,44 @@ const URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
 const TIME_PARAM_KEYS = ["t", "start", "time_continue"];
 const execFileAsync = promisify(execFile);
 
-function clipText(value, maxLength) {
-  const text = String(value ?? "").trim();
+export function sanitizeTelegramUtf8Text(value) {
+  const text = String(value ?? "");
+  let output = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        output += text[index] + text[index + 1];
+        index += 1;
+      }
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) continue;
+    output += text[index];
+  }
+  return output;
+}
+
+export function sanitizeTelegramPayload(value) {
+  if (typeof value === "string") return sanitizeTelegramUtf8Text(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeTelegramPayload(item));
+  if (!value || typeof value !== "object") return value;
+  const sanitized = {};
+  for (const [key, item] of Object.entries(value)) {
+    sanitized[key] = sanitizeTelegramPayload(item);
+  }
+  return sanitized;
+}
+
+export function clipText(value, maxLength) {
+  const text = sanitizeTelegramUtf8Text(value).trim();
   if (!text) return "";
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+  const limit = Number(maxLength);
+  if (!Number.isFinite(limit) || limit <= 0) return "";
+  const chars = Array.from(text);
+  if (chars.length <= limit) return text;
+  return `${chars.slice(0, Math.max(1, limit - 3)).join("").trimEnd()}...`;
 }
 
 function chunkButtons(buttons = [], chunkSize = 2) {
@@ -259,6 +292,12 @@ export function createEmptyTelegramSdvgSession(defaultDocId = null, lastTouchedA
   };
 }
 
+export function resolveTelegramSdvgRandomMode(_currentRandomMode = false, requestedRandomMode = null) {
+  if (requestedRandomMode === true) return true;
+  if (requestedRandomMode === false) return false;
+  return false;
+}
+
 export function touchTelegramSdvgSession(session, at = Date.now()) {
   if (!session || typeof session !== "object") return session;
   session.__last_touched_at = toSessionTouchTimestamp(at);
@@ -447,6 +486,23 @@ export function buildTelegramAssetPathRepairPlan(assets = [], existingRelativePa
       };
     })
     .filter(Boolean);
+}
+
+export function sortDownloadThemeFolderItemsByMtime(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .slice()
+    .sort((left, right) => {
+      const leftMtime = Number(left?.mtime_ms);
+      const rightMtime = Number(right?.mtime_ms);
+      if (Number.isFinite(leftMtime) && Number.isFinite(rightMtime) && leftMtime !== rightMtime) {
+        return rightMtime - leftMtime;
+      }
+      if (Number.isFinite(leftMtime) && !Number.isFinite(rightMtime)) return -1;
+      if (!Number.isFinite(leftMtime) && Number.isFinite(rightMtime)) return 1;
+      return String(left?.name ?? "").localeCompare(String(right?.name ?? ""), "ru", {
+        sensitivity: "base"
+      });
+    });
 }
 
 function isVideoFilePath(value) {
@@ -1995,10 +2051,11 @@ export function createTelegramSdvgBotService(deps) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const sanitizedPayload = sanitizeTelegramPayload(payload);
       const response = await fetch(`${apiBase}/${method}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(sanitizedPayload),
         signal: controller.signal
       });
       const raw = await response.text();
@@ -2327,11 +2384,18 @@ export function createTelegramSdvgBotService(deps) {
     const mediaRoot = path.resolve(getMediaDir());
     const entries = await fs.readdir(mediaRoot, { withFileTypes: true }).catch(() => []);
     const excluded = new Set(["unsorted", "archive_projects", "graphics"]);
-    return entries
+    const folders = await Promise.all(entries
       .filter((entry) => entry?.isDirectory?.())
       .map((entry) => String(entry.name ?? "").trim())
       .filter((name) => name && !name.startsWith(".") && !excluded.has(name.toLowerCase()))
-      .sort((left, right) => left.localeCompare(right, "ru", { sensitivity: "base" }));
+      .map(async (name) => {
+        const stats = await fs.stat(path.join(mediaRoot, name)).catch(() => null);
+        return {
+          name,
+          mtime_ms: Number(stats?.mtimeMs)
+        };
+      }));
+    return sortDownloadThemeFolderItemsByMtime(folders).map((item) => item.name);
   }
 
   function resolveDownloadThemePage(themes = [], themeName = "") {
@@ -3217,6 +3281,267 @@ export function createTelegramSdvgBotService(deps) {
       assetId: String(asset?.id ?? "").trim() || null,
       theme: selectedTheme
     };
+  }
+
+  async function fetchLinkPreviewForBot(url) {
+    const query = new URLSearchParams({ url: String(url ?? "").trim() });
+    const response = await fetch(`${getLocalBackendOrigin()}/api/link/preview?${query.toString()}`, {
+      headers: { accept: "application/json" }
+    });
+    if (!response.ok) {
+      const raw = await response.text().catch(() => "");
+      throw new Error(raw || `Preview failed: HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async function saveLinkPreviewImageToSegment(chatId, session, segment, previewContext) {
+    const preview = await fetchLinkPreviewForBot(previewContext.url);
+    const previewImageUrl = resolvePreviewFetchUrl(preview?.image);
+    if (!previewImageUrl) {
+      throw new Error("\u0423 \u0441\u0441\u044B\u043B\u043A\u0438 \u043D\u0435\u0442 preview image.");
+    }
+
+    const response = await fetch(previewImageUrl, {
+      redirect: "follow",
+      headers: {
+        accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "user-agent": "Mozilla/5.0"
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Preview image failed: HTTP ${response.status}`);
+    }
+    const contentType = String(response.headers.get("content-type") ?? "").toLowerCase();
+    if (contentType && !contentType.startsWith("image/")) {
+      throw new Error("Preview response is not an image.");
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length) throw new Error("Preview image is empty.");
+
+    const sectionTitle = sanitizeMediaTopicName(segment?.section_title ?? segment?.segment_id ?? "PREVIEWS");
+    const outputDir = await ensureMediaDir(sectionTitle);
+    const host = deriveSourceDomain(previewContext.url) || "preview";
+    const titleStem = sanitizeFileName(preview?.title || host, host);
+    const extension = inferPreviewImageExtension(previewImageUrl, contentType);
+    const targetPath = await ensureUniqueFilePath(
+      outputDir,
+      `${sanitizeFileName(`${titleStem}_${formatFileDateTimeSuffix()}`, "preview")}${extension}`
+    );
+    await fs.writeFile(targetPath, buffer);
+
+    const mediaRoot = path.resolve(getMediaDir());
+    const relativePath = normalizeRelativeMediaPath(path.relative(mediaRoot, targetPath));
+    await appendSegmentMediaPaths(
+      session.doc_id,
+      segment.segment_id,
+      [relativePath],
+      chatId,
+      "telegram_link_preview_image",
+      normalizeMediaStartTimecodeValue(previewContext?.media_start_timecode)
+    );
+    const asset = await createAssetRecord(
+      {
+        kind: "preview",
+        status: "processed",
+        title: clipText(String(preview?.title ?? `Preview ${host}`), 180),
+        description: previewContext.url,
+        sourceUrl: previewContext.url,
+        sourceDomain: host,
+        telegramChatId: String(chatId),
+        fileName: path.basename(targetPath),
+        localPath: relativePath,
+        processingState: "attached",
+        originType: "sdvg_link_preview_image",
+        originId: String(segment?.segment_id ?? ""),
+        meta: {
+          source: "telegram_sdvg_link_preview_image",
+          section_title: String(segment?.section_title ?? "").trim(),
+          preview_image_url: String(preview?.image ?? "").trim(),
+          site_name: String(preview?.siteName ?? "").trim(),
+          media_start_timecode: normalizeMediaStartTimecodeValue(previewContext?.media_start_timecode)
+        }
+      },
+      {
+        documentId: session?.doc_id,
+        segmentId: segment?.segment_id,
+        role: "visual",
+        attachedBy: "telegram_sdvg"
+      }
+    );
+    return {
+      absolutePath: targetPath,
+      relativePath,
+      fileName: path.basename(targetPath),
+      assetId: String(asset?.id ?? "").trim() || null,
+      metadata: preview
+    };
+  }
+
+  async function saveLinkPreviewImageToTheme(chatId, session, url, metadata = {}) {
+    const selectedTheme = String(session?.selected_download_theme ?? "").trim();
+    if (!selectedTheme) {
+      throw new Error("\u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u0432\u044B\u0431\u0435\u0440\u0438 \u0442\u0435\u043C\u0443 \u0434\u043B\u044F \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F.");
+    }
+
+    const preview = await fetchLinkPreviewForBot(url);
+    const previewImageUrl = resolvePreviewFetchUrl(preview?.image);
+    if (!previewImageUrl) {
+      throw new Error("\u0423 \u0441\u0441\u044B\u043B\u043A\u0438 \u043D\u0435\u0442 preview image.");
+    }
+
+    const response = await fetch(previewImageUrl, {
+      redirect: "follow",
+      headers: {
+        accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "user-agent": "Mozilla/5.0"
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Preview image failed: HTTP ${response.status}`);
+    }
+    const contentType = String(response.headers.get("content-type") ?? "").toLowerCase();
+    if (contentType && !contentType.startsWith("image/")) {
+      throw new Error("Preview response is not an image.");
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length) throw new Error("Preview image is empty.");
+
+    const outputDir = await ensureMediaDir(sanitizeMediaTopicName(selectedTheme));
+    const host = deriveSourceDomain(url) || "preview";
+    const titleStem = sanitizeFileName(preview?.title || metadata?.title || host, host);
+    const extension = inferPreviewImageExtension(previewImageUrl, contentType);
+    const targetPath = await ensureUniqueFilePath(
+      outputDir,
+      `${sanitizeFileName(`${titleStem}_${formatFileDateTimeSuffix()}`, "preview")}${extension}`
+    );
+    await fs.writeFile(targetPath, buffer);
+
+    const mediaRoot = path.resolve(getMediaDir());
+    const relativePath = normalizeRelativeMediaPath(path.relative(mediaRoot, targetPath));
+    const asset = await createAssetRecord(
+      {
+        kind: "preview",
+        status: "processed",
+        title: clipText(String(preview?.title ?? metadata?.title ?? `Preview ${host}`), 180),
+        description: String(url ?? "").trim(),
+        sourceUrl: url,
+        sourceDomain: host,
+        telegramChatId: String(chatId),
+        fileName: path.basename(targetPath),
+        localPath: relativePath,
+        processingState: "saved_to_theme",
+        originType: "telegram_inbox_link_preview_image",
+        originId: String(metadata?.source_message_id ?? "").trim(),
+        meta: {
+          source: "telegram_inbox_link_preview_image",
+          selected_theme: selectedTheme,
+          preview_image_url: String(preview?.image ?? "").trim(),
+          site_name: String(preview?.siteName ?? "").trim(),
+          title: String(preview?.title ?? metadata?.title ?? "").trim(),
+          domain: String(metadata?.domain ?? "").trim()
+        }
+      },
+      {
+        documentId: session?.doc_id,
+        role: "inbox",
+        attachedBy: "telegram_sdvg"
+      }
+    );
+    return {
+      absolutePath: targetPath,
+      relativePath,
+      fileName: path.basename(targetPath),
+      assetId: String(asset?.id ?? "").trim() || null,
+      metadata: preview,
+      theme: selectedTheme
+    };
+  }
+
+  async function sendSavedPreviewImageBackToChat(chatId, saved = {}) {
+    const absolutePath = String(saved?.absolutePath ?? "").trim();
+    if (!absolutePath || !(await fileExists(absolutePath))) return null;
+    return telegramApiCallMultipart(
+      "sendDocument",
+      {
+        chat_id: chatId,
+        caption: `\uD83D\uDDBC\uFE0F ${escapeHtml(String(saved?.metadata?.title ?? saved?.fileName ?? "preview").trim())}`,
+        parse_mode: "HTML"
+      },
+      "document",
+      absolutePath,
+      String(saved?.fileName ?? path.basename(absolutePath) ?? "preview.jpg").trim() || "preview.jpg",
+      180000
+    );
+  }
+
+  function buildLinkFallbackActionKeyboard() {
+    return {
+      inline_keyboard: [[
+        { text: "\uD83D\uDCF8", callback_data: "sdvg_link:shot" },
+        { text: "\uD83D\uDDBC\uFE0F", callback_data: "sdvg_link:preview" },
+        { text: "\u2716\uFE0F", callback_data: "sdvg_link:drop" }
+      ]]
+    };
+  }
+
+  function buildInboxLinkFallbackActionKeyboard() {
+    return {
+      inline_keyboard: [[
+        { text: "\uD83D\uDCF8", callback_data: "sdvg_inboxlink:shot" },
+        { text: "\uD83D\uDDBC\uFE0F", callback_data: "sdvg_inboxlink:preview" },
+        { text: "\u2716\uFE0F", callback_data: "sdvg_inboxlink:drop" }
+      ]]
+    };
+  }
+
+  function buildLinkFallbackActionText(url, linkResult = null, reason = "") {
+    const host = deriveSourceDomain(url) || "source";
+    const status = linkResult?.added
+      ? "\u0421\u0441\u044B\u043B\u043A\u0443 \u0441\u043E\u0445\u0440\u0430\u043D\u0438\u043B \u0432 \u0441\u0441\u044B\u043B\u043A\u0438 \u0442\u0435\u043C\u044B."
+      : linkResult?.already_exists
+        ? "\u0421\u0441\u044B\u043B\u043A\u0430 \u0443\u0436\u0435 \u0435\u0441\u0442\u044C \u0432 \u0441\u0441\u044B\u043B\u043A\u0430\u0445 \u0442\u0435\u043C\u044B."
+        : "\u0421\u0441\u044B\u043B\u043A\u0443 \u043D\u0435 \u0441\u043C\u043E\u0433 \u0441\u043A\u0430\u0447\u0430\u0442\u044C.";
+    const reasonLine = reason ? `\n${escapeHtml(clipText(reason, 240))}` : "";
+    return [
+      `\uD83D\uDD17 <a href="${escapeHtml(url)}">${escapeHtml(host)}</a>`,
+      `${escapeHtml(status)}${reasonLine}`,
+      "\uD83D\uDCF8 / \uD83D\uDDBC\uFE0F / \u2716\uFE0F"
+    ].join("\n");
+  }
+
+  function buildInboxLinkFallbackActionText(url, reason = "") {
+    const host = deriveSourceDomain(url) || "source";
+    const reasonLine = reason ? `\n${escapeHtml(clipText(reason, 240))}` : "";
+    return [
+      `\uD83D\uDD17 <a href="${escapeHtml(url)}">${escapeHtml(host)}</a>`,
+      `\u0421\u0441\u044B\u043B\u043A\u0443 \u043E\u0441\u0442\u0430\u0432\u0438\u043B \u0432 Inbox.${reasonLine}`,
+      "\uD83D\uDCF8 / \uD83D\uDDBC\uFE0F / \u2716\uFE0F"
+    ].join("\n");
+  }
+
+  function inferPreviewImageExtension(url, contentType = "") {
+    const type = String(contentType ?? "").toLowerCase();
+    if (type.includes("jpeg") || type.includes("jpg")) return ".jpg";
+    if (type.includes("png")) return ".png";
+    if (type.includes("webp")) return ".webp";
+    if (type.includes("gif")) return ".gif";
+    try {
+      const parsed = new URL(String(url ?? "").trim(), getLocalBackendOrigin());
+      const ext = path.extname(parsed.pathname).toLowerCase();
+      if ([".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext)) return ext === ".jpeg" ? ".jpg" : ext;
+    } catch {
+      // noop
+    }
+    return ".jpg";
+  }
+
+  function resolvePreviewFetchUrl(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    if (raw.startsWith("/")) return `${getLocalBackendOrigin()}${raw}`;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return "";
   }
 
   async function editMessage(chatId, messageId, text, extra = {}) {
@@ -4784,6 +5109,82 @@ export function createTelegramSdvgBotService(deps) {
     });
   }
 
+  async function removeUrlFromTopicLinks(docId, segment, rawUrl, chatId, reason = "telegram_sdvg_link_removed") {
+    const normalizedUrl =
+      typeof normalizeLinkUrl === "function" ? normalizeLinkUrl(rawUrl) : String(rawUrl ?? "").trim();
+    if (!normalizedUrl || !isHttpUrl(normalizedUrl)) {
+      return { removed: false, skipped: true, url: normalizedUrl };
+    }
+
+    return withDocumentLock(docId, async () => {
+      const document = await loadDocumentStateForBot(docId);
+      if (!document) throw new Error("Document not found");
+
+      const segmentsRaw = await loadWritableSegmentsForBot(docId);
+      const segmentsList = Array.isArray(segmentsRaw) ? [...segmentsRaw] : [];
+      const sourceSegment = segmentsList.find(
+        (item) =>
+          String(item?.segment_id ?? "") === String(segment?.segment_id ?? "") &&
+          String(item?.block_type ?? "").trim().toLowerCase() !== "links"
+      ) ?? segment ?? {};
+      const sectionMeta = normalizeSectionMeta(sourceSegment);
+      const targetKey = buildSectionIdentityKey(sectionMeta);
+      let removed = false;
+
+      const nextSegments = [];
+      for (const item of segmentsList) {
+        if (String(item?.block_type ?? "").trim().toLowerCase() !== "links") {
+          nextSegments.push(item);
+          continue;
+        }
+        if (targetKey && buildSectionIdentityKey(item) !== targetKey) {
+          nextSegments.push(item);
+          continue;
+        }
+        const nextLinks = (Array.isArray(item?.links) ? item.links : []).filter((link) => {
+          const candidateUrl = typeof normalizeLinkUrl === "function"
+            ? normalizeLinkUrl(link?.url)
+            : String(link?.url ?? "").trim();
+          const keep = candidateUrl !== normalizedUrl;
+          if (!keep) removed = true;
+          return keep;
+        });
+        if (nextLinks.length > 0) {
+          nextSegments.push({ ...item, links: nextLinks });
+        }
+      }
+
+      if (!removed) return { removed: false, skipped: false, url: normalizedUrl };
+
+      const segmentsData = normalizeSegmentsInput(nextSegments);
+      const decisionsRaw = await loadDecisionsForBot(docId);
+      const decisionsData = normalizeDecisionsInput(Array.isArray(decisionsRaw) ? decisionsRaw : []);
+      const segmentsVersion = await saveVersioned(docId, "segments", segmentsData);
+      await syncDocumentContextForBot(docId, segmentsData, decisionsData, "telegram_sdvg_remove_topic_link");
+      await appendEvent(docId, {
+        timestamp: new Date().toISOString(),
+        event: "telegram_sdvg_topic_link_removed",
+        payload: {
+          segment_id: String(sourceSegment?.segment_id ?? segment?.segment_id ?? ""),
+          chat_id: String(chatId),
+          url: normalizedUrl,
+          reason,
+          section_id: sectionMeta.section_id,
+          section_title: sectionMeta.section_title,
+          segments_version: segmentsVersion
+        }
+      }).catch(() => null);
+
+      return {
+        removed: true,
+        skipped: false,
+        url: normalizedUrl,
+        section_title: sectionMeta.section_title,
+        segments_version: segmentsVersion
+      };
+    });
+  }
+
   async function resolveCachedDownloadedPaths(docId, rawUrl, fallbackSectionTitle = "") {
     if (!docId || !rawUrl || typeof normalizeDocumentMediaDownloads !== "function") return [];
     const normalizeUrl = (value) =>
@@ -5112,28 +5513,24 @@ export function createTelegramSdvgBotService(deps) {
         return;
       }
       if (job.status === "failed" || job.status === "canceled") {
-        let fallbackLine = "";
-        try {
-          const fallbackResult = await appendUrlToTopicLinks(
-            docId,
-            segment ?? { segment_id: segmentId, section_title: sectionTitle },
-            url,
+        await promptLinkFallbackActions({
+          chatId,
+          session: getSession(chatId),
+          docId,
+          segment: segment ?? { segment_id: segmentId, section_title: sectionTitle },
+          url,
+          mediaStartTimecode,
+          sourceMessageId,
+          statusMessageId,
+          reason: job?.error ? `\u041D\u0435 \u0441\u043A\u0430\u0447\u0430\u043B\u043E\u0441\u044C: ${job.error}` : "\u041D\u0435 \u0441\u043A\u0430\u0447\u0430\u043B\u043E\u0441\u044C.",
+          linkReason: "yt_dlp_failed"
+        }).catch(async (error) => {
+          await editMessage(
             chatId,
-            "yt_dlp_failed"
-          );
-          if (fallbackResult?.added) {
-            fallbackLine = "\n\u041d\u0435 \u0441\u043a\u0430\u0447\u0430\u043b\u043e\u0441\u044c. \u0421\u0441\u044b\u043b\u043a\u0443 \u0434\u043e\u0431\u0430\u0432\u0438\u043b \u0432 \u0421\u0441\u044b\u043b\u043a\u0438 \u0442\u0435\u043c\u044b.";
-          } else if (fallbackResult?.already_exists) {
-            fallbackLine = "\n\u041d\u0435 \u0441\u043a\u0430\u0447\u0430\u043b\u043e\u0441\u044c. \u0421\u0441\u044b\u043b\u043a\u0430 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0432 \u0421\u0441\u044b\u043b\u043a\u0430\u0445 \u0442\u0435\u043c\u044b.";
-          }
-        } catch (fallbackError) {
-          fallbackLine = `\n\u041d\u0435 \u0441\u043a\u0430\u0447\u0430\u043b\u043e\u0441\u044c, \u0438 \u043d\u0435 \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443: ${
-            fallbackError?.message ?? fallbackError
-          }`;
-        }
-        await editMessage(chatId, statusMessageId, `${formatJobStatusMessage(segmentId, url, job)}${fallbackLine}`).catch(
-          () => null
-        );
+            statusMessageId,
+            `${formatJobStatusMessage(segmentId, url, job)}\n\u041D\u0435 \u0441\u043A\u0430\u0447\u0430\u043B\u043E\u0441\u044C, \u0438 \u043D\u0435 \u043F\u043E\u043B\u0443\u0447\u0438\u043B\u043E\u0441\u044C \u0434\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0441\u0441\u044B\u043B\u043A\u0443: ${error?.message ?? error}`
+          ).catch(() => null);
+        });
         return;
       }
       await delay(JOB_WATCH_INTERVAL_MS);
@@ -5197,6 +5594,96 @@ export function createTelegramSdvgBotService(deps) {
       if (asset) created.push(asset);
     }
     return created;
+  }
+
+  async function registerInboxLinkAsset({
+    chatId,
+    session,
+    message,
+    url,
+    reason = "telegram_inbox_link_fallback"
+  }) {
+    if (!isHttpUrl(url)) return null;
+    return createAssetRecord(
+      {
+        kind: "link",
+        status: "processed",
+        title: clipText(url, 180),
+        description: String(message?.text ?? message?.caption ?? "").trim(),
+        sourceUrl: url,
+        sourceDomain: deriveSourceDomain(url),
+        telegramChatId: String(chatId),
+        telegramMessageId: String(message?.message_id ?? ""),
+        processingState: "pending_segment",
+        originType: "telegram_inbox",
+        originId: String(message?.message_id ?? ""),
+        meta: {
+          source: reason,
+          selected_theme: String(session?.selected_download_theme ?? "").trim()
+        }
+      },
+      {
+        documentId: session?.doc_id,
+        role: "inbox",
+        attachedBy: "telegram_sdvg"
+      }
+    ).catch(() => null);
+  }
+
+  async function promptInboxLinkFallbackActions({
+    chatId,
+    session,
+    message,
+    url,
+    statusMessageId = null,
+    reason = "",
+    linkReason = "telegram_inbox_link_fallback"
+  }) {
+    if (!isHttpUrl(url)) return null;
+    await registerInboxLinkAsset({
+      chatId,
+      session,
+      message,
+      url,
+      reason: linkReason
+    });
+
+    const successfulProfiles = await getScreenshotProfilesForSource(url).catch(() => []);
+    const initialProfile = successfulProfiles[0] ?? null;
+    const metadata = {
+      title: String(message?.text ?? message?.caption ?? url).trim(),
+      domain: deriveSourceDomain(url),
+      source_message_id: String(message?.message_id ?? "").trim()
+    };
+    const previewContext = {
+      mode: "inbox_link_fallback",
+      chat_id: String(chatId),
+      doc_id: String(session?.doc_id ?? "").trim(),
+      url: String(url ?? "").trim(),
+      metadata,
+      source_message_id: Number(message?.message_id ?? 0) || null,
+      profile: initialProfile,
+      profile_candidates: buildScreenshotProfileCandidates(initialProfile ?? {}, successfulProfiles),
+      profile_index: initialProfile ? 0 : -1
+    };
+    const text = buildInboxLinkFallbackActionText(url, reason);
+    let sent = null;
+    if (statusMessageId) {
+      await editMessage(chatId, statusMessageId, text, {
+        parse_mode: "HTML",
+        disable_web_page_preview: false,
+        reply_markup: buildInboxLinkFallbackActionKeyboard()
+      }).catch(() => null);
+      sent = { message_id: statusMessageId };
+    } else {
+      sent = await sendMessage(chatId, text, {
+        parse_mode: "HTML",
+        disable_web_page_preview: false,
+        reply_markup: buildInboxLinkFallbackActionKeyboard()
+      });
+    }
+    rememberScreenshotPreviewContext(session, sent?.message_id, previewContext);
+    return sent;
   }
 
   async function trackInboxDownloadAndReply({
@@ -5271,11 +5758,15 @@ export function createTelegramSdvgBotService(deps) {
         return;
       }
       if (job.status === "failed" || job.status === "canceled") {
-        await editMessage(
+        await promptInboxLinkFallbackActions({
           chatId,
           statusMessageId,
-          `${formatJobStatusMessage("UNSORTED", url, job)}\n\u0421\u0441\u044B\u043B\u043A\u0430 \u043E\u0441\u0442\u0430\u043B\u0430\u0441\u044C \u0432 Inbox.`
-        ).catch(() => null);
+          session,
+          message,
+          url,
+          reason: formatJobStatusMessage("UNSORTED", url, job),
+          linkReason: "telegram_inbox_download_failed"
+        }).catch(() => null);
         return;
       }
       await delay(JOB_WATCH_INTERVAL_MS);
@@ -5288,16 +5779,30 @@ export function createTelegramSdvgBotService(deps) {
   }
 
   async function handleInboxUrlInput(chatId, session, message, url) {
-    if (!mediaDownloader.isAvailable()) {
-      await sendMessage(chatId, SDVG_MESSAGES.linkSavedToInboxNoDownloader);
-      return;
-    }
     if (!isHttpUrl(url)) {
       await sendMessage(chatId, "URL \u0434\u043E\u043B\u0436\u0435\u043D \u0431\u044B\u0442\u044C http(s).");
       return;
     }
+    if (!mediaDownloader.isAvailable()) {
+      await promptInboxLinkFallbackActions({
+        chatId,
+        session,
+        message,
+        url,
+        reason: SDVG_MESSAGES.linkSavedToInboxNoDownloader,
+        linkReason: "telegram_inbox_downloader_unavailable"
+      });
+      return;
+    }
     if (!isYtDlpCandidateUrl(url)) {
-      await sendMessage(chatId, "\u0421\u0441\u044B\u043B\u043A\u0430 \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u0430 \u0432 Inbox.");
+      await promptInboxLinkFallbackActions({
+        chatId,
+        session,
+        message,
+        url,
+        reason: "\u0421\u0441\u044B\u043B\u043A\u0430 \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F downloader-\u043E\u043C.",
+        linkReason: "telegram_inbox_unsupported_url"
+      });
       return;
     }
 
@@ -5324,10 +5829,112 @@ export function createTelegramSdvgBotService(deps) {
     });
   }
 
+  async function promptLinkFallbackActions({
+    chatId,
+    session,
+    docId,
+    segment,
+    url,
+    mediaStartTimecode = null,
+    sourceMessageId = null,
+    statusMessageId = null,
+    reason = "",
+    linkReason = "telegram_sdvg_link_fallback"
+  }) {
+    if (!docId || !segment?.segment_id || !isHttpUrl(url)) return null;
+    const status = statusMessageId
+      ? null
+      : await sendMessage(chatId, "\u0414\u043E\u0431\u0430\u0432\u043B\u044F\u044E \u0441\u0441\u044B\u043B\u043A\u0443 \u0432 \u0442\u0435\u043C\u0443...").catch(() => null);
+    try {
+      const linkResult = await appendUrlToTopicLinks(docId, segment, url, chatId, linkReason).catch(() => null);
+      await createAssetRecord(
+        {
+          kind: "link",
+          status: "processed",
+          title: clipText(url, 180),
+          description: String(segment?.text_quote ?? "").trim(),
+          sourceUrl: url,
+          sourceDomain: deriveSourceDomain(url),
+          telegramChatId: String(chatId),
+          telegramMessageId: sourceMessageId ? String(sourceMessageId) : "",
+          processingState: "attached",
+          originType: "sdvg_segment",
+          originId: String(segment?.segment_id ?? ""),
+          meta: {
+            source: linkReason,
+            media_start_timecode: normalizeMediaStartTimecodeValue(mediaStartTimecode),
+            section_title: String(segment?.section_title ?? "").trim()
+          }
+        },
+        {
+          documentId: docId,
+          segmentId: segment?.segment_id,
+          role: "source",
+          attachedBy: "telegram_sdvg"
+        }
+      ).catch(() => null);
+
+      const successfulProfiles = await getScreenshotProfilesForSource(url);
+      const initialProfile = successfulProfiles[0] ?? null;
+      const previewContext = {
+        chat_id: String(chatId),
+        doc_id: String(docId ?? "").trim(),
+        segment_id: String(segment?.segment_id ?? "").trim(),
+        url: String(url ?? "").trim(),
+        metadata: {},
+        source_message_id: Number(sourceMessageId ?? 0) || null,
+        media_start_timecode: normalizeMediaStartTimecodeValue(mediaStartTimecode),
+        profile: initialProfile,
+        profile_candidates: buildScreenshotProfileCandidates(initialProfile ?? {}, successfulProfiles),
+        profile_index: initialProfile ? 0 : -1,
+        link_was_added: Boolean(linkResult?.added),
+        link_already_exists: Boolean(linkResult?.already_exists)
+      };
+      const text = buildLinkFallbackActionText(url, linkResult, reason);
+      let sent = null;
+      if (statusMessageId) {
+        await editMessage(chatId, statusMessageId, text, {
+          parse_mode: "HTML",
+          disable_web_page_preview: false,
+          reply_markup: buildLinkFallbackActionKeyboard()
+        }).catch(() => null);
+        sent = { message_id: statusMessageId };
+      } else {
+        sent = await sendMessage(chatId, text, {
+          parse_mode: "HTML",
+          disable_web_page_preview: false,
+          reply_markup: buildLinkFallbackActionKeyboard()
+        });
+      }
+      rememberScreenshotPreviewContext(session, sent?.message_id, previewContext);
+      if (status?.message_id) {
+        await deleteMessage(chatId, status.message_id).catch(() => null);
+      }
+      return sent;
+    } catch (error) {
+      if (status?.message_id) {
+        await deleteMessage(chatId, status.message_id).catch(() => null);
+      }
+      await sendMessage(chatId, `\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0431\u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C \u0441\u0441\u044B\u043B\u043A\u0443: ${error?.message ?? error}`).catch(() => null);
+      return null;
+    }
+  }
+
   async function handleUrlScreenshotPreview(chatId, session, segment, url, mediaStartTimecode = null, sourceMessageId = null) {
     if (isYtDlpCandidateUrl(url)) {
       return handleUrlInput(chatId, session, segment, url, mediaStartTimecode, sourceMessageId);
     }
+    return promptLinkFallbackActions({
+      chatId,
+      session,
+      docId: session.doc_id,
+      segment,
+      url,
+      mediaStartTimecode,
+      sourceMessageId,
+      reason: "\u0421\u0441\u044B\u043B\u043A\u0430 \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F downloader-\u043E\u043C.",
+      linkReason: "telegram_sdvg_link_preview"
+    });
     const status = await sendMessage(chatId, "Добавляю ссылку в тему и делаю скриншот...").catch(() => null);
     try {
       const linkResult = await appendUrlToTopicLinks(
@@ -5420,29 +6027,17 @@ export function createTelegramSdvgBotService(deps) {
       }
     );
     if (!mediaDownloader.isAvailable()) {
-      const fallbackResult = await appendUrlToTopicLinks(
-        session.doc_id,
+      await promptLinkFallbackActions({
+        chatId,
+        session,
+        docId: session.doc_id,
         segment,
         url,
-        chatId,
-        "yt_dlp_unavailable"
-      ).catch(() => null);
-      if (fallbackResult?.added) {
-        await sendMessage(
-          chatId,
-          "yt-dlp \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d. \u0421\u0441\u044b\u043b\u043a\u0443 \u0434\u043e\u0431\u0430\u0432\u0438\u043b \u0432 \u0421\u0441\u044b\u043b\u043a\u0438 \u0442\u0435\u043c\u044b."
-        );
-      } else if (fallbackResult?.already_exists) {
-        await sendMessage(
-          chatId,
-          "yt-dlp \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d. \u0421\u0441\u044b\u043b\u043a\u0430 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0432 \u0421\u0441\u044b\u043b\u043a\u0430\u0445 \u0442\u0435\u043c\u044b."
-        );
-      } else {
-        await sendMessage(
-          chatId,
-          "yt-dlp \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u0432 backend. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 MEDIA_YTDLP_PATH \u0438\u043b\u0438 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0443 \u0431\u0438\u043d\u0430\u0440\u043d\u0438\u043a\u0430."
-        );
-      }
+        mediaStartTimecode,
+        sourceMessageId,
+        reason: "yt-dlp \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D.",
+        linkReason: "yt_dlp_unavailable"
+      });
       return;
     }
     if (!isHttpUrl(url)) {
@@ -5461,20 +6056,17 @@ export function createTelegramSdvgBotService(deps) {
     }
 
     if (!isYtDlpCandidateUrl(url)) {
-      const fallbackResult = await appendUrlToTopicLinks(
-        session.doc_id,
+      await promptLinkFallbackActions({
+        chatId,
+        session,
+        docId: session.doc_id,
         segment,
         url,
-        chatId,
-        "yt_dlp_unsupported_url"
-      ).catch(() => null);
-      if (fallbackResult?.added) {
-        await sendMessage(chatId, "\u0414\u043e\u0431\u0430\u0432\u0438\u043b \u0441\u0441\u044b\u043b\u043a\u0443 \u0432 \u0421\u0441\u044b\u043b\u043a\u0438 \u0442\u0435\u043c\u044b.");
-      } else if (fallbackResult?.already_exists) {
-        await sendMessage(chatId, "\u042d\u0442\u0430 \u0441\u0441\u044b\u043b\u043a\u0430 \u0443\u0436\u0435 \u0435\u0441\u0442\u044c \u0432 \u0421\u0441\u044b\u043b\u043a\u0430\u0445 \u0442\u0435\u043c\u044b.");
-      } else {
-        await sendMessage(chatId, "URL \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044f yt-dlp.");
-      }
+        mediaStartTimecode,
+        sourceMessageId,
+        reason: "URL \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F downloader-\u043E\u043C.",
+        linkReason: "yt_dlp_unsupported_url"
+      });
       return;
     }
 
@@ -5865,9 +6457,7 @@ export function createTelegramSdvgBotService(deps) {
     session.sdvg_cheer_next_at = 0;
     clearPendingProjectArchiveRequest(session);
     await clearSdvgEncouragementMessage(chatId, session);
-    if (randomModeOverride !== null) {
-      session.random_mode = Boolean(randomModeOverride);
-    }
+    session.random_mode = resolveTelegramSdvgRandomMode(session.random_mode, randomModeOverride);
     const docId = await resolveDocIdForSession(session, requestedDocId);
     if (!docId) {
       await sendMessage(chatId, "Нет активного документа. Используй /sdvg <doc_id>.");
@@ -7154,6 +7744,144 @@ export function createTelegramSdvgBotService(deps) {
     }
   }
 
+  async function handleLinkFallbackCallback(chatId, callbackId, callbackMessageId, session, data) {
+    const action = String(data ?? "").trim();
+    const lockKey = acquireCardActionLock(session, callbackMessageId, action);
+    if (!lockKey) {
+      await answerCallback(callbackId, "", false).catch(() => null);
+      return;
+    }
+    try {
+      const context = getScreenshotPreviewContext(session, callbackMessageId);
+      if (!context?.doc_id || !context?.segment_id || !context?.url) {
+        await answerCallback(callbackId, "\u0421\u0441\u044B\u043B\u043A\u0430 \u0443\u0441\u0442\u0430\u0440\u0435\u043B\u0430. \u041F\u0440\u0438\u0448\u043B\u0438 \u0435\u0435 \u0441\u043D\u043E\u0432\u0430.", true).catch(() => null);
+        return;
+      }
+      const payload = await readDocPayload(context.doc_id);
+      if (!payload) {
+        await answerCallback(callbackId, SDVG_MESSAGES.documentUnavailable, true).catch(() => null);
+        return;
+      }
+      const segment = payload.segments.find((item) => item.segment_id === context.segment_id);
+      if (!segment) {
+        await answerCallback(callbackId, SDVG_MESSAGES.segmentNotFound, true).catch(() => null);
+        return;
+      }
+
+      if (action === "sdvg_link:shot") {
+        await answerCallback(callbackId, "\u0414\u0435\u043B\u0430\u044E screenshot...", false).catch(() => null);
+        const sent = await sendScreenshotPreviewMessage(chatId, session, context);
+        if (sent?.message_id) {
+          forgetScreenshotPreviewContext(session, callbackMessageId);
+          await deleteMessage(chatId, callbackMessageId).catch(() => null);
+        }
+        return;
+      }
+
+      if (action === "sdvg_link:preview") {
+        await answerCallback(callbackId, "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u044E preview...", false).catch(() => null);
+        const saved = await saveLinkPreviewImageToSegment(
+          chatId,
+          { ...session, doc_id: context.doc_id },
+          segment,
+          context
+        );
+        forgetScreenshotPreviewContext(session, callbackMessageId);
+        await deleteMessage(chatId, callbackMessageId).catch(() => null);
+        await sendSavedPreviewImageBackToChat(chatId, saved).catch(() => null);
+        await sendMessage(chatId, `\uD83D\uDDBC\uFE0F Preview \u0434\u043E\u0431\u0430\u0432\u043B\u0435\u043D \u0432 ${segment.segment_id}.`).catch(() => null);
+        return;
+      }
+
+      if (action === "sdvg_link:drop") {
+        await removeUrlFromTopicLinks(
+          context.doc_id,
+          segment,
+          context.url,
+          chatId,
+          "telegram_sdvg_link_fallback_drop"
+        ).catch(() => null);
+        forgetScreenshotPreviewContext(session, callbackMessageId);
+        await deleteMessage(chatId, callbackMessageId).catch(() => null);
+        await answerCallback(callbackId, "", false).catch(() => null);
+        return;
+      }
+
+      await answerCallback(callbackId, "", false).catch(() => null);
+    } catch (error) {
+      await answerCallback(
+        callbackId,
+        clipText(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0431\u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C \u0441\u0441\u044B\u043B\u043A\u0443: ${error?.message ?? error}`, CALLBACK_ALERT_MAX),
+        true
+      ).catch(() => null);
+    } finally {
+      releaseCardActionLock(session, lockKey);
+    }
+  }
+
+  async function handleInboxLinkFallbackCallback(chatId, callbackId, callbackMessageId, session, data) {
+    const action = String(data ?? "").trim();
+    const lockKey = acquireCardActionLock(session, callbackMessageId, action);
+    if (!lockKey) {
+      await answerCallback(callbackId, "", false).catch(() => null);
+      return;
+    }
+    try {
+      const context = getScreenshotPreviewContext(session, callbackMessageId);
+      if (context?.mode !== "inbox_link_fallback" || !context?.url) {
+        await answerCallback(callbackId, "\u0421\u0441\u044B\u043B\u043A\u0430 \u0443\u0441\u0442\u0430\u0440\u0435\u043B\u0430. \u041F\u0440\u0438\u0448\u043B\u0438 \u0435\u0435 \u0441\u043D\u043E\u0432\u0430.", true).catch(() => null);
+        return;
+      }
+
+      if (action === "sdvg_inboxlink:shot") {
+        await answerCallback(callbackId, "\u0414\u0435\u043B\u0430\u044E screenshot...", false).catch(() => null);
+        const saved = await saveAdHocResearchScreenshotToTheme(
+          chatId,
+          session,
+          context.url,
+          context.metadata ?? {},
+          context.profile ?? {}
+        );
+        await rememberSuccessfulScreenshotProfile(context.url, context.metadata, saved?.profile ?? context.profile).catch(() => null);
+        forgetScreenshotPreviewContext(session, callbackMessageId);
+        await deleteMessage(chatId, callbackMessageId).catch(() => null);
+        await sendSavedScreenshotBackToChat(chatId, saved, context).catch(() => null);
+        await sendMessage(chatId, `\uD83D\uDCF8 Screenshot \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D \u0432 ${saved.theme}.`).catch(() => null);
+        return;
+      }
+
+      if (action === "sdvg_inboxlink:preview") {
+        await answerCallback(callbackId, "\u0421\u043A\u0430\u0447\u0438\u0432\u0430\u044E preview...", false).catch(() => null);
+        const saved = await saveLinkPreviewImageToTheme(chatId, session, context.url, {
+          ...(context.metadata ?? {}),
+          source_message_id: context.source_message_id
+        });
+        forgetScreenshotPreviewContext(session, callbackMessageId);
+        await deleteMessage(chatId, callbackMessageId).catch(() => null);
+        await sendSavedPreviewImageBackToChat(chatId, saved).catch(() => null);
+        await sendMessage(chatId, `\uD83D\uDDBC\uFE0F Preview \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D \u0432 ${saved.theme}.`).catch(() => null);
+        return;
+      }
+
+      if (action === "sdvg_inboxlink:drop") {
+        forgetScreenshotPreviewContext(session, callbackMessageId);
+        await deleteMessage(chatId, callbackMessageId).catch(() => null);
+        await answerCallback(callbackId, "", false).catch(() => null);
+        return;
+      }
+
+      await answerCallback(callbackId, "", false).catch(() => null);
+    } catch (error) {
+      await answerCallback(
+        callbackId,
+        clipText(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0431\u0440\u0430\u0431\u043E\u0442\u0430\u0442\u044C Inbox-\u0441\u0441\u044B\u043B\u043A\u0443: ${error?.message ?? error}`, CALLBACK_ALERT_MAX),
+        true
+      ).catch(() => null);
+    } finally {
+      releaseCardActionLock(session, lockKey);
+    }
+  }
+
   async function handlePickFromDownloadedCallback(chatId, callbackId, callbackMessageId, session, data) {
     const actionLock = acquireCardActionLock(session, callbackMessageId, "pick");
     if (!actionLock) {
@@ -7377,6 +8105,14 @@ export function createTelegramSdvgBotService(deps) {
     }
     if (data.startsWith("sdvg_shot:")) {
       await handleScreenshotPreviewCallback(chatId, callbackId, messageId, session, data);
+      return;
+    }
+    if (data.startsWith("sdvg_link:")) {
+      await handleLinkFallbackCallback(chatId, callbackId, messageId, session, data);
+      return;
+    }
+    if (data.startsWith("sdvg_inboxlink:")) {
+      await handleInboxLinkFallbackCallback(chatId, callbackId, messageId, session, data);
       return;
     }
     if (data.startsWith("sdvg_batch:retry:")) {

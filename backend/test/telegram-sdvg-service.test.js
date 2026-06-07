@@ -5,12 +5,17 @@ import {
   buildDownloadThemeMoveAuditPayload,
   buildTelegramAssetPathRepairPlan,
   clearTelegramSdvgSessionEphemeralState,
+  clipText,
   createEmptyTelegramSdvgSession,
   createTelegramSdvgBotService,
   ensureTelegramMediaBatchMap,
   getTelegramMediaBatchAudit,
   isTelegramSdvgControlCommandText,
   isTelegramSdvgControlUpdate,
+  resolveTelegramSdvgRandomMode,
+  sanitizeTelegramPayload,
+  sanitizeTelegramUtf8Text,
+  sortDownloadThemeFolderItemsByMtime,
   sweepIdleTelegramSdvgSessions,
   touchTelegramSdvgSession,
   upsertTelegramMediaBatchAudit
@@ -108,6 +113,12 @@ test("touchTelegramSdvgSession refreshes session timestamp", () => {
   assert.equal(session.__last_touched_at, 500);
 });
 
+test("telegram SDVG command mode defaults back to ordered mode", () => {
+  assert.equal(resolveTelegramSdvgRandomMode(true, null), false);
+  assert.equal(resolveTelegramSdvgRandomMode(true, false), false);
+  assert.equal(resolveTelegramSdvgRandomMode(false, true), true);
+});
+
 test("buildDownloadThemeMoveAuditPayload summarizes move outcomes", () => {
   const payload = buildDownloadThemeMoveAuditPayload({
     chatId: 42,
@@ -182,6 +193,17 @@ test("buildTelegramAssetPathRepairPlan repairs only unique stale unsorted assets
   ]);
 });
 
+test("download theme folders sort by most recently modified first", () => {
+  const sorted = sortDownloadThemeFolderItemsByMtime([
+    { name: "Beta", mtime_ms: 200 },
+    { name: "Alpha", mtime_ms: 100 },
+    { name: "Gamma", mtime_ms: 300 },
+    { name: "Delta", mtime_ms: 200 }
+  ]);
+
+  assert.deepEqual(sorted.map((item) => item.name), ["Gamma", "Beta", "Delta", "Alpha"]);
+});
+
 test("telegram media batch audit upserts and returns normalized state", () => {
   const session = createEmptyTelegramSdvgSession("doc_test");
   const batch = upsertTelegramMediaBatchAudit(session, "batch_1", {
@@ -209,4 +231,24 @@ test("telegram media batch audit upserts and returns normalized state", () => {
   assert.equal(batch.retried, 1);
   assert.equal(batch.failed_items.length, 1);
   assert.equal(getTelegramMediaBatchAudit(session, "batch_1")?.segment_id, "news_01");
+});
+
+test("telegram text clipping preserves valid emoji pairs", () => {
+  const clipped = clipText("1234567890123456789012345678😀", 28);
+  assert.equal(clipped, "1234567890123456789012345...");
+  assert.equal(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(clipped), false);
+  assert.equal(/(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(clipped), false);
+});
+
+test("telegram payload sanitizer strips unpaired surrogates recursively", () => {
+  const payload = sanitizeTelegramPayload({
+    text: `bad ${String.fromCharCode(0xd83d)} text`,
+    reply_markup: {
+      inline_keyboard: [[{ text: `folder ${String.fromCharCode(0xdc02)}`, callback_data: "sdvg_next" }]]
+    }
+  });
+
+  assert.equal(payload.text, "bad  text");
+  assert.equal(payload.reply_markup.inline_keyboard[0][0].text, "folder ");
+  assert.equal(sanitizeTelegramUtf8Text("ok 😀"), "ok 😀");
 });

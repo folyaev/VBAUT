@@ -184,9 +184,7 @@ export function registerExportRoutes(app, deps) {
         const xmlMediaRoot = xmlMediaRootQuery || (await readXmlMediaRootSettings()).xml_media_root;
         const scope = String(req.query?.scope ?? "").trim().toLowerCase();
         const wantSection = scope === "section" || Boolean(sectionId) || Boolean(sectionTitle) || segmentIds.length > 0;
-        const sourceSegments = sortSegmentsInScenarioOrder(
-          segments.filter((segment) => segment?.block_type !== "links")
-        );
+        const sourceSegments = segments.filter((segment) => segment?.block_type !== "links");
         const segmentIdSet = new Set(segmentIds);
         const targetSegments = segmentIdSet.size > 0
           ? sourceSegments.filter((segment) => segmentIdSet.has(String(segment?.segment_id ?? "").trim()))
@@ -209,6 +207,7 @@ export function registerExportRoutes(app, deps) {
           document,
           segments: targetSegments,
           decisionsBySegment: decisionMap,
+          timelineAlignment: null,
           mediaDir: getMediaDir(),
           mediaPathRootOverride: xmlMediaRoot || null,
           fps: XML_EXPORT_FPS,

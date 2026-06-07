@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { buildTimelineAlignmentMap } from "./timeline-alignment.js";
 
 export function createXmlExportUtils(deps) {
   const {
@@ -25,6 +26,9 @@ export function createXmlExportUtils(deps) {
   const XML_SECTION_GAP_SEC = Number.isFinite(Number(process.env.XML_SECTION_GAP_SEC))
     ? Math.max(0, Number(process.env.XML_SECTION_GAP_SEC))
     : 7;
+  const XML_UNMATCHED_TAIL_GAP_SEC = Number.isFinite(Number(process.env.XML_UNMATCHED_TAIL_GAP_SEC))
+    ? Math.max(0, Number(process.env.XML_UNMATCHED_TAIL_GAP_SEC))
+    : 60;
   const XML_SEQUENCE_WIDTH = 1920;
   const XML_SEQUENCE_HEIGHT = 960;
   const XML_SECTION_MARKER_COLOR = "4294741314";
@@ -39,6 +43,9 @@ export function createXmlExportUtils(deps) {
   const XML_PPRO_TICKS_PER_FRAME = 5080320000;
   const XML_RESERVED_VIDEO_TRACKS = 2;
   const XML_RESERVED_AUDIO_TRACKS = 1;
+  const XML_TIMELINE_ALIGNMENT_ENABLED = String(process.env.XML_TIMELINE_ALIGNMENT_ENABLED ?? "").trim() === "1";
+  const XML_AUTO_BACKGROUNDS_ENABLED = String(process.env.XML_AUTO_BACKGROUNDS_ENABLED ?? "1").trim() !== "0";
+  const XML_ALLOW_CROSS_TOPIC_MEDIA = String(process.env.XML_ALLOW_CROSS_TOPIC_MEDIA ?? "").trim() === "1";
   const XML_BACKGROUND_ROOT = process.env.XML_BACKGROUND_ROOT || "C:\\Users\\Nemifist\\YandexDisk\\PAMPAM\\Graphics";
   const XML_BACKGROUND_FILES = Object.freeze({
     whirl: "bg_whirl.mov",
@@ -183,6 +190,28 @@ function parseXmlStartTimecodeToSeconds(value, fps) {
   return hh * 3600 + mm * 60 + ss + ff / rate;
 }
 
+function parseXmlFrameRate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const rational = text.match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/);
+  if (rational) {
+    const numerator = Number(rational[1]);
+    const denominator = Number(rational[2]);
+    if (Number.isFinite(numerator) && Number.isFinite(denominator) && numerator > 0 && denominator > 0) {
+      return numerator / denominator;
+    }
+  }
+  const numeric = Number(text);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function normalizeXmlNativeTimebase(value, fallback) {
+  const parsed = parseXmlFrameRate(value);
+  const rate = parsed ?? (Number.isFinite(Number(fallback)) && Number(fallback) > 0 ? Number(fallback) : null);
+  if (!rate) return null;
+  return Math.max(1, Math.round(rate));
+}
+
 function detectXmlMediaCategory(filePath) {
   const ext = String(path.extname(filePath ?? "")).toLowerCase();
   if (XML_AUDIO_EXTENSIONS.has(ext)) return "audio";
@@ -202,6 +231,79 @@ function normalizeXmlDurationSeconds(rawValue, fallbackValue, category) {
     duration = Math.max(5, duration);
   }
   return duration;
+}
+
+function normalizeXmlTopicNameForCompare(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/[\\/]+/g, " ")
+    .replace(/\s*\(\d+\)\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function isXmlMediaPathCompatibleWithSegment(mediaPath, segment) {
+  if (XML_ALLOW_CROSS_TOPIC_MEDIA) return true;
+  const raw = String(mediaPath ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const [folder] = raw.split("/");
+  if (!folder || folder === raw) return true;
+  const sectionTitle = String(segment?.section_title ?? "").trim();
+  if (!sectionTitle) return true;
+  return normalizeXmlTopicNameForCompare(folder) === normalizeXmlTopicNameForCompare(sectionTitle);
+}
+
+function getXmlSequentialSlot({ startFrame, endFrame, index, count }) {
+  const start = Math.max(0, Math.round(Number(startFrame) || 0));
+  const end = Math.max(start + 1, Math.round(Number(endFrame) || start + 1));
+  const total = Math.max(1, end - start);
+  const safeCount = Math.max(1, Math.round(Number(count) || 1));
+  const safeIndex = Math.max(0, Math.min(safeCount - 1, Math.round(Number(index) || 0)));
+  const slotStart = start + Math.floor((total * safeIndex) / safeCount);
+  const slotEnd = safeIndex === safeCount - 1
+    ? end
+    : start + Math.floor((total * (safeIndex + 1)) / safeCount);
+  return {
+    startFrame: slotStart,
+    endFrame: Math.max(slotStart + 1, slotEnd)
+  };
+}
+
+function buildXmlBackgroundLoopEntries({
+  backgroundAsset,
+  durationFrames,
+  videoTrackIndex,
+  entryPrefix,
+  motion
+}) {
+  if (!backgroundAsset || !Number.isFinite(Number(durationFrames)) || Number(durationFrames) <= 0) return [];
+  const totalFrames = Math.max(1, Math.round(Number(durationFrames)));
+  const entries = [];
+  entries.push({
+    entryId: `${entryPrefix}-entry-1`,
+    segmentId: `${entryPrefix}-segment`,
+    segmentQuote: "",
+    segmentBlockType: "background",
+    visualFormatHint: "",
+    fileId: `${entryPrefix}-file-1`,
+    masterClipId: `${entryPrefix}-masterclip-1`,
+    fileName: backgroundAsset.fileName,
+    pathUrl: toXmlFileUrl(backgroundAsset.absolutePath),
+    durationFrames: totalFrames,
+    sourceTotalFrames: null,
+    sourceInFrame: 0,
+    sourceOutFrame: totalFrames,
+    startFrame: 0,
+    endFrame: totalFrames,
+    category: "video",
+    hasAudio: false,
+    hasVideo: true,
+    audioChannelCount: 0,
+    sourceDimensions: backgroundAsset.sourceDimensions,
+    videoTrackIndex,
+    audioTrackHint: null,
+    motion
+  });
+  return entries;
 }
 
 function getXmlFfprobeCandidates() {
@@ -240,7 +342,7 @@ async function probeXmlMediaInfo(filePath) {
     "-v",
     "error",
     "-show_entries",
-    "stream=codec_type,width,height,duration,channels:format=duration",
+    "stream=codec_type,width,height,duration,channels,avg_frame_rate,r_frame_rate,nb_frames:format=duration",
     "-of",
     "json",
     absolute
@@ -260,12 +362,14 @@ async function probeXmlMediaInfo(filePath) {
       let height = null;
       let audioChannels = 0;
       let audioStreamCount = 0;
+      let nativeFps = null;
       const streamDurations = [];
 
       for (const stream of streams) {
         const codecType = String(stream?.codec_type ?? "").toLowerCase();
         if (codecType === "video") {
           hasVideo = true;
+          nativeFps = nativeFps ?? parseXmlFrameRate(stream?.avg_frame_rate) ?? parseXmlFrameRate(stream?.r_frame_rate);
           if (width == null || height == null) {
             const w = Number(stream?.width);
             const h = Number(stream?.height);
@@ -308,6 +412,7 @@ async function probeXmlMediaInfo(filePath) {
         hasAudio,
         audioChannels: effectiveAudioChannels,
         durationSec: Number.isFinite(Number(durationSec)) && Number(durationSec) > 0 ? Number(durationSec) : null,
+        nativeFps: normalizeXmlNativeTimebase(nativeFps, null),
         sourceDimensions:
           Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
             ? { width, height }
@@ -338,6 +443,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       hasVideo: hintedCategory !== "audio",
       audioChannels: hintedCategory === "audio" ? 2 : 0,
       durationSec: null,
+      nativeFps: null,
       sourceDimensions: null
     };
   }
@@ -350,6 +456,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       hasVideo: true,
       audioChannels: 0,
       durationSec: null,
+      nativeFps: info?.nativeFps ?? null,
       sourceDimensions: info?.sourceDimensions ?? null
     };
   }
@@ -362,6 +469,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       hasVideo: hintedCategory !== "audio",
       audioChannels: hintedCategory === "audio" ? 2 : 0,
       durationSec: null,
+      nativeFps: null,
       sourceDimensions: XML_DIMENSIONS_CACHE.get(absolute.toLowerCase()) ?? null
     };
   }
@@ -373,6 +481,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       hasVideo: true,
       audioChannels: Math.max(1, Math.min(2, Number(info.audioChannels) || 2)),
       durationSec: info.durationSec ?? null,
+      nativeFps: info.nativeFps ?? null,
       sourceDimensions: info.sourceDimensions ?? null
     };
   }
@@ -383,6 +492,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       hasVideo: true,
       audioChannels: 0,
       durationSec: info.durationSec ?? null,
+      nativeFps: info.nativeFps ?? null,
       sourceDimensions: info.sourceDimensions ?? null
     };
   }
@@ -393,6 +503,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
       hasVideo: false,
       audioChannels: Math.max(1, Math.min(2, Number(info.audioChannels) || 2)),
       durationSec: info.durationSec ?? null,
+      nativeFps: info.nativeFps ?? null,
       sourceDimensions: null
     };
   }
@@ -402,6 +513,7 @@ async function getXmlMediaInfo(filePath, hintedCategory) {
     hasVideo: hintedCategory !== "audio",
     audioChannels: hintedCategory === "audio" ? 2 : 0,
     durationSec: info.durationSec ?? null,
+    nativeFps: info.nativeFps ?? null,
     sourceDimensions: info.sourceDimensions ?? null
   };
 }
@@ -430,6 +542,15 @@ function isXmlSquareByDimensions(sourceDimensions) {
   return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 && width === height;
 }
 
+function isXmlSequenceAspectByDimensions(sourceDimensions) {
+  const width = Number(sourceDimensions?.width);
+  const height = Number(sourceDimensions?.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  const sourceAspect = width / height;
+  const sequenceAspect = XML_SEQUENCE_WIDTH / XML_SEQUENCE_HEIGHT;
+  return Math.abs(sourceAspect - sequenceAspect) < 0.01;
+}
+
 function isXmlPortraitDimensions(sourceDimensions) {
   const width = Number(sourceDimensions?.width);
   const height = Number(sourceDimensions?.height);
@@ -447,12 +568,20 @@ async function resolveXmlBackgroundAssets({ fps }) {
     const durationFrames = Number.isFinite(Number(mediaInfo.durationSec)) && Number(mediaInfo.durationSec) > 0
       ? secondsToFramesAllowZero(mediaInfo.durationSec, fps)
       : null;
+    const sourceTimebase = normalizeXmlNativeTimebase(mediaInfo.nativeFps, fps) ?? fps;
+    const sourceDurationFrames = Number.isFinite(Number(mediaInfo.durationSec)) && Number(mediaInfo.durationSec) > 0
+      ? secondsToFramesAllowZero(mediaInfo.durationSec, sourceTimebase)
+      : null;
     assets.set(kind, {
       kind,
       absolutePath,
       fileName: path.basename(absolutePath),
       sourceDimensions: mediaInfo.sourceDimensions ?? null,
-      sourceTotalFrames: Number.isFinite(Number(durationFrames)) && Number(durationFrames) > 0 ? durationFrames : null
+      sourceTotalFrames: Number.isFinite(Number(durationFrames)) && Number(durationFrames) > 0 ? durationFrames : null,
+      sourceTimebase,
+      sourceDurationFrames: Number.isFinite(Number(sourceDurationFrames)) && Number(sourceDurationFrames) > 0
+        ? sourceDurationFrames
+        : null
     });
   }
   return assets;
@@ -647,6 +776,15 @@ function resolveXmlMotionScale(sourceDimensions) {
     XML_WIDTH_SCALE_OVERRIDES.has(sourceDimensions.width)
   ) {
     scale = Number(XML_WIDTH_SCALE_OVERRIDES.get(sourceDimensions.width));
+  } else if (
+    sourceDimensions &&
+    !XML_BASIC_MOTION_TEMPLATES.has(`${sourceDimensions.width}x${sourceDimensions.height}`) &&
+    sourceDimensions.width > 0 &&
+    sourceDimensions.height > 0 &&
+    sourceDimensions.width !== sourceDimensions.height &&
+    sourceDimensions.width > sourceDimensions.height
+  ) {
+    scale = Number(((XML_SEQUENCE_WIDTH / sourceDimensions.width) * 100).toFixed(4));
   }
   return Number.isFinite(scale) && scale > 0 ? scale : 100;
 }
@@ -748,24 +886,30 @@ function renderXmlFileElement({ clip, fps, includeVideo, includeAudio }) {
   const sourceWidth = Number(clip?.sourceDimensions?.width);
   const sourceHeight = Number(clip?.sourceDimensions?.height);
   const sourceTotalFrames = Number(clip?.sourceTotalFrames);
-  const fileDurationFrames = Math.max(
-    Number.isFinite(sourceTotalFrames) && sourceTotalFrames > 0 ? sourceTotalFrames : 0,
-    Number(clip?.durationFrames) || 0,
-    Number(clip?.sourceOutFrame) || 0,
-    1
-  );
+  const sourceFileTimebase = Number.isFinite(Number(clip?.sourceFileTimebase)) && Number(clip.sourceFileTimebase) > 0
+    ? Math.max(1, Math.round(Number(clip.sourceFileTimebase)))
+    : fps;
+  const sourceFileDurationFrames = Number(clip?.sourceFileDurationFrames);
+  const fileDurationFrames = Number.isFinite(sourceFileDurationFrames) && sourceFileDurationFrames > 0
+    ? Math.max(1, Math.round(sourceFileDurationFrames))
+    : Math.max(
+        Number.isFinite(sourceTotalFrames) && sourceTotalFrames > 0 ? sourceTotalFrames : 0,
+        Number(clip?.durationFrames) || 0,
+        Number(clip?.sourceOutFrame) || 0,
+        1
+      );
   const lines = [
     `            <file id="${escapeXml(clip.entry.fileId)}">`,
     `              <name>${escapeXml(clip.fileName)}</name>`,
     `              <pathurl>${escapeXml(clip.pathUrl)}</pathurl>`,
     "              <rate>",
-    `                <timebase>${fps}</timebase>`,
+    `                <timebase>${sourceFileTimebase}</timebase>`,
     "                <ntsc>FALSE</ntsc>",
     "              </rate>",
     `              <duration>${fileDurationFrames}</duration>`,
     "              <timecode>",
     "                <rate>",
-    `                  <timebase>${fps}</timebase>`,
+    `                  <timebase>${sourceFileTimebase}</timebase>`,
     "                  <ntsc>FALSE</ntsc>",
     "                </rate>",
     "                <string>00:00:00:00</string>",
@@ -780,7 +924,7 @@ function renderXmlFileElement({ clip, fps, includeVideo, includeAudio }) {
       "                <video>",
       "                  <samplecharacteristics>",
       "                    <rate>",
-      `                      <timebase>${fps}</timebase>`,
+      `                      <timebase>${sourceFileTimebase}</timebase>`,
       "                      <ntsc>FALSE</ntsc>",
       "                    </rate>",
       `                    <width>${Number.isFinite(sourceWidth) && sourceWidth > 0 ? sourceWidth : XML_SEQUENCE_WIDTH}</width>`,
@@ -1164,6 +1308,7 @@ async function buildXmlExportPayload({
   document,
   segments,
   decisionsBySegment,
+  timelineAlignment,
   mediaDir,
   mediaPathRootOverride,
   fps,
@@ -1186,20 +1331,82 @@ async function buildXmlExportPayload({
   const sectionGapFrames = XML_SECTION_GAP_SEC > 0 ? secondsToFrames(XML_SECTION_GAP_SEC, fpsValue) : 0;
   const sectionMarkers = [];
   const mediaEntries = [];
+  const timelineAlignmentMap = XML_TIMELINE_ALIGNMENT_ENABLED ? buildTimelineAlignmentMap(timelineAlignment) : new Map();
+  const useTimelineAlignment = timelineAlignmentMap.size > 0;
+  const fallbackAlignmentMap = new Map();
+  if (useTimelineAlignment) {
+    let index = 0;
+    while (index < segments.length) {
+      const segmentId = String(segments[index]?.segment_id ?? "").trim();
+      if (!segmentId || timelineAlignmentMap.has(segmentId)) {
+        index += 1;
+        continue;
+      }
+
+      const runStart = index;
+      while (index < segments.length) {
+        const runSegmentId = String(segments[index]?.segment_id ?? "").trim();
+        if (!runSegmentId || timelineAlignmentMap.has(runSegmentId)) break;
+        index += 1;
+      }
+      const runEnd = index;
+
+      let previousAlignment = null;
+      for (let cursor = runStart - 1; cursor >= 0; cursor -= 1) {
+        const previousId = String(segments[cursor]?.segment_id ?? "").trim();
+        previousAlignment = timelineAlignmentMap.get(previousId) ?? fallbackAlignmentMap.get(previousId) ?? null;
+        if (previousAlignment) break;
+      }
+      let nextAlignment = null;
+      for (let cursor = runEnd; cursor < segments.length; cursor += 1) {
+        const nextId = String(segments[cursor]?.segment_id ?? "").trim();
+        nextAlignment = timelineAlignmentMap.get(nextId) ?? null;
+        if (nextAlignment) break;
+      }
+
+      const gapStart = Number(previousAlignment?.end_frame);
+      const gapEnd = Number(nextAlignment?.start_frame);
+      if (!Number.isFinite(gapStart) || !Number.isFinite(gapEnd) || gapEnd <= gapStart) continue;
+      const runLength = runEnd - runStart;
+      const gapFrames = Math.max(runLength, Math.round(gapEnd - gapStart));
+      let cursorFrame = Math.round(gapStart);
+      for (let runIndex = runStart; runIndex < runEnd; runIndex += 1) {
+        const runSegmentId = String(segments[runIndex]?.segment_id ?? "").trim();
+        if (!runSegmentId) continue;
+        const remainingItems = runEnd - runIndex;
+        const remainingFrames = Math.max(remainingItems, Math.round(gapEnd) - cursorFrame);
+        const frames = runIndex === runEnd - 1
+          ? remainingFrames
+          : Math.max(1, Math.floor(gapFrames / runLength));
+        const startFrame = cursorFrame;
+        const endFrame = Math.max(startFrame + 1, Math.min(Math.round(gapEnd), startFrame + frames));
+        fallbackAlignmentMap.set(runSegmentId, {
+          segment_id: runSegmentId,
+          matched: true,
+          fallback_timeline_slot: true,
+          start_frame: startFrame,
+          end_frame: endFrame
+        });
+        cursorFrame = endFrame;
+      }
+    }
+  }
   let frameCursor = 0;
   let activeSectionKey = null;
   let maxAudioFilesPerSegment = 1;
   let contentClipCount = 0;
   let alternatingBackgroundCursor = 0;
-  const backgroundAssets = await resolveXmlBackgroundAssets({ fps: fpsValue });
+  const backgroundAssets = XML_AUTO_BACKGROUNDS_ENABLED ? await resolveXmlBackgroundAssets({ fps: fpsValue }) : new Map();
 
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     const segmentId = String(segment?.segment_id ?? "").trim();
+    const alignmentItem = segmentId ? timelineAlignmentMap.get(segmentId) ?? fallbackAlignmentMap.get(segmentId) ?? null : null;
 
     const sectionKey = getXmlSectionMarkerKey(segment);
     if (sectionKey !== activeSectionKey) {
-      if (activeSectionKey && sectionGapFrames > 0) {
+      const markerStartFrame = alignmentItem?.start_frame ?? frameCursor;
+      if (!useTimelineAlignment && activeSectionKey && sectionGapFrames > 0) {
         sectionMarkers.push({
           name: getXmlSectionMarkerName(segment),
           inFrame: frameCursor,
@@ -1210,8 +1417,8 @@ async function buildXmlExportPayload({
       }
       sectionMarkers.push({
         name: getXmlSectionMarkerName(segment),
-        inFrame: frameCursor,
-        outFrame: frameCursor + markerDurationFrames,
+        inFrame: markerStartFrame,
+        outFrame: markerStartFrame + markerDurationFrames,
         color: XML_SECTION_MARKER_COLOR
       });
       activeSectionKey = sectionKey;
@@ -1242,6 +1449,7 @@ async function buildXmlExportPayload({
 
     const resolvedMediaFiles = [];
     for (const mediaPath of uniqueMediaPaths) {
+      if (!isXmlMediaPathCompatibleWithSegment(mediaPath, segment)) continue;
       const absolutePath = safeResolveMediaPath(mediaRoot, mediaPath);
       if (!absolutePath) continue;
       const stats = await fs.stat(absolutePath).catch(() => null);
@@ -1250,17 +1458,19 @@ async function buildXmlExportPayload({
     }
 
     if (!resolvedMediaFiles.length) {
-      const segmentStartFrame = frameCursor;
+      const segmentStartFrame = alignmentItem?.start_frame ?? frameCursor;
       const segmentDurationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, "video");
-      const segmentDurationFrames = secondsToFrames(segmentDurationSec, fpsValue);
-      const segmentEndFrame = segmentStartFrame + segmentDurationFrames;
+      const segmentDurationFrames = alignmentItem
+        ? Math.max(1, alignmentItem.end_frame - alignmentItem.start_frame)
+        : secondsToFrames(segmentDurationSec, fpsValue);
+      const segmentEndFrame = alignmentItem?.end_frame ?? segmentStartFrame + segmentDurationFrames;
       sectionMarkers.push({
         name: getXmlSegmentMarkerName(segment),
         inFrame: segmentStartFrame,
         outFrame: segmentEndFrame,
         color: resolveXmlSegmentMarkerColor({ segment, visual })
       });
-      frameCursor = segmentEndFrame;
+      frameCursor = useTimelineAlignment ? Math.max(frameCursor, segmentEndFrame) : segmentEndFrame;
       continue;
     }
     let segmentAudioTrackCursor = 0;
@@ -1268,9 +1478,11 @@ async function buildXmlExportPayload({
 
     const primaryCategory = detectXmlMediaCategory(resolvedMediaFiles[0].absolutePath);
     const desiredDurationSec = normalizeXmlDurationSeconds(visual.duration_hint_sec, fallbackDuration, primaryCategory);
-    const desiredDurationFrames = secondsToFrames(desiredDurationSec, fpsValue);
-    const segmentStartFrame = frameCursor;
-    const segmentEndFrame = segmentStartFrame + desiredDurationFrames;
+    const desiredDurationFrames = alignmentItem
+      ? Math.max(1, alignmentItem.end_frame - alignmentItem.start_frame)
+      : secondsToFrames(desiredDurationSec, fpsValue);
+    const segmentStartFrame = alignmentItem?.start_frame ?? frameCursor;
+    const segmentEndFrame = alignmentItem?.end_frame ?? segmentStartFrame + desiredDurationFrames;
     const segmentMarkerName = getXmlSegmentMarkerName(segment);
     const segmentMarkerColor = resolveXmlSegmentMarkerColor({ segment, visual });
     const segmentEntries = [];
@@ -1280,6 +1492,13 @@ async function buildXmlExportPayload({
       const { mediaPath, absolutePath } = resolvedMediaFiles[mediaOffset];
       const hintedCategory = detectXmlMediaCategory(absolutePath);
       const mediaInfo = await getXmlMediaInfo(absolutePath, hintedCategory);
+      const mediaSlot = getXmlSequentialSlot({
+        startFrame: segmentStartFrame,
+        endFrame: segmentEndFrame,
+        index: mediaOffset,
+        count: resolvedMediaFiles.length
+      });
+      const mediaSlotDurationFrames = Math.max(1, mediaSlot.endFrame - mediaSlot.startFrame);
       const audioChannelCount = mediaInfo.hasAudio
         ? Math.max(1, Math.min(2, Number(mediaInfo.audioChannels) || 2))
         : 0;
@@ -1305,8 +1524,8 @@ async function buildXmlExportPayload({
         ? Math.max(0, sourceTotalFrames - sourceInFrame)
         : null;
       const entryDurationFrames = Number.isFinite(availableFrames)
-        ? Math.max(1, Math.min(desiredDurationFrames, availableFrames))
-        : desiredDurationFrames;
+        ? Math.max(1, Math.min(mediaSlotDurationFrames, availableFrames))
+        : mediaSlotDurationFrames;
       const sourceOutFrame = sourceInFrame + entryDurationFrames;
       const sourceDimensions = mediaInfo.sourceDimensions;
       const motionScale = resolveXmlMotionScale(sourceDimensions);
@@ -1338,8 +1557,8 @@ async function buildXmlExportPayload({
           : null,
         sourceInFrame,
         sourceOutFrame,
-        startFrame: segmentStartFrame,
-        endFrame: segmentStartFrame + entryDurationFrames,
+        startFrame: mediaSlot.startFrame,
+        endFrame: mediaSlot.startFrame + entryDurationFrames,
         category,
         hasAudio: Boolean(mediaInfo.hasAudio),
         hasVideo: Boolean(mediaInfo.hasVideo),
@@ -1355,22 +1574,27 @@ async function buildXmlExportPayload({
     }
     contentClipCount += segmentEntries.length;
 
-    const nonSquareVideoEntries = segmentEntries.filter((entry) => {
+    const backgroundCandidateEntries = segmentEntries.filter((entry) => {
       if (!entry?.hasVideo) return false;
       if (isXmlSquareByDimensions(entry.sourceDimensions)) return false;
       if (isXmlSquareFormatHint(entry.visualFormatHint)) return false;
+      if (isXmlSequenceAspectByDimensions(entry.sourceDimensions)) return false;
       return true;
     });
-    if (nonSquareVideoEntries.length > 0 && backgroundAssets.size > 0) {
-      const hasPortraitEntry = nonSquareVideoEntries.some((entry) => isXmlPortraitDimensions(entry.sourceDimensions));
+    if (backgroundCandidateEntries.length > 0 && backgroundAssets.size > 0) {
+      const hasPortraitEntry = backgroundCandidateEntries.some((entry) => isXmlPortraitDimensions(entry.sourceDimensions));
+      const hasImageEntry = backgroundCandidateEntries.some((entry) => String(entry?.category ?? "") === "image");
       const titleQuoteMode = isXmlTitleQuoteFormatHint(visual?.format_hint);
       let backgroundKind = null;
       if (hasPortraitEntry) {
         backgroundKind = "whirl";
       } else if (titleQuoteMode) {
         backgroundKind = "ribbon";
+      } else if (hasImageEntry) {
+        backgroundKind = alternatingBackgroundCursor % 2 === 0 ? "ribbon" : "whirl";
+        alternatingBackgroundCursor += 1;
       } else {
-        backgroundKind = alternatingBackgroundCursor % 2 === 0 ? "whirl" : "lines";
+        backgroundKind = alternatingBackgroundCursor % 3 === 0 ? "whirl" : alternatingBackgroundCursor % 3 === 1 ? "lines" : "ribbon";
         alternatingBackgroundCursor += 1;
       }
 
@@ -1389,50 +1613,8 @@ async function buildXmlExportPayload({
         });
         const backgroundMotionCenter = encodeXmlMotionCenter(backgroundMotionCenterPx);
         const backgroundEntries = [];
-        const backgroundSourceTotalFrames = Number.isFinite(Number(backgroundAsset.sourceTotalFrames))
-          ? Math.max(1, Math.round(Number(backgroundAsset.sourceTotalFrames)))
-          : null;
-        const segmentTargetEndFrame = segmentStartFrame + desiredDurationFrames;
-        let backgroundStartFrame = segmentStartFrame;
-
-        if (backgroundSourceTotalFrames) {
-          while (backgroundStartFrame < segmentTargetEndFrame) {
-            const remainingFrames = segmentTargetEndFrame - backgroundStartFrame;
-            const backgroundLoopDuration = Math.max(1, Math.min(backgroundSourceTotalFrames, remainingFrames));
-            const backgroundMediaIndex = mediaEntries.length + segmentEntries.length + backgroundEntries.length + 1;
-            backgroundEntries.push({
-              entryId: `entry-${backgroundMediaIndex}`,
-              segmentId: segmentId || `segment_${index + 1}`,
-              segmentQuote: String(segment?.text_quote ?? ""),
-              segmentBlockType: String(segment?.block_type ?? ""),
-              visualFormatHint: String(visual?.format_hint ?? ""),
-              fileId: `file-${backgroundMediaIndex}`,
-              masterClipId: `masterclip-${backgroundMediaIndex}`,
-              fileName: backgroundAsset.fileName,
-              pathUrl: toXmlFileUrl(backgroundAsset.absolutePath),
-              durationFrames: backgroundLoopDuration,
-              sourceTotalFrames: backgroundSourceTotalFrames,
-              sourceInFrame: 0,
-              sourceOutFrame: backgroundLoopDuration,
-              startFrame: backgroundStartFrame,
-              endFrame: backgroundStartFrame + backgroundLoopDuration,
-              category: "video",
-              hasAudio: false,
-              hasVideo: true,
-              audioChannelCount: 0,
-              sourceDimensions: backgroundAsset.sourceDimensions,
-              videoTrackIndex: 1,
-              audioTrackHint: null,
-              motion: {
-                scale: backgroundMotionScale,
-                center: backgroundMotionCenter
-              }
-            });
-            backgroundStartFrame += backgroundLoopDuration;
-          }
-        } else {
-          const backgroundMediaIndex = mediaEntries.length + segmentEntries.length + 1;
-          backgroundEntries.push({
+        const backgroundMediaIndex = mediaEntries.length + segmentEntries.length + 1;
+        backgroundEntries.push({
             entryId: `entry-${backgroundMediaIndex}`,
             segmentId: segmentId || `segment_${index + 1}`,
             segmentQuote: String(segment?.text_quote ?? ""),
@@ -1443,7 +1625,9 @@ async function buildXmlExportPayload({
             fileName: backgroundAsset.fileName,
             pathUrl: toXmlFileUrl(backgroundAsset.absolutePath),
             durationFrames: desiredDurationFrames,
-            sourceTotalFrames: null,
+            sourceTotalFrames: backgroundAsset.sourceTotalFrames ?? null,
+            sourceFileTimebase: backgroundAsset.sourceTimebase ?? fpsValue,
+            sourceFileDurationFrames: backgroundAsset.sourceDurationFrames ?? null,
             sourceInFrame: 0,
             sourceOutFrame: desiredDurationFrames,
             startFrame: segmentStartFrame,
@@ -1459,8 +1643,7 @@ async function buildXmlExportPayload({
               scale: backgroundMotionScale,
               center: backgroundMotionCenter
             }
-          });
-        }
+        });
 
         if (backgroundEntries.length > 0) {
           segmentEntries.unshift(...backgroundEntries);
@@ -1476,7 +1659,7 @@ async function buildXmlExportPayload({
       color: segmentMarkerColor
     });
 
-    frameCursor = segmentEndFrame;
+    frameCursor = useTimelineAlignment ? Math.max(frameCursor, segmentEndFrame) : segmentEndFrame;
     mediaEntries.push(...segmentEntries);
   }
 
