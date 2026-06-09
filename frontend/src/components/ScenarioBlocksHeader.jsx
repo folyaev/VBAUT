@@ -5,9 +5,12 @@ export function ScenarioBlocksHeader({
   handleSave,
   canSave,
   handleAddSegment,
+  scenarioViewMode,
+  setScenarioViewMode,
   linksPanelOpen,
   allScenarioLinksCount,
   handleToggleLinksPanel,
+  handleOpenScriptTextMode,
   handleCopyForFigma,
   handleExport,
   handleConfigureXmlMediaRoot
@@ -16,6 +19,29 @@ export function ScenarioBlocksHeader({
     <div className="panel-header">
       <h2>Блоки сценария</h2>
       <div className="panel-actions panel-actions-blocks">
+        <div className="scenario-view-toggle" role="group" aria-label="Scenario view">
+          <button
+            className={`btn ghost small${scenarioViewMode === "text" ? " is-active" : ""}`}
+            type="button"
+            onClick={() => setScenarioViewMode("text")}
+          >
+            Text
+          </button>
+          <button
+            className={`btn ghost small${scenarioViewMode === "canvas" ? " is-active" : ""}`}
+            type="button"
+            onClick={() => setScenarioViewMode("canvas")}
+          >
+            Canvas
+          </button>
+          <button
+            className={`btn ghost small${scenarioViewMode === "cards" ? " is-active" : ""}`}
+            type="button"
+            onClick={() => setScenarioViewMode("cards")}
+          >
+            Cards
+          </button>
+        </div>
         <button className={`btn save-btn${hasUnsavedChanges ? " is-dirty" : ""}`} onClick={handleSave} disabled={!canSave}>
           Сохранить
         </button>
@@ -24,6 +50,9 @@ export function ScenarioBlocksHeader({
         </button>
         <button className="btn ghost" type="button" onClick={handleToggleLinksPanel}>
           {linksPanelOpen ? `Скрыть ссылки (${allScenarioLinksCount})` : `Все ссылки (${allScenarioLinksCount})`}
+        </button>
+        <button className="btn ghost" type="button" onClick={handleOpenScriptTextMode}>
+          Text tab
         </button>
         <button className="btn ghost" type="button" onClick={handleCopyForFigma}>
           For Figma

@@ -12,6 +12,7 @@ import { SegmentVisualEditor } from "./components/SegmentVisualEditor.jsx";
 import { ScenarioBlocksHeader } from "./components/ScenarioBlocksHeader.jsx";
 import { ScenarioGroupSection } from "./components/ScenarioGroupSection.jsx";
 import { ScenarioLinksPanel } from "./components/ScenarioLinksPanel.jsx";
+import { ScriptTextPanel } from "./components/ScriptTextPanel.jsx";
 import {
   buildResearchCategoryBuckets,
   RESEARCH_CATEGORY_ORDER,
@@ -262,6 +263,12 @@ const isResearchPathname = (pathname) => {
     .replace(/\/+$/g, "") || "/";
   return normalized === "/research";
 };
+const isScriptTextPathname = (pathname) => {
+  const normalized = String(pathname ?? "")
+    .trim()
+    .replace(/\/+$/g, "") || "/";
+  return normalized === "/script-text";
+};
 const getInitialAppMode = () => {
   if (typeof window === "undefined") return "workspace";
   const mode = String(new URLSearchParams(window.location.search).get("mode") ?? "").toLowerCase().trim();
@@ -271,6 +278,7 @@ const getInitialAppMode = () => {
   if (mode === "inbox") return "inbox";
   if (mode === "library") return "library";
   if (mode === "releases") return "releases";
+  if (isScriptTextPathname(window.location.pathname)) return "scriptText";
   if (isResearchPathname(window.location.pathname)) return "research";
   if (isNewsroomPathname(window.location.pathname)) return "newsroom";
   return "workspace";
@@ -296,7 +304,8 @@ const syncAppLocation = (mode, releaseId, researchState = {}) => {
   const url = new URL(window.location.href);
   const isNewsroomMode = mode === "newsroom" || mode === "inbox" || mode === "library" || mode === "releases";
   const isResearchMode = mode === "research";
-  url.pathname = isResearchMode ? "/research" : isNewsroomMode ? "/newsroom" : "/";
+  const isScriptTextMode = mode === "scriptText";
+  url.pathname = isScriptTextMode ? "/script-text" : isResearchMode ? "/research" : isNewsroomMode ? "/newsroom" : "/";
   if (mode === "producer" || mode === "onair" || mode === "newsops" || mode === "inbox" || mode === "library" || mode === "releases") {
     url.searchParams.set("mode", mode);
   } else {
@@ -311,7 +320,7 @@ const syncAppLocation = (mode, releaseId, researchState = {}) => {
   const normalizedResearchDocId = String(researchState?.docId ?? "").trim();
   const normalizedResearchSegmentId = String(researchState?.segmentId ?? "").trim();
   const normalizedResearchRunId = String(researchState?.runId ?? "").trim();
-  if (isResearchMode && normalizedResearchDocId) {
+  if ((isResearchMode || isScriptTextMode) && normalizedResearchDocId) {
     url.searchParams.set("doc_id", normalizedResearchDocId);
   } else {
     url.searchParams.delete("doc_id");
@@ -1669,6 +1678,22 @@ const getSectionKeyFromMeta = (section) => {
   if (sectionId) return `id:${sectionId}`;
   return "untitled";
 };
+const getLinkSegmentKey = (segment, fallbackIndex = 0) => {
+  const segmentId = String(segment?.segment_id ?? "").trim().toLowerCase();
+  if (
+    normalizeSegmentBlockType(segment?.block_type) === "links" &&
+    segmentId &&
+    segment?.source_order != null &&
+    Number.isFinite(Number(segment?.source_order))
+  ) {
+    return `segment:${segmentId}`;
+  }
+  return getSectionKeyFromMeta(segment) || `idx:${fallbackIndex}`;
+};
+const isPositionalLinkSegment = (segment) =>
+  normalizeSegmentBlockType(segment?.block_type) === "links" &&
+  segment?.source_order != null &&
+  Number.isFinite(Number(segment?.source_order));
 const getLooseSectionKeyFromMeta = (section) => {
   const sectionId = String(section?.section_id ?? "").trim();
   if (sectionId && !isLegacySectionId(sectionId)) return `id:${sectionId}`;
@@ -1711,24 +1736,34 @@ const scoreHintAgainstSegment = (segmentText, hintText, hintTokens = null) => {
 };
 const extractLinksFromScript = (text) => {
   const { blocks } = splitScriptIntoHeadingBlocks(text);
-  const linkGroups = new Map();
+  const linkSegments = [];
   const segmentLinkHints = [];
   const cleanLines = [];
   let sectionIndex = 0;
   const sectionTitleCounts = new Map();
   let currentSection = null;
+  let linkOccurrence = 0;
     const addLinkToGroup = (section, link) => {
       if (!link) return;
-      const key = getSectionKeyFromMeta(section);
-      if (!linkGroups.has(key)) {
-        linkGroups.set(key, {
-        section_id: section?.section_id ?? null,
+      linkOccurrence += 1;
+      const sectionId = section?.section_id ?? null;
+      const baseId = sectionId
+        ? `links_${sectionId}`
+        : `links_${String(linkOccurrence).padStart(3, "0")}`;
+      linkSegments.push({
+        segment_id: `${baseId}_${String(linkOccurrence).padStart(3, "0")}`,
+        block_type: "links",
+        text_quote: "",
+        links: dedupeLinks([link]),
+        section_id: sectionId,
         section_title: section?.section_title ?? null,
         section_index: section?.section_index ?? null,
-        links: []
+        source_order: cleanLines.length,
+        segment_status: null,
+        visual_decision: emptyVisualDecision(),
+        search_decision: emptySearchDecision(),
+        search_open: false,
       });
-      }
-      linkGroups.get(key).links.push(link);
     };
     const takeInlineSlashHint = () => {
       for (let idx = cleanLines.length - 1; idx >= 0; idx -= 1) {
@@ -1851,19 +1886,6 @@ const extractLinksFromScript = (text) => {
     }
   }
   const cleanText = cleanLines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
-  const linkSegments = Array.from(linkGroups.values()).map((group, index) => ({
-    segment_id: group.section_id ? `links_${group.section_id}` : `links_${String(index + 1).padStart(2, "0")}`,
-    block_type: "links",
-    text_quote: "",
-    links: dedupeLinks(group.links),
-    section_id: group.section_id ?? null,
-    section_title: group.section_title ?? null,
-    section_index: group.section_index ?? null,
-    segment_status: null,
-    visual_decision: emptyVisualDecision(),
-    search_decision: emptySearchDecision(),
-    search_open: false,
-  }));
   const dedupedSegmentHints = [];
   const seenSegmentHints = new Set();
   segmentLinkHints.forEach((item) => {
@@ -1889,8 +1911,8 @@ const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
   const linkOwnerByCanonicalUrl = new Map();
   const historyOwnerByCanonicalUrl = new Map();
 
-  existing.forEach((segment) => {
-    const key = getSectionKeyFromMeta(segment);
+  existing.forEach((segment, index) => {
+    const key = getLinkSegmentKey(segment, index);
     dedupeLinks(segment.links ?? []).forEach((link) => {
       const canonical = canonicalizeLinkUrl(link?.url ?? "");
       if (!canonical) return;
@@ -1919,8 +1941,10 @@ const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
   };
 
   const upsert = (segment, targetKey, mode = "merge", source = "history") => {
-    const key = targetKey || getSectionKeyFromMeta(segment);
-    const links = pickOwnedLinks(segment.links ?? [], key, source);
+    const key = targetKey || getLinkSegmentKey(segment);
+    const links = isPositionalLinkSegment(segment)
+      ? dedupeLinks(segment.links ?? [])
+      : pickOwnedLinks(segment.links ?? [], key, source);
     const current = map.get(key);
     if (!current) {
       map.set(key, { segment: { ...segment }, links });
@@ -1948,8 +1972,8 @@ const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
     });
   };
 
-  extracted.forEach((segment) => {
-    const strictKey = getSectionKeyFromMeta(segment);
+  extracted.forEach((segment, index) => {
+    const strictKey = getLinkSegmentKey(segment, index);
     upsert(segment, strictKey, "replace_meta", "incoming");
     const looseTitle = normalizeSectionTitleForMerge(segment.section_title ?? "");
     if (looseTitle && !looseTitleToStrictKey.has(looseTitle)) {
@@ -1957,8 +1981,8 @@ const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
     }
   });
 
-  existing.forEach((segment) => {
-    const strictKey = getSectionKeyFromMeta(segment);
+  existing.forEach((segment, index) => {
+    const strictKey = getLinkSegmentKey(segment, index);
     if (map.has(strictKey)) {
       upsert(segment, strictKey, "merge", "history");
       return;
@@ -1981,10 +2005,22 @@ const mergeLinkSegmentsBySection = (existing = [], extracted = []) => {
   });
 };
 const mergeLinkSegmentsIntoSegments = (segments, linkSegments) => {
-  const withoutLinks = segments.filter((segment) => segment.block_type !== "links");
-  if (!linkSegments.length) return withoutLinks;
-  const result = [...withoutLinks];
+  if (!linkSegments.length) {
+    return segments.filter((segment) => segment.block_type !== "links");
+  }
+  const linkMap = new Map(linkSegments.map((segment, index) => [getLinkSegmentKey(segment, index), segment]));
+  const used = new Set();
+  const result = segments.map((segment, index) => {
+    if (segment.block_type !== "links") return segment;
+    const key = getLinkSegmentKey(segment, index);
+    const replacement = linkMap.get(key);
+    if (!replacement) return segment;
+    used.add(key);
+    return replacement;
+  });
   linkSegments.forEach((linkSegment) => {
+    const linkKey = getLinkSegmentKey(linkSegment);
+    if (used.has(linkKey)) return;
     const key = getSectionKeyFromMeta(linkSegment);
     const insertAt = result.findIndex(
       (segment) => segment.block_type !== "links" && getSectionKeyFromMeta(segment) === key
@@ -2120,7 +2156,7 @@ const collapseDuplicateLinkOnlyTopics = (segments = []) => {
     const sectionId = target.section_id ?? segment.section_id ?? null;
     return {
       ...segment,
-      segment_id: sectionId ? `links_${sectionId}` : String(segment.segment_id ?? ""),
+      segment_id: String(segment.segment_id ?? "") || (sectionId ? `links_${sectionId}` : ""),
       section_id: sectionId,
       section_title: target.section_title ?? segment.section_title ?? null,
       section_index: Number.isFinite(Number(target.section_index))
@@ -2131,10 +2167,9 @@ const collapseDuplicateLinkOnlyTopics = (segments = []) => {
     };
   });
 
-  const withoutLinks = reassigned.filter((segment) => normalizeSegmentBlockType(segment?.block_type) !== "links");
   const linkSegments = reassigned.filter((segment) => normalizeSegmentBlockType(segment?.block_type) === "links");
   const mergedLinks = mergeLinkSegmentsBySection([], linkSegments);
-  return mergeLinkSegmentsIntoSegments(withoutLinks, mergedLinks);
+  return mergeLinkSegmentsIntoSegments(reassigned, mergedLinks);
 };
 const parseScriptSections = (text, options = {}) => {
   const includeEmpty = Boolean(options?.includeEmpty);
@@ -2403,8 +2438,7 @@ const getScenarioSegmentOrder = (segment, fallbackIndex = Number.MAX_SAFE_INTEGE
   const sectionIndex = Number.isFinite(Number(segment?.section_index))
     ? Number(segment.section_index)
     : Number.MAX_SAFE_INTEGER;
-  const blockType = normalizeSegmentBlockType(segment?.block_type);
-  const linksRank = blockType === "links" ? -1 : 0;
+  const linksRank = 0;
   const segmentId = String(anchorOrder?.segmentId ?? segment?.segment_id ?? "").trim();
   const numericSuffixMatch = segmentId.match(/_(\d{1,4})$/);
   const numericSuffix = numericSuffixMatch ? Number.parseInt(numericSuffixMatch[1], 10) : Number.MAX_SAFE_INTEGER;
@@ -4033,6 +4067,7 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [integrityNotice, setIntegrityNotice] = useState(null);
   const [scenarioPanelOpen, setScenarioPanelOpen] = useState(false);
+  const [scenarioViewMode, setScenarioViewMode] = useState("canvas");
   const [loading, setLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState({});
   const [searchLoading, setSearchLoading] = useState({});
@@ -4160,7 +4195,7 @@ export default function App() {
   }, [theme]);
   useEffect(() => {
     syncAppLocation(appMode, selectedReleaseId, {
-      docId: appMode === "research" ? researchDocQueryId || docId : "",
+      docId: appMode === "research" || appMode === "scriptText" ? researchDocQueryId || docId : "",
       segmentId: appMode === "research" ? selectedResearchSegmentId : "",
       runId: appMode === "research" ? selectedResearchRunId : ""
     });
@@ -4903,6 +4938,12 @@ export default function App() {
   }, [appMode, autoOpenLastDocEnabled, docId, loadDocumentById, notionUrl, recentDocs, scriptText, segments.length]);
   useEffect(() => {
     if (appMode !== "research") return;
+    const targetDocId = String(researchDocQueryId ?? "").trim();
+    if (!targetDocId || targetDocId === docId) return;
+    void loadDocumentById(targetDocId);
+  }, [appMode, docId, loadDocumentById, researchDocQueryId]);
+  useEffect(() => {
+    if (appMode !== "scriptText") return;
     const targetDocId = String(researchDocQueryId ?? "").trim();
     if (!targetDocId || targetDocId === docId) return;
     void loadDocumentById(targetDocId);
@@ -6367,6 +6408,13 @@ export default function App() {
     },
     [docId]
   );
+  const handleOpenScriptTextMode = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    const query = new URLSearchParams();
+    if (docId) query.set("doc_id", String(docId));
+    const queryText = query.toString();
+    window.open(`/script-text${queryText ? `?${queryText}` : ""}`, "_blank", "noopener,noreferrer");
+  }, [docId]);
   const handleExitResearchMode = React.useCallback(() => {
     setAppMode("workspace");
   }, []);
@@ -7546,6 +7594,58 @@ export default function App() {
     );
   }
 
+  if (appMode === "scriptText") {
+    return (
+      <div className="script-text-workspace">
+        <header className="script-text-workspace-bar">
+          <div className="script-text-workspace-title">
+            <strong>{recentDocs.find((item) => item.id === docId)?.title || "Script Text"}</strong>
+            <span>{docId ? `doc ${docId}` : loading ? "loading" : "no document selected"}</span>
+          </div>
+          <div className="script-text-workspace-actions">
+            <select value={recentDocId} onChange={handleRecentSelect} disabled={loading}>
+              <option value="">Документ</option>
+              {recentDocs.map((doc) => (
+                <option value={doc.id} key={doc.id}>
+                  {formatRecentDocLabel(doc)}
+                </option>
+              ))}
+            </select>
+            <button className="btn ghost small" type="button" onClick={() => setAppMode("workspace")}>
+              Workspace
+            </button>
+            <button className="btn small" type="button" onClick={() => handleExport("xml")} disabled={!docId}>
+              XML
+            </button>
+          </div>
+        </header>
+        {status ? <div className="script-text-workspace-status">{status}</div> : null}
+        {segments.length === 0 ? (
+          <main className="script-text-workspace-empty">
+            <p>{loading ? "Загрузка документа..." : "Выбери документ, чтобы открыть текстовый режим."}</p>
+          </main>
+        ) : (
+          <main className="script-text-document">
+            {groupedSegments.map((group, groupIndex) => (
+              <section className="script-text-topic" key={`${group.id}-${groupIndex}`}>
+                <h2>{group.title}</h2>
+                <ScriptTextPanel
+                  group={group}
+                  visibleItems={group.items}
+                  docId={docId}
+                  handleDownloadMedia={handleDownloadMedia}
+                  isMediaDownloadBusy={isMediaDownloadBusy}
+                  isMediaDownloadSupported={isMediaDownloadSupported}
+                  isMediaDownloaded={isMediaDownloaded}
+                />
+              </section>
+            ))}
+          </main>
+        )}
+      </div>
+    );
+  }
+
   if (appMode === "newsops") {
     return (
       <div className="app">
@@ -7692,9 +7792,12 @@ export default function App() {
           handleSave={handleSave}
           canSave={canSave}
           handleAddSegment={handleAddSegment}
+          scenarioViewMode={scenarioViewMode}
+          setScenarioViewMode={setScenarioViewMode}
           linksPanelOpen={linksPanelOpen}
           allScenarioLinksCount={allScenarioLinks.length}
           handleToggleLinksPanel={() => setLinksPanelOpen((prev) => !prev)}
+          handleOpenScriptTextMode={handleOpenScriptTextMode}
           handleCopyForFigma={handleCopyForFigma}
           handleExport={handleExport}
           handleConfigureXmlMediaRoot={handleConfigureXmlMediaRoot}
@@ -7718,9 +7821,10 @@ export default function App() {
         ) : (
           <div className="segment-groups">
             {groupedSegments.map((group, groupIndex) => {
+              const isTextMode = scenarioViewMode === "text";
               const isExpanded = Boolean(expandedGroups[group.id]);
               const limit = groupRenderLimits[group.id] ?? GROUP_RENDER_CHUNK;
-              const visibleItems = isExpanded ? group.items.slice(0, limit) : [];
+              const visibleItems = isTextMode ? group.items : isExpanded ? group.items.slice(0, limit) : [];
               const remaining = group.items.length - visibleItems.length;
               const groupLoading =
                 group.items.some(({ segment }) => aiLoading[segment.segment_id]) ||
@@ -7757,6 +7861,7 @@ export default function App() {
                   headingRuEngines={headingRuEngines}
                   headingEnEngines={HEADING_EN_SEARCH_ENGINES}
                   headingTranslateLoading={Boolean(headingTranslateLoading[group.id])}
+                  scenarioViewMode={scenarioViewMode}
                   handleToggleGroupDone={handleToggleGroupDone}
                   handleAddLinksBlock={handleAddLinksBlock}
                   docId={docId}

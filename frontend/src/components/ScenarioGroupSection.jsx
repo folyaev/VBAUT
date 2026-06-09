@@ -21,6 +21,7 @@ export function ScenarioGroupSection({
   headingRuEngines,
   headingEnEngines,
   headingTranslateLoading,
+  scenarioViewMode,
   handleToggleGroupDone,
   handleAddLinksBlock,
   docId,
@@ -76,8 +77,9 @@ export function ScenarioGroupSection({
   handleCopy,
   handleToggleSegmentDone
 }) {
+  const isTextMode = scenarioViewMode === "text";
   return (
-    <div key={`${group.id}-${groupIndex}`} className="segment-group">
+    <div key={`${group.id}-${groupIndex}`} className={`segment-group${isTextMode ? " is-text-mode" : ""}`}>
       <ScenarioGroupHeader
         group={group}
         groupDone={groupDone}
@@ -112,12 +114,13 @@ export function ScenarioGroupSection({
           headingTranslateLoading={headingTranslateLoading}
         />
       ) : null}
-      {isExpanded ? (
+      {isExpanded || isTextMode ? (
         <ScenarioGroupContent
           group={group}
           visibleItems={visibleItems}
           remaining={remaining}
           handleShowMore={handleShowMore}
+          scenarioViewMode={scenarioViewMode}
           LinksCardComponent={LinksCardComponent}
           SegmentCardComponent={SegmentCardComponent}
           handleLinkAdd={handleLinkAdd}

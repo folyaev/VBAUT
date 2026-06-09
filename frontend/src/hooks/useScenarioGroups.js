@@ -30,6 +30,7 @@ export function useScenarioGroups({
           title,
           items: [],
           linkSegment: null,
+          linkSegments: [],
           topicResearchAnchor: null,
           section_id: segment.section_id ?? null,
           section_title: segment.section_title ?? null,
@@ -42,7 +43,9 @@ export function useScenarioGroups({
       }
       const group = map.get(key);
       if (String(segment?.block_type ?? "").toLowerCase().trim() === "links") {
-        group.linkSegment = { segment, index };
+        const linkItem = { segment, index };
+        group.linkSegments.push(linkItem);
+        if (!group.linkSegment) group.linkSegment = linkItem;
         return;
       }
       if (Boolean(segment?.is_topic_research_anchor)) {
@@ -85,7 +88,7 @@ export function useScenarioGroups({
       let changed = false;
       groupedSegments.forEach((group) => {
         if (!(group.id in next)) {
-          next[group.id] = false;
+          next[group.id] = true;
           changed = true;
         }
       });

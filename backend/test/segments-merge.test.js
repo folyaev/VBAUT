@@ -189,6 +189,33 @@ test("mergeLinkSegmentsBySection keeps each URL in one topic and lets incoming e
   assert.deepEqual(rihannaUrls, ["https://example.com/oil", "https://example.com/rihanna"]);
 });
 
+test("mergeLinkSegmentsBySection preserves repeated positional scrape links", () => {
+  const incoming = [
+    {
+      segment_id: "links_afghan_001",
+      block_type: "links",
+      section_title: "Afghanistan",
+      source_order: 3,
+      links: [{ url: "https://t.me/sharemed/23320", raw: null }]
+    },
+    {
+      segment_id: "links_afghan_002",
+      block_type: "links",
+      section_title: "Afghanistan",
+      source_order: 5,
+      links: [{ url: "https://t.me/sharemed/23320", raw: null }]
+    }
+  ];
+
+  const merged = mergeLinkSegmentsBySection([], incoming);
+
+  assert.equal(merged.length, 2);
+  assert.deepEqual(
+    merged.map((item) => (item.links ?? []).map((link) => String(link.url ?? ""))),
+    [["https://t.me/sharemed/23320"], ["https://t.me/sharemed/23320"]]
+  );
+});
+
 test("mergeLinkSegmentsBySection keeps URL ownership stable regardless existing order", () => {
   const existingForward = [
     {

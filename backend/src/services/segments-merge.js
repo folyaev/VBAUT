@@ -35,14 +35,30 @@
   }
 
   function getLinkSegmentKey(segment, fallbackIndex = 0) {
+    const segmentId = String(segment?.segment_id ?? "").trim().toLowerCase();
+    if (
+      String(segment?.block_type ?? "").trim().toLowerCase() === "links" &&
+      segmentId &&
+      segment?.source_order != null &&
+      Number.isFinite(Number(segment?.source_order))
+    ) {
+      return `segment:${segmentId}`;
+    }
     const title = normalizeSectionTitleForMatch(segment?.section_title ?? "");
     if (title) return `title:${title}`;
     const sectionId = String(segment?.section_id ?? "").trim().toLowerCase();
     if (sectionId && !/^section_\d+$/i.test(sectionId)) return `id:${sectionId}`;
     if (sectionId) return `legacy:${sectionId}`;
-    const segmentId = String(segment?.segment_id ?? "").trim().toLowerCase();
     if (segmentId) return `segment:${segmentId}`;
     return `idx:${fallbackIndex}`;
+  }
+
+  function isPositionalLinkSegment(segment) {
+    return (
+      String(segment?.block_type ?? "").trim().toLowerCase() === "links" &&
+      segment?.source_order != null &&
+      Number.isFinite(Number(segment?.source_order))
+    );
   }
 
   function canonicalizeMergeLinkUrl(rawUrl) {
@@ -389,6 +405,7 @@
         section_id: segment?.section_id ? String(segment.section_id) : null,
         section_title: segment?.section_title ? String(segment.section_title) : null,
         section_index: Number.isFinite(Number(segment?.section_index)) ? Number(segment.section_index) : null,
+        source_order: Number.isFinite(Number(segment?.source_order)) ? Number(segment.source_order) : null,
         segment_status: segment?.segment_status ? String(segment.segment_status) : null,
         version: Number(segment?.version ?? 1)
       };
@@ -404,6 +421,7 @@
         section_id: current.section_id ?? normalized.section_id,
         section_title: current.section_title ?? normalized.section_title,
         section_index: current.section_index ?? normalized.section_index,
+        source_order: Number.isFinite(Number(current.source_order)) ? current.source_order : normalized.source_order,
         links: normalizeLinksInput([...(current.links ?? []), ...(normalized.links ?? [])])
       });
     });
@@ -453,7 +471,9 @@
     const upsert = (segment, targetKey, strategy = "merge", source = "history") => {
       const key = targetKey || getLinkSegmentKey(segment);
       const current = map.get(key);
-      const normalizedLinks = pickOwnedLinks(segment?.links ?? [], key, source);
+      const normalizedLinks = isPositionalLinkSegment(segment)
+        ? normalizeLinksInput(segment?.links ?? [])
+        : pickOwnedLinks(segment?.links ?? [], key, source);
       if (!current) {
         const entry = {
           segment: {
@@ -462,7 +482,8 @@
             block_type: "links",
             section_id: segment?.section_id ? String(segment.section_id) : null,
             section_title: segment?.section_title ? String(segment.section_title) : null,
-            section_index: Number.isFinite(Number(segment?.section_index)) ? Number(segment.section_index) : null
+            section_index: Number.isFinite(Number(segment?.section_index)) ? Number(segment.section_index) : null,
+            source_order: Number.isFinite(Number(segment?.source_order)) ? Number(segment.source_order) : null
           },
           links: normalizedLinks
         };
@@ -524,10 +545,22 @@
   }
 
   function mergeLinkSegmentsIntoSegments(segments = [], linkSegments = []) {
-    const withoutLinks = segments.filter((segment) => String(segment?.block_type ?? "").trim().toLowerCase() !== "links");
-    if (!linkSegments.length) return withoutLinks;
-    const result = [...withoutLinks];
+    if (!linkSegments.length) {
+      return segments.filter((segment) => String(segment?.block_type ?? "").trim().toLowerCase() !== "links");
+    }
+    const linkMap = new Map(linkSegments.map((segment, index) => [getLinkSegmentKey(segment, index), segment]));
+    const used = new Set();
+    const result = segments.map((segment, index) => {
+      if (String(segment?.block_type ?? "").trim().toLowerCase() !== "links") return segment;
+      const key = getLinkSegmentKey(segment, index);
+      const replacement = linkMap.get(key);
+      if (!replacement) return segment;
+      used.add(key);
+      return replacement;
+    });
     linkSegments.forEach((linkSegment) => {
+      const linkKey = getLinkSegmentKey(linkSegment);
+      if (used.has(linkKey)) return;
       const key = getSectionMatchKey(linkSegment);
       const insertAt = result.findIndex(
         (segment) =>
@@ -579,10 +612,9 @@
       const target = primaryByTitle.get(titleKey);
       if (!target) return segment;
       const sectionId = target.section_id ?? (segment?.section_id ? String(segment.section_id) : null);
-      const isLegacy = /^section_\d+$/i.test(String(sectionId ?? "").trim());
       return {
         ...segment,
-        segment_id: sectionId && !isLegacy ? `links_${sectionId}` : String(segment?.segment_id ?? ""),
+        segment_id: String(segment?.segment_id ?? "") || (sectionId ? `links_${sectionId}` : ""),
         section_id: sectionId,
         section_title: target.section_title ?? (segment?.section_title ? String(segment.section_title) : null),
         section_index: Number.isFinite(Number(target.section_index))
@@ -593,10 +625,9 @@
       };
     });
 
-    const withoutLinks = reassigned.filter((segment) => String(segment?.block_type ?? "").trim().toLowerCase() !== "links");
     const linkSegments = reassigned.filter((segment) => String(segment?.block_type ?? "").trim().toLowerCase() === "links");
     const mergedLinks = mergeLinkSegmentsBySection([], linkSegments);
-    const merged = mergeLinkSegmentsIntoSegments(withoutLinks, mergedLinks);
+    const merged = mergeLinkSegmentsIntoSegments(reassigned, mergedLinks);
     return {
       segments: merged,
       collapsedLinkTopics: Math.max(0, linkSegments.length - mergedLinks.length)

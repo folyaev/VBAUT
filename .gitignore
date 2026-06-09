@@ -5,3 +5,4 @@ data/
 .env
 MediaDownloaderQt6-5.4.2/
 scrapes/
+dev-server*.log

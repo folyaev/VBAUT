@@ -1,10 +1,13 @@
 import React from "react";
+import { ScriptCanvasPanel } from "./ScriptCanvasPanel.jsx";
+import { ScriptTextPanel } from "./ScriptTextPanel.jsx";
 
 export function ScenarioGroupContent({
   group,
   visibleItems,
   remaining,
   handleShowMore,
+  scenarioViewMode,
   LinksCardComponent,
   SegmentCardComponent,
   handleLinkAdd,
@@ -51,7 +54,7 @@ export function ScenarioGroupContent({
 }) {
   return (
     <>
-      {group.linkSegment ? (
+      {group.linkSegment && scenarioViewMode === "cards" ? (
         <LinksCardComponent
           segment={group.linkSegment.segment}
           index={group.linkSegment.index}
@@ -65,61 +68,105 @@ export function ScenarioGroupContent({
           isDownloaded={isMediaDownloaded}
         />
       ) : null}
-      <div className="segments-grid">
-        {visibleItems.map(({ segment, index }, localIndex) => {
-          const segmentKey = String(segment.segment_id ?? "").trim();
-          const linkedReleaseInfo = linkedReleaseSegmentIds.has(segmentKey) && selectedReleaseDetail
-            ? {
-                id: selectedReleaseDetail.id,
-                title: selectedReleaseDetail.title,
-                status: selectedReleaseDetail.status,
-                air_date: selectedReleaseDetail.air_date
-              }
-            : null;
-          return (
-            <SegmentCardComponent
-              key={`${segment.segment_id}-${index}`}
-              segment={segment}
-              index={index}
-              animationIndex={localIndex}
-              config={config}
-              docId={docId}
-              mediaFiles={mediaFiles}
-              onUpdate={updateSegment}
-              onVisualUpdate={updateVisual}
-              onSearchUpdate={updateSearch}
-              onQuoteChange={handleQuoteChange}
-              onInsertAfter={handleInsertAfter}
-              onRemove={handleRemoveSegment}
-              onClearSearch={handleClearSearch}
-              onSearchGenerate={handleGenerateSearch}
-              searchLoading={Boolean(searchLoading[segment.segment_id])}
-              onSearchToggle={handleSearchToggle}
-              onSearch={handleSearch}
-              researchRun={segmentResearchRuns[segment.segment_id] ?? null}
-              researchHistory={segmentResearchHistory[segment.segment_id] ?? []}
-              researchLoading={Boolean(segmentResearchLoading[segment.segment_id])}
-              onResearchRun={handleRunSegmentResearch}
-              onResearchSelectRun={handleSelectSegmentResearchRun}
-              onResearchApply={handleApplySegmentResearch}
-              onResearchPromoteBundle={handlePromoteSegmentResearchBundle}
-              onResearchCopyBrief={handleCopySegmentResearchBrief}
-              onOpenResearchWorkspace={handleOpenResearchWorkspace}
-              linkedReleaseInfo={linkedReleaseInfo}
-              linkedReleaseSnapshot={linkedReleaseSnapshotBySegmentId.get(segmentKey) ?? null}
-              onOpenLinkedRelease={handleOpenReleaseFromSegment}
-              onOpenLinkedReleaseHandoff={handleOpenReleaseFromSegment}
-              onUseLinkedReleasePrimary={handleUseLinkedReleasePrimary}
-              onPromoteLinkedReleasePrimaryPair={handlePromoteLinkedReleasePrimaryPair}
-              onPromoteLinkedReleaseBackupPair={handlePromoteLinkedReleaseBackupPair}
-              onUseLinkedReleaseBackup={handleUseLinkedReleaseBackup}
-              onCopy={handleCopy}
-              onDoneToggle={handleToggleSegmentDone}
-            />
-          );
-        })}
-      </div>
-      {remaining > 0 ? (
+      {scenarioViewMode === "text" ? (
+        <ScriptTextPanel
+          group={group}
+          visibleItems={visibleItems}
+          docId={docId}
+          handleDownloadMedia={handleDownloadMedia}
+          isMediaDownloadBusy={isMediaDownloadBusy}
+          isMediaDownloadSupported={isMediaDownloadSupported}
+          isMediaDownloaded={isMediaDownloaded}
+        />
+      ) : scenarioViewMode === "canvas" ? (
+        <ScriptCanvasPanel
+          group={group}
+          visibleItems={visibleItems}
+          config={config}
+          docId={docId}
+          mediaFiles={mediaFiles}
+          segmentResearchRuns={segmentResearchRuns}
+          segmentResearchLoading={segmentResearchLoading}
+          linkedReleaseSegmentIds={linkedReleaseSegmentIds}
+          selectedReleaseDetail={selectedReleaseDetail}
+          handleRunSegmentResearch={handleRunSegmentResearch}
+          handleGenerateSearch={handleGenerateSearch}
+          searchLoading={searchLoading}
+          updateSearch={updateSearch}
+          handleSearch={handleSearch}
+          handleOpenResearchWorkspace={handleOpenResearchWorkspace}
+          handleOpenSegmentScreenshotMode={handleOpenSegmentScreenshotMode}
+          handleOpenReleaseFromSegment={handleOpenReleaseFromSegment}
+          handleLinkAdd={handleLinkAdd}
+          handleLinkUpdate={handleLinkUpdate}
+          handleLinkRemove={handleLinkRemove}
+          handleDownloadMedia={handleDownloadMedia}
+          isMediaDownloadBusy={isMediaDownloadBusy}
+          isMediaDownloadSupported={isMediaDownloadSupported}
+          isMediaDownloaded={isMediaDownloaded}
+          handleToggleSegmentDone={handleToggleSegmentDone}
+          updateVisual={updateVisual}
+          handleQuoteChange={handleQuoteChange}
+          handleInsertAfter={handleInsertAfter}
+          handleRemoveSegment={handleRemoveSegment}
+        />
+      ) : (
+        <div className="segments-grid">
+          {visibleItems.map(({ segment, index }, localIndex) => {
+            const segmentKey = String(segment.segment_id ?? "").trim();
+            const linkedReleaseInfo = linkedReleaseSegmentIds.has(segmentKey) && selectedReleaseDetail
+              ? {
+                  id: selectedReleaseDetail.id,
+                  title: selectedReleaseDetail.title,
+                  status: selectedReleaseDetail.status,
+                  air_date: selectedReleaseDetail.air_date
+                }
+              : null;
+            return (
+              <SegmentCardComponent
+                key={`${segment.segment_id}-${index}`}
+                segment={segment}
+                index={index}
+                animationIndex={localIndex}
+                config={config}
+                docId={docId}
+                mediaFiles={mediaFiles}
+                onUpdate={updateSegment}
+                onVisualUpdate={updateVisual}
+                onSearchUpdate={updateSearch}
+                onQuoteChange={handleQuoteChange}
+                onInsertAfter={handleInsertAfter}
+                onRemove={handleRemoveSegment}
+                onClearSearch={handleClearSearch}
+                onSearchGenerate={handleGenerateSearch}
+                searchLoading={Boolean(searchLoading[segment.segment_id])}
+                onSearchToggle={handleSearchToggle}
+                onSearch={handleSearch}
+                researchRun={segmentResearchRuns[segment.segment_id] ?? null}
+                researchHistory={segmentResearchHistory[segment.segment_id] ?? []}
+                researchLoading={Boolean(segmentResearchLoading[segment.segment_id])}
+                onResearchRun={handleRunSegmentResearch}
+                onResearchSelectRun={handleSelectSegmentResearchRun}
+                onResearchApply={handleApplySegmentResearch}
+                onResearchPromoteBundle={handlePromoteSegmentResearchBundle}
+                onResearchCopyBrief={handleCopySegmentResearchBrief}
+                onOpenResearchWorkspace={handleOpenResearchWorkspace}
+                linkedReleaseInfo={linkedReleaseInfo}
+                linkedReleaseSnapshot={linkedReleaseSnapshotBySegmentId.get(segmentKey) ?? null}
+                onOpenLinkedRelease={handleOpenReleaseFromSegment}
+                onOpenLinkedReleaseHandoff={handleOpenReleaseFromSegment}
+                onUseLinkedReleasePrimary={handleUseLinkedReleasePrimary}
+                onPromoteLinkedReleasePrimaryPair={handlePromoteLinkedReleasePrimaryPair}
+                onPromoteLinkedReleaseBackupPair={handlePromoteLinkedReleaseBackupPair}
+                onUseLinkedReleaseBackup={handleUseLinkedReleaseBackup}
+                onCopy={handleCopy}
+                onDoneToggle={handleToggleSegmentDone}
+              />
+            );
+          })}
+        </div>
+      )}
+      {remaining > 0 && scenarioViewMode !== "text" ? (
         <div className="segment-group-footer">
           <button className="btn ghost small" type="button" onClick={() => handleShowMore(group.id)}>
             Показать ещё

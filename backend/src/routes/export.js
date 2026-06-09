@@ -41,8 +41,7 @@ export function registerExportRoutes(app, deps) {
     const sectionIndex = Number.isFinite(Number(segment?.section_index))
       ? Number(segment.section_index)
       : Number.MAX_SAFE_INTEGER;
-    const blockType = normalizeSegmentBlockType(segment?.block_type);
-    const linksRank = blockType === "links" ? -1 : 0;
+    const linksRank = 0;
     const segmentId = String(segment?.segment_id ?? "").trim();
     const numericSuffixMatch = segmentId.match(/_(\d{1,4})$/);
     const numericSuffix = numericSuffixMatch ? Number.parseInt(numericSuffixMatch[1], 10) : Number.MAX_SAFE_INTEGER;
